@@ -775,6 +775,10 @@ function collectUniqueHooksAcrossAliases(
   return out
 }
 
+type GlobMatcher = (filePath: string, pattern: string) => boolean
+
+const defaultGlobMatcher: GlobMatcher = (filePath, pattern) => matchesGlob(filePath, pattern)
+
 async function dispatchHooks(
   hooks: HookMap,
   state: SessionStateStore,
@@ -788,6 +792,7 @@ async function dispatchHooks(
   dispatchStates: Map<string, DispatchState>,
   actionRecursionGuards: AsyncLocalStorage<Set<string>>,
   asyncQueues: Map<string, AsyncQueueState>,
+  globMatcher: GlobMatcher = defaultGlobMatcher,
 ): Promise<HookExecutionResult> {
   const eventHooks = hooks.get(event)
   if (!eventHooks || eventHooks.length === 0) {
