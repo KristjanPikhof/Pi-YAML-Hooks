@@ -394,7 +394,7 @@ here and are not part of the documented `pi-hooks` surface.
 | `SNAPSHOTD_DEBUG` | off | Writes debug logs under `<git-dir>/ai-snapshotd/logs/` |
 | `SNAPSHOTD_WORKER_PATH` | sibling file | Override worker script path |
 | `OPENAI_API_KEY` / `OPENAI_BASE_URL` | unset / OpenAI default | Required for built-in AI mode. Base URL must be `https://` |
-| `OPENAI_MODEL` | `gpt-5.4-mini` | Model used for built-in AI mode |
+| `OPENAI_MODEL` | `gpt-4o-mini` (placeholder) | Model used for built-in AI mode. Set this explicitly to whichever OpenAI-compatible model your account has access to; the default is just a placeholder. |
 | `OPENAI_API_TIMEOUT` | `15` | Network timeout in seconds |
 
 If neither `SNAPSHOTD_COMMIT_MESSAGE_CMD` nor `SNAPSHOTD_AI_ENABLE=1` is set,

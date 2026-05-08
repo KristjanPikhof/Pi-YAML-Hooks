@@ -215,7 +215,7 @@ Once the extension is loaded, PI exposes these helper commands:
 |---|---|
 | `PI_HOOKS_TRUST_PROJECT=1` | Temporarily trust the current project |
 | `PI_HOOKS_BASH_EXECUTABLE=/path/to/bash` | Use a different bash executable |
-| `PI_HOOKS_MAX_OUTPUT_BYTES=4194304` | Raise the per-hook stdout/stderr capture cap |
+| `PI_HOOKS_MAX_OUTPUT_BYTES=<bytes>` | Override the per-hook stdout/stderr capture cap. Default is `1048576` (1 MiB) per stream. Example: `PI_HOOKS_MAX_OUTPUT_BYTES=4194304` raises the cap to 4 MiB. |
 | `PI_HOOKS_DEBUG=1` | Print extra debug logging |
 | `PI_HOOKS_CONFIRM_AUTO_APPROVE=1` | In headless mode, auto-approve `confirm:` instead of denying |
 | `PI_HOOKS_ENABLE_USER_BASH=1` | Route human `!` / `!!` shell commands through `tool.before.bash` hooks |
