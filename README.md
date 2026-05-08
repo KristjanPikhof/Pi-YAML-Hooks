@@ -95,7 +95,7 @@ Before widening PI peer support or merging SDK-sensitive changes, run the repeat
 npm run compat:sdk-matrix
 ```
 
-The matrix checks the minimum supported SDK (`@mariozechner/pi-coding-agent` and `@mariozechner/pi-tui` `0.68.1`) and the current supported `0.69.x` line. It creates a temporary copy of the repository, installs each SDK pair in that copy only, then runs `npm run typecheck` and `npm test`. The working checkout's `package.json`, `package-lock.json`, and normal `node_modules` are not mutated.
+The matrix checks the supported SDK (`@earendil-works/pi-coding-agent` and `@earendil-works/pi-tui` `0.74.0`). It creates a temporary copy of the repository, installs each SDK pair in that copy only, then runs `npm run typecheck` and `npm test`. The working checkout's `package.json`, `package-lock.json`, and normal `node_modules` are not mutated.
 
 To preview the workflow without installing anything:
 
