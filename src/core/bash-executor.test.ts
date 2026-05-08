@@ -542,12 +542,18 @@ const cases: Case[] = [
         // Within TTL: cache hit, no extra git call.
         virtualNow += 60_000
         resolveExecutionContext("/repo", resolver as never)
-        if (calls !== 1) return { ok: false, detail: `cache miss within TTL (calls=${calls})` }
+        const callsAfterHit = calls
+        if (callsAfterHit !== 1) {
+          return { ok: false, detail: `cache miss within TTL (calls=${callsAfterHit})` }
+        }
 
         // Past TTL: cache evicted, re-probe.
         virtualNow += 6 * 60_000
         resolveExecutionContext("/repo", resolver as never)
-        if (calls !== 2) return { ok: false, detail: `cache not evicted past TTL (calls=${calls})` }
+        const callsAfterExpiry = calls
+        if (callsAfterExpiry !== 2) {
+          return { ok: false, detail: `cache not evicted past TTL (calls=${callsAfterExpiry})` }
+        }
         return { ok: true }
       } finally {
         resetExecutionContextCacheForTests()
