@@ -1,4 +1,14 @@
-import { closeSync, constants as fsConstants, lstatSync, mkdirSync, openSync, writeSync } from "node:fs"
+import {
+  closeSync,
+  constants as fsConstants,
+  fstatSync,
+  lstatSync,
+  mkdirSync,
+  openSync,
+  renameSync,
+  unlinkSync,
+  writeSync,
+} from "node:fs"
 import os from "node:os"
 import path from "node:path"
 
@@ -43,10 +53,26 @@ const MAX_OBJECT_KEYS = 50
 const MAX_DEPTH = 5
 const REDACTED = "[REDACTED]"
 
+// P3-9: rotate the log file when it exceeds this many bytes. Single rotation
+// copy with a `.1` suffix — older copies are dropped. Override via
+// PI_YAML_HOOKS_LOG_MAX_BYTES (numeric, must be > 0).
+const DEFAULT_LOG_MAX_BYTES = 10 * 1024 * 1024
+const ROTATED_SUFFIX = ".1"
+
 let cachedLogger: PiHooksLogger | undefined
 let warnedAboutLoggerFailure = false
 let cachedLogFd: number | undefined
 let cachedLogFdPath: string | undefined
+
+// P3-9: pending writes are buffered as UTF-8 strings, then flushed by an
+// async drain scheduled via queueMicrotask. The first call schedules a flush;
+// subsequent calls within the same microtask cycle just append. This keeps
+// every getPiHooksLogger().log() call O(1) on the hot path and amortizes
+// write overhead across batches.
+const pendingLogLines: string[] = []
+let flushScheduled = false
+let pendingDirAndFilePath: string | undefined
+let drainCount = 0
 
 export function getPiHooksLogger(): PiHooksLogger {
   cachedLogger ??= createPiHooksLogger()
@@ -58,6 +84,7 @@ export function getPiHooksLogFilePath(): string {
 }
 
 export function resetPiHooksLoggerForTests(): void {
+  flushPendingLogLinesNow()
   cachedLogger = undefined
   warnedAboutLoggerFailure = false
   if (cachedLogFd !== undefined) {
@@ -69,6 +96,34 @@ export function resetPiHooksLoggerForTests(): void {
   }
   cachedLogFd = undefined
   cachedLogFdPath = undefined
+  pendingLogLines.length = 0
+  flushScheduled = false
+  pendingDirAndFilePath = undefined
+  drainCount = 0
+}
+
+/**
+ * Test helper. Drain any queued log writes synchronously so assertions can
+ * inspect the file immediately after a log() call. Production code never
+ * needs this — the natural microtask drain handles flushing.
+ */
+export function flushPiHooksLoggerForTests(): void {
+  flushPendingLogLinesNow()
+}
+
+/**
+ * Test helper. Returns how many times the async drain has run since the
+ * last reset, useful for asserting that writes were in fact deferred.
+ */
+export function getPiHooksLoggerDrainCountForTests(): number {
+  return drainCount
+}
+
+function resolveLogMaxBytes(): number {
+  const raw = process.env.PI_YAML_HOOKS_LOG_MAX_BYTES
+  if (!raw) return DEFAULT_LOG_MAX_BYTES
+  const n = Number.parseInt(raw, 10)
+  return Number.isFinite(n) && n > 0 ? n : DEFAULT_LOG_MAX_BYTES
 }
 
 function openLogFileSafely(filePath: string): number | undefined {
@@ -117,11 +172,139 @@ function openLogFileSafely(filePath: string): number | undefined {
   return fd
 }
 
+/**
+ * Rotate the on-disk log when it exceeds `maxBytes`. We rename the active
+ * file to `<path>.1` (replacing any prior `.1`), close the cached fd, and
+ * leave the next openLogFileSafely() call to create a fresh empty file.
+ *
+ * O_APPEND keeps the writes themselves race-free with concurrent processes,
+ * but the rotate itself is best-effort: if a peer opens the file between
+ * our fstat and our rename, both will continue to write to the renamed inode
+ * via their own fd. That's acceptable — the goal is bounding disk usage,
+ * not coordinating multi-process logging.
+ */
+function rotateLogIfNeeded(filePath: string, maxBytes: number): void {
+  if (cachedLogFd === undefined || cachedLogFdPath !== filePath) {
+    return
+  }
+  let size: number
+  try {
+    size = fstatSync(cachedLogFd).size
+  } catch {
+    return
+  }
+  if (size < maxBytes) {
+    return
+  }
+  try {
+    const rotatedPath = `${filePath}${ROTATED_SUFFIX}`
+    try {
+      unlinkSync(rotatedPath)
+    } catch (error) {
+      const errno = (error as NodeJS.ErrnoException).code
+      if (errno !== "ENOENT") {
+        throw error
+      }
+    }
+    renameSync(filePath, rotatedPath)
+  } catch {
+    // Rotation is best-effort; if the rename fails (e.g. cross-device,
+    // permissions), keep using the existing fd. We'll try again on the
+    // next write that crosses the threshold.
+    return
+  }
+  try {
+    closeSync(cachedLogFd)
+  } catch {
+    // ignore
+  }
+  cachedLogFd = undefined
+  cachedLogFdPath = undefined
+}
+
+function flushPendingLogLinesNow(): void {
+  if (pendingLogLines.length === 0) {
+    return
+  }
+  const filePath = pendingDirAndFilePath
+  pendingDirAndFilePath = undefined
+  flushScheduled = false
+  drainCount += 1
+
+  if (!filePath) {
+    pendingLogLines.length = 0
+    return
+  }
+
+  const maxBytes = resolveLogMaxBytes()
+  const batch = pendingLogLines.splice(0, pendingLogLines.length).join("")
+
+  try {
+    mkdirSync(path.dirname(filePath), { recursive: true })
+    rotateLogIfNeeded(filePath, maxBytes)
+    const fd = openLogFileSafely(filePath)
+    if (fd !== undefined) {
+      writeSync(fd, batch)
+    }
+    // After the write, eagerly check whether *this* batch crossed the
+    // threshold and rotate so the next write opens a fresh file. This
+    // matters most when individual entries are large — rotating only
+    // *before* writing would let a single oversized entry keep growing
+    // a stale file unbounded.
+    rotateLogIfNeeded(filePath, maxBytes)
+  } catch (error) {
+    if (!warnedAboutLoggerFailure) {
+      warnedAboutLoggerFailure = true
+      const message = error instanceof Error ? error.message : String(error)
+      // eslint-disable-next-line no-console
+      console.warn(`[pi-yaml-hooks] Failed to write debug log ${filePath}: ${message}`)
+    }
+  }
+}
+
+function scheduleLogFlush(filePath: string, line: string): void {
+  // Track the current target path so a path change from
+  // resetPiHooksLoggerForTests() doesn't leave queued lines aimed at a
+  // stale path. (In practice the path is stable for a given logger
+  // instance, but the assignment is cheap and keeps the invariant clear.)
+  pendingDirAndFilePath = filePath
+  pendingLogLines.push(line)
+  if (flushScheduled) {
+    return
+  }
+  flushScheduled = true
+  // queueMicrotask runs after the current synchronous frame but before any
+  // I/O callbacks, so log lines persist roughly as fast as a sync write
+  // while still freeing the caller from the disk-write critical path.
+  // We also register a process-exit fallback the first time so that a
+  // crash before the microtask drains doesn't lose the buffered batch.
+  queueMicrotask(flushPendingLogLinesNow)
+}
+
+let exitFlushRegistered = false
+function ensureExitFlushRegistered(): void {
+  if (exitFlushRegistered) return
+  exitFlushRegistered = true
+  // 'exit' fires synchronously during process shutdown; our flush is
+  // synchronous, so any queued lines still make it to disk.
+  process.on("exit", () => {
+    try {
+      flushPendingLogLinesNow()
+    } catch {
+      // ignore — best effort during shutdown
+    }
+  })
+}
+
 function createPiHooksLogger(): PiHooksLogger {
   const enabled = shouldEnableLogging()
   const level = resolveLogLevel(enabled)
   const filePath = enabled ? resolveLogFilePath() : undefined
   const mirrorToStderr = process.env.PI_YAML_HOOKS_LOG_STDERR === "1"
+
+  if (enabled) {
+    ensureExitFlushRegistered()
+  }
 
   return {
     enabled,
@@ -143,20 +326,10 @@ function createPiHooksLogger(): PiHooksLogger {
         ts: entry.ts ?? new Date().toISOString(),
       })
 
-      try {
-        mkdirSync(path.dirname(filePath), { recursive: true })
-        const fd = openLogFileSafely(filePath)
-        if (fd !== undefined) {
-          writeSync(fd, `${line}\n`)
-        }
-      } catch (error) {
-        if (!warnedAboutLoggerFailure) {
-          warnedAboutLoggerFailure = true
-          const message = error instanceof Error ? error.message : String(error)
-          // eslint-disable-next-line no-console
-          console.warn(`[pi-yaml-hooks] Failed to write debug log ${filePath}: ${message}`)
-        }
-      }
+      // P3-9: defer the actual disk write to a microtask. Serialization,
+      // including the timestamp, happens here so the on-disk ordering
+      // matches the call order even though the writes are batched.
+      scheduleLogFlush(filePath, `${line}\n`)
 
       if (mirrorToStderr) {
         const message = `[pi-yaml-hooks:${entryLevel}] ${entry.kind}${entry.message ? ` ${entry.message}` : ""}`
