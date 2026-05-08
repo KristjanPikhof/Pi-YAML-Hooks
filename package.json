@@ -1,6 +1,6 @@
 {
   "name": "pi-hooks",
-  "version": "1.0.0",
+  "version": "2026.5.8",
   "description": "YAML hook automation for the PI coding agent: tool guards, session hooks, prompts, notifications, and bash actions.",
   "type": "module",
   "engines": {
