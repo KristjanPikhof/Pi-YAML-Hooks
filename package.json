@@ -37,12 +37,11 @@
   ],
   "files": [
     "dist",
-    "extensions",
-    "docs",
+    "docs/README.md",
     "examples/post-tool-developer-feedback",
     "examples/pre-tool-developer-guards",
     "examples/README.md",
-    "scripts",
+    "scripts/tail-hook-log.sh",
     "README.md"
   ],
   "scripts": {
