@@ -777,7 +777,14 @@ async function dispatchHooks(
         const request = currentState.pending.shift()!
 
         try {
-          const result = await executeDispatchRequest(request)
+          // P1-13 fix: re-enter the recursion-guard frame that was active
+          // when this request was parked. Without this, queued dispatches
+          // resume under an empty Set (or whatever the *current* frame
+          // happens to be) and the recursion guard either misses real
+          // re-entries or falsely dedupes unrelated ones.
+          const result = request.recursionGuardStore
+            ? await actionRecursionGuards.run(request.recursionGuardStore, () => executeDispatchRequest(request))
+            : await executeDispatchRequest(request)
           request.resolve?.(result)
         } catch (error) {
           request.reject?.(error)
