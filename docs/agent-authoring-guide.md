@@ -148,7 +148,7 @@ When a hook does not fire:
 3. confirm the project is trusted if using a project hook file
 4. confirm the event name matches a real PI tool or lifecycle event
 5. if using path conditions, confirm the event actually carries changed paths
-6. run with `PI_HOOKS_DEBUG=1`
+6. run with `PI_YAML_HOOKS_DEBUG=1`
 
 ## Minimal test workflow for agents
 

@@ -1,16 +1,16 @@
 # Debugging hooks
 
-`pi-hooks` can write persistent NDJSON debug logs when you start PI with:
+`pi-yaml-hooks` can write persistent NDJSON debug logs when you start PI with:
 
 ```bash
-PI_HOOKS_DEBUG=1 pi
+PI_YAML_HOOKS_DEBUG=1 pi
 ```
 
 Even without debug logging, hook execution failures and adapter dispatch failures still print concise stderr errors by default. Debug mode adds persistent NDJSON traces and action-level detail.
 
 ## Structured in-session diagnostics
 
-`pi-hooks` also emits structured PI-native diagnostics messages for:
+`pi-yaml-hooks` also emits structured PI-native diagnostics messages for:
 
 - `/hooks-status`
 - `/hooks-validate`
@@ -23,13 +23,13 @@ These appear inline in the session when PI supports custom messages. In print/RP
 Default path:
 
 ```text
-~/.pi/agent/logs/pi-hooks.ndjson
+~/.pi/agent/logs/pi-yaml-hooks.ndjson
 ```
 
 Override it with:
 
 ```bash
-PI_HOOKS_LOG_FILE=/tmp/pi-hooks.ndjson PI_HOOKS_DEBUG=1 pi
+PI_YAML_HOOKS_LOG_FILE=/tmp/pi-yaml-hooks.ndjson PI_YAML_HOOKS_DEBUG=1 pi
 ```
 
 ## Tail the log
@@ -37,7 +37,7 @@ PI_HOOKS_LOG_FILE=/tmp/pi-hooks.ndjson PI_HOOKS_DEBUG=1 pi
 Raw tail:
 
 ```bash
-tail -F ~/.pi/agent/logs/pi-hooks.ndjson
+tail -F ~/.pi/agent/logs/pi-yaml-hooks.ndjson
 ```
 
 Pretty tail helper:
@@ -74,7 +74,7 @@ See raw NDJSON after filtering:
 
 ## What gets logged
 
-When debug logging is enabled, `pi-hooks` logs:
+When debug logging is enabled, `pi-yaml-hooks` logs:
 
 - hook config load and reload events
 - event dispatches such as `tool.before.*`, `tool.after.*`, and `session.idle`
@@ -95,7 +95,7 @@ These logs are written by the extension runtime, not by the PI session transcrip
 That means:
 
 - `~/.pi/agent/sessions/*.jsonl` will not contain the full hook debug trail
-- the canonical hook log is `~/.pi/agent/logs/pi-hooks.ndjson`
+- the canonical hook log is `~/.pi/agent/logs/pi-yaml-hooks.ndjson`
 
 ## Common debugging workflow
 
@@ -118,7 +118,7 @@ For a hook like:
 Run:
 
 ```bash
-PI_HOOKS_DEBUG=1 pi
+PI_YAML_HOOKS_DEBUG=1 pi
 ```
 
 Then in another terminal:
@@ -138,7 +138,7 @@ You should be able to see:
 
 | Variable | Meaning |
 |---|---|
-| `PI_HOOKS_DEBUG=1` | enable debug-level persistent logging |
-| `PI_HOOKS_LOG_FILE=/path/file.ndjson` | change the log file location |
-| `PI_HOOKS_LOG_LEVEL=debug` | explicitly set the log level |
-| `PI_HOOKS_LOG_STDERR=1` | mirror structured log entries to stderr as well |
+| `PI_YAML_HOOKS_DEBUG=1` | enable debug-level persistent logging |
+| `PI_YAML_HOOKS_LOG_FILE=/path/file.ndjson` | change the log file location |
+| `PI_YAML_HOOKS_LOG_LEVEL=debug` | explicitly set the log level |
+| `PI_YAML_HOOKS_LOG_STDERR=1` | mirror structured log entries to stderr as well |

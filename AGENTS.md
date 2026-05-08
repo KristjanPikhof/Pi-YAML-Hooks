@@ -1,6 +1,6 @@
 # AGENTS.md
 
-This is the short contract for agents editing `pi-hooks`. Keep it compact:
+This is the short contract for agents editing `pi-yaml-hooks`. Keep it compact:
 facts that prevent wrong implementation or misleading docs belong here; broad
 tutorial content belongs in `docs/`.
 
@@ -39,7 +39,7 @@ Example-only, not built-in product features:
 - prefer `scope` for real main-vs-child routing decisions
 - `action: stop` only has real effect on `tool.before.*`
 - `session.deleted` is intentionally lossy
-- `user_bash` interception is opt-in via `PI_HOOKS_ENABLE_USER_BASH=1`
+- `user_bash` interception is opt-in via `PI_YAML_HOOKS_ENABLE_USER_BASH=1`
 
 ## Config, imports, and trust
 

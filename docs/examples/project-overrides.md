@@ -31,7 +31,7 @@ hooks:
 Either run PI with one-session trust:
 
 ```bash
-PI_HOOKS_TRUST_PROJECT=1 pi
+PI_YAML_HOOKS_TRUST_PROJECT=1 pi
 ```
 
 Or add the repo/worktree trust anchor to `~/.pi/agent/trusted-projects.json`.
