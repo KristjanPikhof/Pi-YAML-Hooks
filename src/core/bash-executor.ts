@@ -156,7 +156,7 @@ async function executeBashProcess(request: BashExecutionRequest): Promise<BashPr
     })
 
     child.stdin.on("error", () => {})
-    child.stdin.end(JSON.stringify(request.context))
+    child.stdin.end(serializeContextForStdin(request.context))
 
     child.on("error", (error) => {
       finalize({
