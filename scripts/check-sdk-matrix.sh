@@ -42,8 +42,10 @@ while [[ $# -gt 0 ]]; do
         echo "error: --versions requires a quoted space-separated value" >&2
         exit 2
       fi
-      # shellcheck disable=SC2206
-      SDK_SPECS=($2)
+      # Use read -a to perform a controlled word-split of the user-supplied
+      # space-separated specs. This avoids glob expansion and IFS surprises
+      # that would happen with `SDK_SPECS=($2)`.
+      read -r -a SDK_SPECS <<< "$2"
       shift 2
       ;;
     -h|--help)
