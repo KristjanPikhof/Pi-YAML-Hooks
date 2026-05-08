@@ -305,6 +305,8 @@ export function createHooksRuntime(host: HostAdapter, options: CreateHooksRuntim
   // changed pattern set does not retain stale match closures or stale
   // (path → boolean) entries.
   let globMatcherCache: GlobMatcherCache = createGlobMatcherCache(lastLoadedSignature)
+  const boundGlobMatcher: GlobMatcher = (filePath, pattern) =>
+    getGlobMatcher(globMatcherCache, pattern)(filePath)
 
   function refreshHooks(): HookMap {
     if (options.hooks && !shouldReloadDiscoveredHooks) {
