@@ -1,8 +1,10 @@
 import { AsyncLocalStorage } from "node:async_hooks"
+import { statSync } from "node:fs"
 import { extname, isAbsolute, matchesGlob, relative } from "node:path"
 
 import { executeBashHook } from "./bash-executor.js"
 import type { BashExecutionRequest, BashHookResult } from "./bash-types.js"
+import { discoverHookConfigEntries } from "./config-paths.js"
 import { loadDiscoveredHooksSnapshot } from "./load-hooks.js"
 import { getPiHooksLogger } from "./logger.js"
 import { SessionStateStore } from "./session-state.js"
