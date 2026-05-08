@@ -492,6 +492,25 @@ function readSnapshotImports(snapshot: DiscoveredHooksFileSnapshot, errors: Hook
     }
     for (const filePath of resolved.filePaths) {
       try {
+        // Pre-read size guard: refuse to load imported files that exceed the
+        // YAML cap. parseHooksFileEnvelope re-checks after read, but stating
+        // first avoids holding multi-MB strings in memory just to reject them.
+        try {
+          const importStat = statSync(filePath)
+          if (importStat.size > MAX_HOOKS_YAML_BYTES) {
+            errors.push(
+              createError(
+                snapshot.filePath,
+                "invalid_imports",
+                `[PIHOOKS] imported hooks file ${filePath} exceeds the ${MAX_HOOKS_YAML_BYTES}-byte size cap (got ${importStat.size} bytes); refusing to read.`,
+                "imports",
+              ),
+            )
+            continue
+          }
+        } catch {
+          // statSync errors fall through to defaultReadFile which surfaces them.
+        }
         imports.push({ scope: snapshot.scope, filePath, content: defaultReadFile(filePath) })
       } catch (error) {
         imports.push({ scope: snapshot.scope, filePath, readError: formatHookReadError(error) })
