@@ -484,6 +484,7 @@ export function createHooksRuntime(host: HostAdapter, options: CreateHooksRuntim
           dispatchStates,
           actionRecursionGuards,
           asyncQueues,
+          boundGlobMatcher,
         )
       }
 
@@ -505,6 +506,7 @@ export function createHooksRuntime(host: HostAdapter, options: CreateHooksRuntim
           toolName: eventInput.tool,
           toolArgs,
         },
+        boundGlobMatcher,
       )
 
       logger.debug("dispatch_end", "Finished post-tool dispatch.", {
