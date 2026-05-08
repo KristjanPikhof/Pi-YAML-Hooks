@@ -207,7 +207,7 @@ When an event matches, `pi-yaml-hooks` evaluates conditions and runs the configu
 
 `/hooks-status`, `/hooks-validate`, and hook-load validation errors also emit structured in-session diagnostics when PI supports custom messages.
 
-When PI exposes `ctx.ui.addAutocompleteProvider` (PI 0.69+), `pi-yaml-hooks` also layers guarded `/hooks` autocomplete into the editor. Older supported PI versions that do not expose that UI method continue loading normally. Suggestions include the command names plus contextual hook IDs, event names, config paths, and log-tail options where useful.
+PI exposes `ctx.ui.addAutocompleteProvider` on the supported `^0.74.0` line, so `pi-yaml-hooks` layers guarded `/hooks` autocomplete into the editor. Suggestions include the command names plus contextual hook IDs, event names, config paths, and log-tail options where useful.
 
 ## Important limitations
 

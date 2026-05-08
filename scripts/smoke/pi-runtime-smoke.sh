@@ -64,7 +64,7 @@ pi -e "$ROOT_DIR/extensions/index.ts"
 | session.created / idle / deleted |  |  |
 | /new or session switch |  |  |
 | /quit |  |  |
-| 0.70.x no-builtin-tools gate |  |  |
+| Future SDK no-builtin-tools gate |  |  |
 
 ## Attachments
 
