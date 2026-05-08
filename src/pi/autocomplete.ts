@@ -1,7 +1,7 @@
 import path from "node:path"
 
-import type { ExtensionContext } from "@mariozechner/pi-coding-agent"
-import type { AutocompleteItem, AutocompleteProvider as PiAutocompleteProvider } from "@mariozechner/pi-tui"
+import type { ExtensionContext } from "@earendil-works/pi-coding-agent"
+import type { AutocompleteItem, AutocompleteProvider as PiAutocompleteProvider } from "@earendil-works/pi-tui"
 
 import { resolveHookConfigPaths } from "../core/config-paths.js"
 import { loadDiscoveredHooksSnapshot } from "../core/load-hooks.js"
