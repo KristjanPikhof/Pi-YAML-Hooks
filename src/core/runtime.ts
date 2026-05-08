@@ -883,6 +883,7 @@ async function dispatchHooks(
         request.options,
         actionRecursionGuards,
         asyncQueues,
+        globMatcher,
       )
       if (result.blocked) {
         return result
