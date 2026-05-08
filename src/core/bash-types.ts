@@ -31,15 +31,17 @@ export interface BashProcessResult {
    * True when stdout and/or stderr exceeded the byte cap configured via
    * PI_YAML_HOOKS_MAX_OUTPUT_BYTES (default 1 MiB) and was truncated. Hooks
    * inspecting captured output should treat the trailing content as a
-   * partial view in that case.
+   * partial view in that case. Optional so that existing mocks/fixtures
+   * remain compatible; the executor always populates it as a boolean.
    */
-  readonly outputTruncated: boolean
+  readonly outputTruncated?: boolean
   /**
    * True when the JSON-serialized hook context exceeded the stdin cap
    * configured via PI_YAML_HOOKS_MAX_STDIN_BYTES (default 256 KiB) and the
    * payload delivered to the bash process was a reduced placeholder.
+   * Optional for the same reason as outputTruncated.
    */
-  readonly stdinTruncated: boolean
+  readonly stdinTruncated?: boolean
 }
 
 /**
