@@ -587,6 +587,7 @@ export function createHooksRuntime(host: HostAdapter, options: CreateHooksRuntim
           dispatchStates,
           actionRecursionGuards,
           asyncQueues,
+          boundGlobMatcher,
         )
         return
       }
