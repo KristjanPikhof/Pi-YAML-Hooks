@@ -247,6 +247,117 @@ const cases: Case[] = [
     },
   },
   {
+    name: "directory imports skip dotfiles and non-yaml entries",
+    run: () => {
+      const sandbox = createSandbox("dir-filter")
+      try {
+        const homeDir = path.join(sandbox, "home")
+        const projectRoot = path.join(sandbox, "project")
+        const dir = path.join(projectRoot, "shared", "hooks.d")
+        writeYaml(path.join(dir, "10-real.yaml"), `hooks:\n  - id: real\n    event: session.created\n    actions:\n      - notify: real\n`)
+        // Non-yaml content that, if loaded, would fail to parse and surface errors.
+        writeYaml(path.join(dir, ".DS_Store"), "binary garbage  not yaml\n")
+        writeYaml(path.join(dir, ".hidden.yaml"), "this: is: not: valid yaml\n")
+        writeYaml(path.join(dir, "README.md"), "# not a hook file\n")
+        writeYaml(path.join(projectRoot, ".pi", "hook", "hooks.yaml"), `imports:\n  - ../../shared/hooks.d\nhooks: []\n`)
+
+        const result = loadTrustedProject(projectRoot, homeDir)
+        const ids = getHookIds(result, "session.created")
+        const onlyRealLoaded = JSON.stringify(ids) === JSON.stringify(["real"])
+        const noJunkInFiles = !result.files.some((file) => file.endsWith(".DS_Store") || file.endsWith("README.md") || file.endsWith(".hidden.yaml"))
+        return onlyRealLoaded && noJunkInFiles && result.errors.length === 0
+          ? { ok: true }
+          : { ok: false, detail: JSON.stringify({ ids, files: result.files, errors: result.errors }) }
+      } finally {
+        cleanup(sandbox)
+      }
+    },
+  },
+  {
+    name: "package imports refused without PI_HOOKS_ALLOW_PACKAGE_IMPORTS",
+    run: () => {
+      const sandbox = createSandbox("pkg-gate")
+      try {
+        const homeDir = path.join(sandbox, "home")
+        const projectRoot = path.join(sandbox, "project")
+        const packageRoot = path.join(projectRoot, "node_modules", "hook-pack")
+        writeYaml(path.join(packageRoot, "package.json"), JSON.stringify({ name: "hook-pack", version: "1.0.0", main: "hooks.yaml" }, null, 2))
+        writeYaml(path.join(packageRoot, "hooks.yaml"), `hooks:\n  - id: packaged\n    event: session.created\n    actions:\n      - notify: packaged\n`)
+        writeYaml(path.join(projectRoot, ".pi", "hook", "hooks.yaml"), `imports:\n  - hook-pack\nhooks: []\n`)
+
+        const result = withEnv({ PI_HOOKS_ALLOW_PACKAGE_IMPORTS: undefined }, () => loadTrustedProject(projectRoot, homeDir))
+        const refused = result.errors.some(
+          (error) => error.code === "invalid_imports" && error.message.includes("[PIHOOKS]") && error.message.includes("PI_HOOKS_ALLOW_PACKAGE_IMPORTS"),
+        )
+        const notLoaded = (result.hooks.get("session.created") ?? []).length === 0
+        return refused && notLoaded
+          ? { ok: true }
+          : { ok: false, detail: JSON.stringify({ errors: result.errors, ids: getHookIds(result, "session.created") }) }
+      } finally {
+        cleanup(sandbox)
+      }
+    },
+  },
+  {
+    name: "global hooks file refuses imports without PI_HOOKS_ALLOW_GLOBAL_IMPORTS",
+    run: () => {
+      const sandbox = createSandbox("global-gate")
+      try {
+        const homeDir = path.join(sandbox, "home")
+        const projectRoot = path.join(sandbox, "project")
+        writeYaml(path.join(homeDir, "shared", "leaf.yaml"), `hooks:\n  - id: leaf\n    event: session.created\n    actions:\n      - notify: leaf\n`)
+        writeYaml(
+          path.join(homeDir, ".pi", "agent", "hook", "hooks.yaml"),
+          `imports:\n  - ../../../shared/leaf.yaml\nhooks: []\n`,
+        )
+        // Trust the project so we get a deterministic load path.
+        writeYaml(path.join(homeDir, ".pi", "agent", "trusted-projects.json"), JSON.stringify([projectRoot]))
+
+        const result = withEnv({ PI_HOOKS_ALLOW_GLOBAL_IMPORTS: undefined }, () =>
+          loadDiscoveredHooks({ homeDir, projectDir: projectRoot }),
+        )
+        const refused = result.errors.some(
+          (error) =>
+            error.code === "invalid_imports" &&
+            error.message.includes("[PIHOOKS]") &&
+            error.message.includes("PI_HOOKS_ALLOW_GLOBAL_IMPORTS"),
+        )
+        const notLoaded = (result.hooks.get("session.created") ?? []).length === 0
+        return refused && notLoaded
+          ? { ok: true }
+          : { ok: false, detail: JSON.stringify({ errors: result.errors, ids: getHookIds(result, "session.created") }) }
+      } finally {
+        cleanup(sandbox)
+      }
+    },
+  },
+  {
+    name: "global imports load when PI_HOOKS_ALLOW_GLOBAL_IMPORTS=1",
+    run: () => {
+      const sandbox = createSandbox("global-allow")
+      try {
+        const homeDir = path.join(sandbox, "home")
+        const projectRoot = path.join(sandbox, "project")
+        writeYaml(path.join(homeDir, "shared", "leaf.yaml"), `hooks:\n  - id: global-leaf\n    event: session.created\n    actions:\n      - notify: leaf\n`)
+        writeYaml(
+          path.join(homeDir, ".pi", "agent", "hook", "hooks.yaml"),
+          `imports:\n  - ../../../shared/leaf.yaml\nhooks: []\n`,
+        )
+        writeYaml(path.join(homeDir, ".pi", "agent", "trusted-projects.json"), JSON.stringify([projectRoot]))
+
+        const result = withEnv({ PI_HOOKS_ALLOW_GLOBAL_IMPORTS: "1" }, () =>
+          loadDiscoveredHooks({ homeDir, projectDir: projectRoot }),
+        )
+        const ids = getHookIds(result, "session.created")
+        return JSON.stringify(ids) === JSON.stringify(["global-leaf"])
+          ? { ok: true }
+          : { ok: false, detail: JSON.stringify({ ids, errors: result.errors, files: result.files }) }
+      } finally {
+        cleanup(sandbox)
+      }
+    },
+  },
+  {
     name: "path conditions are accepted on tool.after events",
     run: () => {
       const result = parseHooksFile(
