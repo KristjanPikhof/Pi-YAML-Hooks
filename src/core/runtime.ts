@@ -301,6 +301,10 @@ export function createHooksRuntime(host: HostAdapter, options: CreateHooksRuntim
   const dispatchStates = new Map<string, DispatchState>()
   const asyncQueues = new Map<string, AsyncQueueState>()
   const actionRecursionGuards = new AsyncLocalStorage<Set<string>>()
+  // P2-5 fix: per-runtime glob matcher cache. Rebuilt on hooks reload so a
+  // changed pattern set does not retain stale match closures or stale
+  // (path → boolean) entries.
+  let globMatcherCache: GlobMatcherCache = createGlobMatcherCache(lastLoadedSignature)
 
   function refreshHooks(): HookMap {
     if (options.hooks && !shouldReloadDiscoveredHooks) {
