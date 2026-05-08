@@ -46,6 +46,52 @@ function parseMaxOutputBytes(raw: string | undefined): number | undefined {
   return Number.isFinite(n) && n > 0 ? n : undefined
 }
 
+export function serializeContextForStdin(context: BashHookContext): string {
+  const json = JSON.stringify(context)
+  if (Buffer.byteLength(json, "utf8") <= MAX_STDIN_BYTES) {
+    return json
+  }
+  // The payload exceeds the byte cap. We can't safely truncate JSON in the
+  // middle (the hook would receive invalid JSON), so emit a synthetic but
+  // still-valid object describing the truncation. Hooks that rely on the
+  // full payload will see a clear marker rather than OOM the host.
+  const truncated = {
+    ...context,
+    _pi_hooks_truncated: true,
+    _pi_hooks_original_byte_length: Buffer.byteLength(json, "utf8"),
+    _pi_hooks_max_byte_length: MAX_STDIN_BYTES,
+  }
+  // Replace any large nested fields with placeholders to keep the truncated
+  // payload itself under the cap. Tool args/results are the typical culprit.
+  for (const key of Object.keys(truncated) as Array<keyof typeof truncated>) {
+    if (key === "_pi_hooks_truncated" || key === "_pi_hooks_original_byte_length" || key === "_pi_hooks_max_byte_length") {
+      continue
+    }
+    const value = (truncated as Record<string, unknown>)[key as string]
+    if (typeof value === "string" && value.length > 1024) {
+      (truncated as Record<string, unknown>)[key as string] = `[pi-hooks: truncated string of ${value.length} chars]`
+    } else if (value && typeof value === "object") {
+      const nestedSize = Buffer.byteLength(JSON.stringify(value), "utf8")
+      if (nestedSize > 4096) {
+        (truncated as Record<string, unknown>)[key as string] = `[pi-hooks: truncated nested value of ${nestedSize} bytes]`
+      }
+    }
+  }
+  const reduced = JSON.stringify(truncated)
+  if (Buffer.byteLength(reduced, "utf8") <= MAX_STDIN_BYTES) {
+    return reduced
+  }
+  // Last-resort: drop everything except the bare metadata.
+  return JSON.stringify({
+    session_id: context.session_id,
+    event: context.event,
+    cwd: context.cwd,
+    _pi_hooks_truncated: true,
+    _pi_hooks_original_byte_length: Buffer.byteLength(json, "utf8"),
+    _pi_hooks_max_byte_length: MAX_STDIN_BYTES,
+  })
+}
+
 function appendCapped(existing: string, chunk: Buffer): string {
   if (existing.length >= MAX_OUTPUT_BYTES) return existing
   const remaining = MAX_OUTPUT_BYTES - existing.length
