@@ -58,8 +58,12 @@ Example-only, not built-in product features:
 - when documenting `tool:`, state that PI receives a follow-up prompt
 - when documenting examples, say they are copyable patterns, not product features
 
+## Lockfile
+
+`package-lock.json` is canonical. `bun.lock` is not committed. Use `npm install` to update dependencies.
+
 ## Verification expectations
 
 - run `npm run typecheck` after TypeScript changes
 - run `npm run build` before executing compiled test files from `dist/`
-- use focused tests for the touched surface; `npm test` may need script fixes
+- use focused tests for the touched surface; `npm run test:internal` runs the full dev suite

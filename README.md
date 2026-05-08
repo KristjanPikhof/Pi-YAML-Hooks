@@ -4,6 +4,8 @@
 
 This repo is the PI port of [OpenCode-Hooks](https://github.com/KristjanPikhof/OpenCode-Hooks). The hook model is familiar, but the runtime is PI-native and the limits are explicit.
 
+**Repository note:** the npm package name is `pi-hooks`; the GitHub repository is `pi-yaml-hooks` (github.com/KristjanPikhof/pi-yaml-hooks).
+
 ## What it does
 
 - Run hooks on `tool.before.*`, `tool.after.*`, `file.changed`, `session.created`, `session.idle`, and `session.deleted`
