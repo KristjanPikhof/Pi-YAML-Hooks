@@ -10,7 +10,7 @@ usage() {
   cat <<'USAGE'
 Usage: scripts/check-sdk-matrix.sh [--dry-run] [--include-future] [--versions "<spec> [<spec>...]"]
 
-Runs the normal pi-hooks verification suite against temporary installs of the Pi SDK
+Runs the normal pi-yaml-hooks verification suite against temporary installs of the Pi SDK
 peer packages. The repository checkout, package.json, package-lock.json, and normal
 node_modules are not modified; each SDK spec is installed in a throwaway copy.
 
@@ -117,7 +117,7 @@ if [[ "$DRY_RUN" -eq 1 ]]; then
 fi
 
 for spec in "${SDK_SPECS[@]}"; do
-  tmp_dir="$(mktemp -d "${TMPDIR:-/tmp}/pi-hooks-sdk-${spec//[^A-Za-z0-9._-]/_}.XXXXXX")"
+  tmp_dir="$(mktemp -d "${TMPDIR:-/tmp}/pi-yaml-hooks-sdk-${spec//[^A-Za-z0-9._-]/_}.XXXXXX")"
   cleanup() {
     rm -rf "$tmp_dir"
   }

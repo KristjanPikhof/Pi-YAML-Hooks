@@ -1,10 +1,10 @@
 # Hooks reference
 
-This document describes the current `pi-hooks` behavior as implemented in this repository.
+This document describes the current `pi-yaml-hooks` behavior as implemented in this repository.
 
 ## `/hooks` command autocomplete
 
-On PI versions that expose `ctx.ui.addAutocompleteProvider`, `pi-hooks` registers a guarded autocomplete provider for the built-in `/hooks-*` commands. The provider is capability-detected at runtime, so older supported PI versions continue to load without this UI feature.
+On PI versions that expose `ctx.ui.addAutocompleteProvider`, `pi-yaml-hooks` registers a guarded autocomplete provider for the built-in `/hooks-*` commands. The provider is capability-detected at runtime, so older supported PI versions continue to load without this UI feature.
 
 Autocomplete suggestions are deterministic and intentionally lightweight: command names are static; event names use the supported event list; config paths and the current log path are resolved once when the provider registers; hook ID suggestions come from the loaded global/project snapshot at registration time.
 
@@ -40,15 +40,15 @@ Each action entry must define exactly one action key.
 
 ## Agent-start awareness
 
-At agent start, `pi-hooks` appends a short hook-awareness note to the system prompt. It summarizes the loaded hook count, current project trust state, and the main PI-specific limitations that matter while authoring or debugging hooks.
+At agent start, `pi-yaml-hooks` appends a short hook-awareness note to the system prompt. It summarizes the loaded hook count, current project trust state, and the main PI-specific limitations that matter while authoring or debugging hooks.
 
 This prompt injection is part of the current compatibility surface for the documented peer range `^0.68.1 || ^0.69.0`.
 
-Set `PI_HOOKS_PROMPT_AWARENESS=0` to disable this prompt injection.
+Set `PI_YAML_HOOKS_PROMPT_AWARENESS=0` to disable this prompt injection.
 
 ## Optional `user_bash` interception
 
-Set `PI_HOOKS_ENABLE_USER_BASH=1` to run human `!` / `!!` shell commands through `tool.before.bash` hooks before PI executes them.
+Set `PI_YAML_HOOKS_ENABLE_USER_BASH=1` to run human `!` / `!!` shell commands through `tool.before.bash` hooks before PI executes them.
 
 - this mode is opt-in and disabled by default
 - it applies only pre-bash safety hooks
@@ -64,8 +64,8 @@ Enabling this feature expands the trust surface: hooks in trusted projects can o
 - imports load before local hooks
 - import order is preserved
 - directory imports expand files in lexical order, but only `*.yaml` / `*.yml` entries are loaded; dotfiles (e.g. `.DS_Store`) and other extensions are skipped
-- package imports (bare specifiers like `hook-pack`) use Node module resolution from the importing file, but are **disabled by default**; set `PI_HOOKS_ALLOW_PACKAGE_IMPORTS=1` to opt in
-- imports declared inside the **global** `hooks.yaml` are **refused by default**; set `PI_HOOKS_ALLOW_GLOBAL_IMPORTS=1` to opt in
+- package imports (bare specifiers like `hook-pack`) use Node module resolution from the importing file, but are **disabled by default**; set `PI_YAML_HOOKS_ALLOW_PACKAGE_IMPORTS=1` to opt in
+- imports declared inside the **global** `hooks.yaml` are **refused by default**; set `PI_YAML_HOOKS_ALLOW_GLOBAL_IMPORTS=1` to opt in
 - duplicate imports are skipped by canonical path
 - cycles and missing imports produce load errors
 - imported files inherit the importing root scope (`global` or `project`)
@@ -74,14 +74,14 @@ Enabling this feature expands the trust surface: hooks in trusted projects can o
 
 Trust on PI is anchored at the project root, not at every imported file. Once a project root is trusted, all of its `imports:` are loaded transitively under that same trust decision. Two safety rails keep that expansion narrow:
 
-1. The global hooks file (which always loads) cannot pull in additional files unless `PI_HOOKS_ALLOW_GLOBAL_IMPORTS=1` is set, so a global hook cannot silently extend its own footprint.
-2. Bare-specifier imports that resolve through `node_modules` are gated behind `PI_HOOKS_ALLOW_PACKAGE_IMPORTS=1`, so an arbitrary npm dependency cannot register hooks just by being installed.
+1. The global hooks file (which always loads) cannot pull in additional files unless `PI_YAML_HOOKS_ALLOW_GLOBAL_IMPORTS=1` is set, so a global hook cannot silently extend its own footprint.
+2. Bare-specifier imports that resolve through `node_modules` are gated behind `PI_YAML_HOOKS_ALLOW_PACKAGE_IMPORTS=1`, so an arbitrary npm dependency cannot register hooks just by being installed.
 
-Both gates fail closed with a `[PIHOOKS]` error message so operators see exactly which import was refused and which env var to set.
+Both gates fail closed with a `[PIYAMLHOOKS]` error message so operators see exactly which import was refused and which env var to set.
 
 ## Load order and precedence
 
-`pi-hooks` discovers at most:
+`pi-yaml-hooks` discovers at most:
 
 - one global root hook file
 - one trusted project root hook file
@@ -135,7 +135,7 @@ Custom tool names can also match if the host emits them.
 
 | Event | When it fires | Notes |
 |---|---|---|
-| `file.changed` | After recognized file mutations | Synthesized by `pi-hooks`; see below for exact sources |
+| `file.changed` | After recognized file mutations | Synthesized by `pi-yaml-hooks`; see below for exact sources |
 | `session.created` | On PI startup or a genuinely new session | Does not fire on resume, reload, or fork re-entry |
 | `session.idle` | When the agent loop ends and there are no pending messages | Includes accumulated file changes since the last successful idle dispatch |
 | `session.deleted` | On shutdown and before session switches | Lossy by design; PI does not distinguish closed vs switched sessions such as `/new`, `/resume`, and `/fork` |
@@ -144,7 +144,7 @@ Custom tool names can also match if the host emits them.
 
 `file.changed` is synthesized from the tool result payload.
 
-On stock PI, `pi-hooks` can synthesize it from:
+On stock PI, `pi-yaml-hooks` can synthesize it from:
 
 - `write`
 - `edit`
@@ -155,7 +155,7 @@ On stock PI, `pi-hooks` can synthesize it from:
   - `touch`
   - `mkdir`
 
-For direct `write` and `edit` tool calls, `pi-hooks` reports the target path as a `modify` change.
+For direct `write` and `edit` tool calls, `pi-yaml-hooks` reports the target path as a `modify` change.
 
 If you install custom tools named `multiedit`, `patch`, or `apply_patch`, the runtime can also synthesize `file.changed` from them.
 
@@ -184,7 +184,7 @@ Path conditions are accepted on these events:
 - `tool.after.*`
 - `tool.after.<name>`
 
-For `tool.after.*` and `tool.after.<name>`, path conditions only match when `pi-hooks` can infer changed paths from the tool result. Stock PI path context is available for `write`, `edit`, and recognized mutation-shaped `bash` commands. Non-mutating tools such as `read`, `grep`, `find`, and `ls` have no changed paths, so path conditions on those events do not match.
+For `tool.after.*` and `tool.after.<name>`, path conditions only match when `pi-yaml-hooks` can infer changed paths from the tool result. Stock PI path context is available for `write`, `edit`, and recognized mutation-shaped `bash` commands. Non-mutating tools such as `read`, `grep`, `find`, and `ls` have no changed paths, so path conditions on those events do not match.
 
 ### `matchesAnyPath`
 
@@ -250,7 +250,7 @@ Exact behavior:
 - the command runs through `bash -c`
 - default timeout is `60000` ms
 - hook context JSON is written to the process stdin
-- stdout and stderr are captured up to `PI_HOOKS_MAX_OUTPUT_BYTES` bytes total per stream buffer, default `1048576`
+- stdout and stderr are captured up to `PI_YAML_HOOKS_MAX_OUTPUT_BYTES` bytes total per stream buffer, default `1048576`
 - on `tool.before.*`, exit code `2` blocks the tool call
 - other non-zero exits are logged as hook failures but do not block
 
@@ -312,7 +312,7 @@ Exact behavior:
 - `title` is optional; PI uses `Confirm` when omitted
 - if the user rejects on a `tool.before.*` hook, the tool call is blocked
 - on non-blocking events, rejection does not abort the event and later actions can still run
-- in headless PI, confirm denies by default unless `PI_HOOKS_CONFIRM_AUTO_APPROVE=1`
+- in headless PI, confirm denies by default unless `PI_YAML_HOOKS_CONFIRM_AUTO_APPROVE=1`
 
 ### `setStatus`
 
@@ -334,9 +334,9 @@ actions:
 Exact behavior:
 
 - this updates a PI status-bar slot when a UI surface exists
-- status entries are keyed per hook as `pi-hooks:<hook-id-or-fallback>@<source-file>`
+- status entries are keyed per hook as `pi-yaml-hooks:<hook-id-or-fallback>@<source-file>`
 - when `id` is present, it contributes to a stable per-hook key without colliding with the same id reused in another file
-- when `id` is absent, pi-hooks falls back to a deterministic source-location key so hooks in the same file do not collide
+- when `id` is absent, pi-yaml-hooks falls back to a deterministic source-location key so hooks in the same file do not collide
 - the parser currently requires a non-empty status string
 
 ### `command`
@@ -499,12 +499,12 @@ Use the repeatable runtime checklist in [`setup.md#runtime-pi-smoke-checklist`](
 
 For a real PI run in the documented peer range, verify these compatibility-sensitive surfaces:
 
-- `before_agent_start` appends the hook-awareness note when `PI_HOOKS_PROMPT_AWARENESS` is not `0`
+- `before_agent_start` appends the hook-awareness note when `PI_YAML_HOOKS_PROMPT_AWARENESS` is not `0`
 - headless mode still mentions degraded UI actions in that prompt note
 - `/hooks-status`, `/hooks-validate`, and `/hooks-reload` work and emit structured diagnostics when PI supports custom messages
 - `tool.before.bash`, `tool.after.read`, `tool.after.write`, and synthesized `file.changed` events reach smoke hooks
 - `tool:` actions produce a follow-up prompt in the current PI session, not imperative tool execution
-- `PI_HOOKS_ENABLE_USER_BASH=1` routes human `!` / `!!` commands through `tool.before.bash` only
+- `PI_YAML_HOOKS_ENABLE_USER_BASH=1` routes human `!` / `!!` commands through `tool.before.bash` only
 - `/new` triggers lossy cleanup via `session.deleted` and a fresh `session.created`
 - `/resume` and `/fork` do not re-fire `session.created` for an existing session re-entry
 - `/new`, `/resume`, `/fork`, and `/quit` do not double-run `session.deleted` cleanup when PI emits both `session_before_switch` and `session_shutdown`
@@ -525,23 +525,23 @@ For a real PI run in the documented peer range, verify these compatibility-sensi
 When you start PI with:
 
 ```bash
-PI_HOOKS_DEBUG=1 pi
+PI_YAML_HOOKS_DEBUG=1 pi
 ```
 
-`pi-hooks` writes persistent NDJSON logs to:
+`pi-yaml-hooks` writes persistent NDJSON logs to:
 
 ```text
-~/.pi/agent/logs/pi-hooks.ndjson
+~/.pi/agent/logs/pi-yaml-hooks.ndjson
 ```
 
 Useful environment variables:
 
 | Variable | Meaning |
 |---|---|
-| `PI_HOOKS_DEBUG=1` | enable debug-level persistent logging |
-| `PI_HOOKS_LOG_FILE=/path/file.ndjson` | override the log file location |
-| `PI_HOOKS_LOG_LEVEL=debug|info|warn|error` | explicitly set the log level |
-| `PI_HOOKS_LOG_STDERR=1` | mirror structured log entries to stderr |
+| `PI_YAML_HOOKS_DEBUG=1` | enable debug-level persistent logging |
+| `PI_YAML_HOOKS_LOG_FILE=/path/file.ndjson` | override the log file location |
+| `PI_YAML_HOOKS_LOG_LEVEL=debug|info|warn|error` | explicitly set the log level |
+| `PI_YAML_HOOKS_LOG_STDERR=1` | mirror structured log entries to stderr |
 
 The easiest way to inspect the log is:
 

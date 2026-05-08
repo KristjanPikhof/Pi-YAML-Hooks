@@ -5,13 +5,13 @@ Use this when you want to see exactly why a hook matched, skipped, or queued a f
 ## Start PI with persistent hook logging
 
 ```bash
-PI_HOOKS_DEBUG=1 pi
+PI_YAML_HOOKS_DEBUG=1 pi
 ```
 
 This writes NDJSON logs to:
 
 ```text
-~/.pi/agent/logs/pi-hooks.ndjson
+~/.pi/agent/logs/pi-yaml-hooks.ndjson
 ```
 
 ## Tail everything

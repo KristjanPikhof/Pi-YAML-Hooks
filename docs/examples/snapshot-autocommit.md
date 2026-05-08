@@ -2,7 +2,7 @@
 
 This repository includes a full Python example that auto-commits recognized file changes through a snapshot worker.
 
-This is an opt-in example, not a built-in `pi-hooks` feature.
+This is an opt-in example, not a built-in `pi-yaml-hooks` feature.
 
 ## Use the bundled example
 

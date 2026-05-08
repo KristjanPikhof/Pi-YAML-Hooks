@@ -1,6 +1,6 @@
-# pi-hooks documentation
+# pi-yaml-hooks documentation
 
-`pi-hooks` adds YAML-driven automation to PI. You define hooks in `hooks.yaml`, and PI runs them around tool calls, file mutations, and session lifecycle events.
+`pi-yaml-hooks` adds YAML-driven automation to PI. You define hooks in `hooks.yaml`, and PI runs them around tool calls, file mutations, and session lifecycle events.
 
 ## Start here
 
@@ -10,7 +10,7 @@
 - [`debugging-hooks.md`](./debugging-hooks.md) — persistent hook logs, tailing, and debugging workflow
 - [`examples/`](./examples/) — copy-paste examples for each major capability
 
-## What pi-hooks can do
+## What pi-yaml-hooks can do
 
 - Run `bash` before or after tool calls
 - Block pre-tool calls from `bash` hooks with exit code `2`

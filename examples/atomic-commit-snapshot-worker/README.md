@@ -1,13 +1,13 @@
-# Snapshot autocommit (pi-hooks example)
+# Snapshot autocommit (pi-yaml-hooks example)
 
-A YAML-driven pi-hooks example that auto-commits every recognized `file.changed` event. One hook, one
+A YAML-driven pi-yaml-hooks example that auto-commits every recognized `file.changed` event. One hook, one
 worker, one SQLite queue per worktree. Captures file edits, snapshots them into git
 objects, and replays them as real commits after a short quiet window.
 
-This is **not** a built-in feature of pi-hooks — it is an example you wire up
+This is **not** a built-in feature of pi-yaml-hooks — it is an example you wire up
 yourself by adding the snippet below to your `hooks.yaml`.
 
-## Use as a pi-hooks hook
+## Use as a pi-yaml-hooks hook
 
 ### 1. Prerequisites
 
@@ -286,8 +286,8 @@ Canonical handling rule:
 
 | Source | Capture fidelity | Notes |
 |------|------------------|-------|
-| `pi-hooks` `file.changed` payloads with explicit `changes[]` | Exact for the structured entries the payload reports | This is the preferred PI surface. The payload names the changed paths directly, so the hook can snapshot those paths without guessing. If the payload also adds extra `files[]` entries, those extras are additive best-effort hints rather than part of the exact structured operation set. |
-| `pi-hooks` `file.changed` payloads with `files[]` only and no structured `changes[]` | Best-effort | The event identifies candidate paths, but it does not preserve the exact operation set. |
+| `pi-yaml-hooks` `file.changed` payloads with explicit `changes[]` | Exact for the structured entries the payload reports | This is the preferred PI surface. The payload names the changed paths directly, so the hook can snapshot those paths without guessing. If the payload also adds extra `files[]` entries, those extras are additive best-effort hints rather than part of the exact structured operation set. |
+| `pi-yaml-hooks` `file.changed` payloads with `files[]` only and no structured `changes[]` | Best-effort | The event identifies candidate paths, but it does not preserve the exact operation set. |
 | Payloads that expose only inferred paths instead of a full structured edit set | Best-effort | The hook snapshots current contents of the discovered paths, but it cannot prove those paths are the complete edit set. |
 
 If a source is best-effort, the system should say that plainly. It should not
@@ -372,9 +372,9 @@ fidelity is not sufficient.
 
 ## Scope note
 
-This README documents the `pi-hooks` wiring for this example. The worker itself
+This README documents the `pi-yaml-hooks` wiring for this example. The worker itself
 can be adapted to other harnesses, but those integrations are out of scope
-here and are not part of the documented `pi-hooks` surface.
+here and are not part of the documented `pi-yaml-hooks` surface.
 
 ## Environment variables
 

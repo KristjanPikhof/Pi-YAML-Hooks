@@ -4,9 +4,9 @@ hooks:
   - id: smoke-session-created
     event: session.created
     actions:
-      - setStatus: "pi-hooks smoke: session created"
+      - setStatus: "pi-yaml-hooks smoke: session created"
       - notify:
-          text: "pi-hooks smoke session started"
+          text: "pi-yaml-hooks smoke session started"
           level: info
       - bash: |
           mkdir -p .pi/hooks-smoke
@@ -16,7 +16,7 @@ hooks:
     event: tool.before.bash
     actions:
       - confirm:
-          title: "pi-hooks smoke"
+          title: "pi-yaml-hooks smoke"
           message: "Allow this bash command during the smoke run?"
       - bash: |
           mkdir -p .pi/hooks-smoke
@@ -52,7 +52,7 @@ hooks:
   - id: smoke-session-idle
     event: session.idle
     actions:
-      - setStatus: "pi-hooks smoke: idle observed"
+      - setStatus: "pi-yaml-hooks smoke: idle observed"
       - bash: |
           mkdir -p .pi/hooks-smoke
           printf '{"event":"session.idle","session":"%s"}\n' "$PI_SESSION_ID" >> .pi/hooks-smoke/events.ndjson

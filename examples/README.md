@@ -9,4 +9,4 @@ the paths used by the YAML or update those paths.
 - [`pre-tool-developer-guards`](./pre-tool-developer-guards/) — block risky shell commands and protected-file edits before tools run
 - [`post-tool-developer-feedback`](./post-tool-developer-feedback/) — log useful post-tool context, update status, and nudge follow-up checks after developer-facing changes
 
-These are examples only. They are not built-in `pi-hooks` product features.
+These are examples only. They are not built-in `pi-yaml-hooks` product features.
