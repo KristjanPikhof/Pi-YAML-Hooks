@@ -8,7 +8,7 @@
   },
   "pi": {
     "extensions": [
-      "./extensions/index.ts"
+      "./dist/extensions/index.js"
     ]
   },
   "keywords": [
@@ -23,6 +23,7 @@
     "developer-tools"
   ],
   "files": [
+    "dist",
     "extensions",
     "docs",
     "examples/post-tool-developer-feedback",
@@ -34,6 +35,7 @@
   "scripts": {
     "typecheck": "tsc --noEmit",
     "build": "tsc && mkdir -p dist/extensions && printf 'export { default } from \"../index.js\";\n' > dist/extensions/index.js",
+    "prepublishOnly": "npm run build",
     "test": "echo \"no consumer tests\" && exit 0",
     "test:internal": "npm run build && node dist/pi/unsupported.test.js && node dist/pi/ux-actions.test.js && node dist/pi/config-paths.test.js && node dist/pi/logger.test.js && node dist/pi/logging.test.js && node dist/pi/adapter.test.js && node dist/core/bash-executor.test.js && node dist/core/load-hooks-composition.test.js && node dist/core/runtime-paths.test.js && node dist/core/runtime-async.test.js",
     "compat:sdk-matrix": "bash scripts/check-sdk-matrix.sh",
