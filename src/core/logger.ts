@@ -89,9 +89,9 @@ function openLogFileSafely(filePath: string): number | undefined {
     cachedLogFdPath = undefined
   }
 
-  // Refuse to follow symlinks. If a symlink already exists at filePath, do
-  // not open it — even if it points inside the home dir, an attacker who can
-  // create symlinks can redirect the log writes elsewhere.
+  // Refuse to follow symlinks. lstat is best-effort sanity; the authoritative
+  // check is the O_NOFOLLOW flag on the open call below, which closes the
+  // lstat→open TOCTOU window.
   try {
     const stat = lstatSync(filePath)
     if (stat.isSymbolicLink()) {
@@ -105,10 +105,13 @@ function openLogFileSafely(filePath: string): number | undefined {
     // ENOENT is expected on first open; continue and let openSync create it.
   }
 
-  // O_APPEND ("a") with 0o600 mode so the file is created restricted to the
-  // current user. O_NOFOLLOW would be ideal but openSync flag composition is
-  // platform-sensitive; the lstat check above gives us equivalent protection.
-  const fd = openSync(filePath, "a", 0o600)
+  // O_APPEND | O_CREAT | O_WRONLY with 0o600. O_NOFOLLOW closes the
+  // lstat→open race: if filePath becomes a symlink between the lstat above
+  // and this open, the kernel rejects with ELOOP.
+  const noFollow = (fsConstants as { O_NOFOLLOW?: number }).O_NOFOLLOW ?? 0
+  const flags =
+    fsConstants.O_WRONLY | fsConstants.O_APPEND | fsConstants.O_CREAT | noFollow
+  const fd = openSync(filePath, flags, 0o600)
   cachedLogFd = fd
   cachedLogFdPath = filePath
   return fd
