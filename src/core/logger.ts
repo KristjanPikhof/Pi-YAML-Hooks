@@ -1,4 +1,4 @@
-import { closeSync, lstatSync, mkdirSync, openSync, writeSync } from "node:fs"
+import { closeSync, constants as fsConstants, lstatSync, mkdirSync, openSync, writeSync } from "node:fs"
 import os from "node:os"
 import path from "node:path"
 
