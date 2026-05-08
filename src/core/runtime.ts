@@ -1592,6 +1592,47 @@ async function resolveActionSessionID(
   return state.isDeleted(targetSessionID) ? undefined : targetSessionID
 }
 
+// P2-10 helper: classify a thrown idle-dispatch error as transient
+// (host-died-style) vs. terminal (hook-no). Host-died errors are kept for
+// replay; everything else is consumed so a poisonous hook does not pin the
+// session in an infinite re-dispatch loop. We match a small set of
+// well-known IPC/socket failure shapes plus errors that explicitly tag
+// themselves with `code` strings the PI host emits when it goes down.
+function isHostDiedError(error: unknown): boolean {
+  if (error === null || typeof error !== "object") {
+    return false
+  }
+  const code = (error as { code?: unknown }).code
+  if (typeof code === "string") {
+    if (
+      code === "ECONNREFUSED" ||
+      code === "ECONNRESET" ||
+      code === "EPIPE" ||
+      code === "ENOTCONN" ||
+      code === "EHOSTDOWN" ||
+      code === "ESHUTDOWN" ||
+      code === "HOST_DIED" ||
+      code === "HOST_DISCONNECTED"
+    ) {
+      return true
+    }
+  }
+  const message = error instanceof Error ? error.message : String((error as { message?: unknown }).message ?? "")
+  if (typeof message === "string" && message.length > 0) {
+    const lowered = message.toLowerCase()
+    return (
+      lowered.includes("host died") ||
+      lowered.includes("host disconnected") ||
+      lowered.includes("connection refused") ||
+      lowered.includes("connection reset") ||
+      lowered.includes("broken pipe") ||
+      lowered.includes("socket hang up") ||
+      lowered.includes("not connected")
+    )
+  }
+  return false
+}
+
 async function abortSession(host: HostAdapter, sessionID: string): Promise<void> {
   try {
     await host.abort(sessionID)
