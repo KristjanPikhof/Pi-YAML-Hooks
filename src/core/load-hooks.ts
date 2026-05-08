@@ -87,7 +87,27 @@ export function parseHooksFile(filePath: string, content: string): ParsedHooksFi
   return parseHooksObject(filePath, envelope.body)
 }
 
+// P2 #16 fix: hard cap YAML payload size at 1 MiB before handing it to
+// `YAML.parseDocument`. Without this cap a multi-MB hooks.yaml (intentional or
+// accidental — e.g. checked-in fixture, runaway codegen, or hostile imported
+// file) can pin a CPU core inside the YAML parser and stall the dispatcher.
+const MAX_HOOKS_YAML_BYTES = 1024 * 1024
+
 function parseHooksFileEnvelope(filePath: string, content: string): ParsedHooksFileEnvelope {
+  const byteLength = Buffer.byteLength(content, "utf8")
+  if (byteLength > MAX_HOOKS_YAML_BYTES) {
+    return {
+      imports: [],
+      errors: [
+        {
+          code: "invalid_frontmatter",
+          filePath,
+          message: `[PIHOOKS] hooks.yaml exceeds the ${MAX_HOOKS_YAML_BYTES}-byte size cap (got ${byteLength} bytes); refusing to parse.`,
+        },
+      ],
+    }
+  }
+
   const document = YAML.parseDocument(content)
   if (document.errors.length > 0) {
     return {
