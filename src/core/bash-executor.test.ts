@@ -1,4 +1,5 @@
-import { mkdtempSync, readFileSync, rmSync } from "node:fs"
+import { execFileSync } from "node:child_process"
+import { existsSync, mkdtempSync, readFileSync, rmSync, statSync } from "node:fs"
 import os from "node:os"
 import path from "node:path"
 
@@ -8,7 +9,16 @@ import {
   resetExecutionContextCacheForTests,
   resolveExecutionContext,
   serializeContextForStdin,
+  setExecutionContextNowForTests,
+  trimToUtf8Boundary,
 } from "./bash-executor.js"
+import { TIMEOUT_EXIT_CODE } from "./bash-types.js"
+import {
+  flushPiHooksLoggerForTests,
+  getPiHooksLoggerDrainCountForTests,
+  getPiHooksLogger,
+  resetPiHooksLoggerForTests,
+} from "./logger.js"
 
 interface Case {
   readonly name: string
