@@ -930,6 +930,14 @@ async function executeHook(
   })
 
   if (hook.async) {
+    // P1-15 runtime guard: async hooks cannot enforce `action: stop` because
+    // the dispatch loop has already returned by the time the queued action
+    // runs. The proper rejection belongs in load-hooks parseHookAction
+    // (lane: core-loader); we surface a one-shot warning here so operators
+    // notice the silent no-op without spamming on every dispatch.
+    if (hook.action === "stop") {
+      warnAsyncStopOnce(logger, hook, projectDir)
+    }
     const asyncConfig = resolveAsyncExecutionConfig(hook, sessionID)
     enqueueAsyncHook(
       asyncQueues,
