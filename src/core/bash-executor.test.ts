@@ -512,7 +512,6 @@ const cases: Case[] = [
             session_id: "s1",
             event: "tool.after.write",
             cwd: tempDir,
-            // @ts-expect-error — extra fields are allowed by the actual context shape
             tool_args: { content: huge },
           },
         })
