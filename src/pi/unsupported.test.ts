@@ -80,7 +80,7 @@ const cases: Case[] = [
 
 export function main(): number {
   let failures = 0
-  // Silence the [pi-hooks] console.info noise so the test output is a clean
+  // Silence the [pi-yaml-hooks] console.info noise so the test output is a clean
   // per-case pass/fail log.
   const originalInfo = console.info
   console.info = () => {}

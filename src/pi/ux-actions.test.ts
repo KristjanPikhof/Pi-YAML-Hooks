@@ -263,8 +263,8 @@ const runtimeCases: RuntimeCase[] = [
       // file remain distinct here because they each have their own id.
       return statuses.length === 2 &&
           statuses[0]?.hookId !== statuses[1]?.hookId &&
-          statuses[0]?.hookId === "pi-hooks:build-status" &&
-          statuses[1]?.hookId === "pi-hooks:test-status"
+          statuses[0]?.hookId === "pi-yaml-hooks:build-status" &&
+          statuses[1]?.hookId === "pi-yaml-hooks:test-status"
         ? { ok: true }
         : { ok: false, detail: `statuses=${JSON.stringify(statuses)}` }
     },
@@ -340,8 +340,8 @@ const runtimeCases: RuntimeCase[] = [
       })
       const statuses = records.filter((r) => r.kind === "setStatus").map((r) => r.args as { hookId: string; text: string })
       return statuses.length === 2 &&
-          statuses[0]?.hookId === "pi-hooks:shared-status" &&
-          statuses[1]?.hookId === "pi-hooks:shared-status"
+          statuses[0]?.hookId === "pi-yaml-hooks:shared-status" &&
+          statuses[1]?.hookId === "pi-yaml-hooks:shared-status"
         ? { ok: true }
         : { ok: false, detail: `statuses=${JSON.stringify(statuses)}` }
     },

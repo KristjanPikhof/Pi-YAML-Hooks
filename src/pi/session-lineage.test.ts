@@ -23,7 +23,7 @@ interface FakeManager {
 }
 
 function withTmpDir<T>(run: (dir: string) => Promise<T> | T): Promise<T> {
-  const dir = mkdtempSync(path.join(os.tmpdir(), "pi-hooks-lineage-"))
+  const dir = mkdtempSync(path.join(os.tmpdir(), "pi-yaml-hooks-lineage-"))
   return Promise.resolve(run(dir)).finally(() => {
     rmSync(dir, { recursive: true, force: true })
   }) as Promise<T>

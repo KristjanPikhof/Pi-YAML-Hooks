@@ -12,20 +12,20 @@ This repo is the PI port of [OpenCode-Hooks](https://github.com/KristjanPikhof/O
 - Load one global root config and one trusted project root config, each with top-level `imports:`
 - Show built-in diagnostics with `/hooks-status`, `/hooks-validate`, `/hooks-trust`, `/hooks-reload`, and `/hooks-tail-log`
 - Emit structured in-session diagnostics when PI supports custom messages
-- Inject a short hook-awareness note before agent start (disable with `PI_HOOKS_PROMPT_AWARENESS=0`)
+- Inject a short hook-awareness note before agent start (disable with `PI_YAML_HOOKS_PROMPT_AWARENESS=0`)
 
 ## Requirements
 
 - macOS or Linux
 - Node.js `>=22.0.0`
-- `bash` on `$PATH` (override with `PI_HOOKS_BASH_EXECUTABLE`)
+- `bash` on `$PATH` (override with `PI_YAML_HOOKS_BASH_EXECUTABLE`)
 - `@mariozechner/pi-coding-agent ^0.68.1 || ^0.69.0`
 
 Windows is unsupported.
 
 ## Install
 
-`pi-hooks` is installable as a PI package straight from git. That is the recommended path. PI clones the repo, installs dependencies, and loads the extension declared in `package.json`.
+`pi-yaml-hooks` is installable as a PI package straight from git. That is the recommended path. PI clones the repo, installs dependencies, and loads the extension declared in `package.json`.
 
 ### Option 1: `pi install` (recommended)
 
@@ -69,7 +69,7 @@ Add the package source to the `packages` array. PI auto-installs missing project
 pi -e git:git@github.com:KristjanPikhof/pi-yaml-hooks
 ```
 
-This loads `pi-hooks` for the current run only. Nothing is written to settings.
+This loads `pi-yaml-hooks` for the current run only. Nothing is written to settings.
 
 ### Local development from a checkout
 
@@ -151,20 +151,20 @@ pi
 Expected startup output:
 
 ```text
-[pi-hooks] Loaded 1 hook (global: 1, project: 0).
+[pi-yaml-hooks] Loaded 1 hook (global: 1, project: 0).
 ```
 
 If a trusted project also has project hooks, the summary includes both scopes.
 
 ```text
-[pi-hooks] Loaded 3 hooks (global: 1, project: 2).
+[pi-yaml-hooks] Loaded 3 hooks (global: 1, project: 2).
 ```
 
 ## How it works
 
-`pi-hooks` discovers at most one global root config and one project root config. Each root file can import more hook files with top-level `imports:`. The project root is repo/worktree-aware, not exact-cwd-only, and project hooks load only when that repo or worktree anchor is trusted.
+`pi-yaml-hooks` discovers at most one global root config and one project root config. Each root file can import more hook files with top-level `imports:`. The project root is repo/worktree-aware, not exact-cwd-only, and project hooks load only when that repo or worktree anchor is trusted.
 
-When an event matches, `pi-hooks` evaluates conditions and runs the configured actions. `bash` actions receive hook context JSON on stdin plus injected `PI_*` environment variables such as `PI_PROJECT_DIR`, `PI_WORKTREE_DIR`, `PI_SESSION_ID`, and `PI_GIT_COMMON_DIR`. At agent start, the extension also appends a short hook-awareness note to the system prompt so PI has the current hook and trust context while it works.
+When an event matches, `pi-yaml-hooks` evaluates conditions and runs the configured actions. `bash` actions receive hook context JSON on stdin plus injected `PI_*` environment variables such as `PI_PROJECT_DIR`, `PI_WORKTREE_DIR`, `PI_SESSION_ID`, and `PI_GIT_COMMON_DIR`. At agent start, the extension also appends a short hook-awareness note to the system prompt so PI has the current hook and trust context while it works.
 
 ## Native PI surface
 
@@ -201,7 +201,7 @@ When an event matches, `pi-hooks` evaluates conditions and runs the configured a
 
 `/hooks-status`, `/hooks-validate`, and hook-load validation errors also emit structured in-session diagnostics when PI supports custom messages.
 
-When PI exposes `ctx.ui.addAutocompleteProvider` (PI 0.69+), `pi-hooks` also layers guarded `/hooks` autocomplete into the editor. Older supported PI versions that do not expose that UI method continue loading normally. Suggestions include the command names plus contextual hook IDs, event names, config paths, and log-tail options where useful.
+When PI exposes `ctx.ui.addAutocompleteProvider` (PI 0.69+), `pi-yaml-hooks` also layers guarded `/hooks` autocomplete into the editor. Older supported PI versions that do not expose that UI method continue loading normally. Suggestions include the command names plus contextual hook IDs, event names, config paths, and log-tail options where useful.
 
 ## Important limitations
 
@@ -212,19 +212,19 @@ These are the PI-specific constraints that matter most:
 - `action: stop` only has real effect on `tool.before.*`
 - `runIn: main` is unsupported for non-`bash` actions
 - `session.deleted` is intentionally lossy
-- `user_bash` interception is opt-in with `PI_HOOKS_ENABLE_USER_BASH=1`
+- `user_bash` interception is opt-in with `PI_YAML_HOOKS_ENABLE_USER_BASH=1`
 
 If you are authoring hooks, keep those rules in mind first. They explain most surprising behavior.
 
 ### What trust grants when user_bash is enabled
 
-When `PI_HOOKS_ENABLE_USER_BASH=1` is set, every human `!` / `!!` shell command typed in PI is routed through `tool.before.bash` hooks before PI executes it. This expands the trust surface significantly:
+When `PI_YAML_HOOKS_ENABLE_USER_BASH=1` is set, every human `!` / `!!` shell command typed in PI is routed through `tool.before.bash` hooks before PI executes it. This expands the trust surface significantly:
 
 - **Observation** — hooks can read the full command text via `PI_TOOL_ARGS` in the bash environment. Any trusted-project hook runs against every command you type.
 - **Blocking** — a `tool.before.bash` hook that exits with code `2` will prevent the command from running. A misconfigured or malicious hook can silently block commands.
-- **Exfiltration risk** — a bash action hook can read `PI_TOOL_ARGS` (which contains the typed command) and forward it to an external service. Only enable `PI_HOOKS_ENABLE_USER_BASH=1` if you trust every hook in every trusted project.
+- **Exfiltration risk** — a bash action hook can read `PI_TOOL_ARGS` (which contains the typed command) and forward it to an external service. Only enable `PI_YAML_HOOKS_ENABLE_USER_BASH=1` if you trust every hook in every trusted project.
 
-`pi-hooks` emits a one-time stderr warning on startup listing which trusted projects will have access when this env var is set. The warning fires once per process and names the projects currently in `~/.pi/agent/trusted-projects.json`.
+`pi-yaml-hooks` emits a one-time stderr warning on startup listing which trusted projects will have access when this env var is set. The warning fires once per process and names the projects currently in `~/.pi/agent/trusted-projects.json`.
 
 This mode is disabled by default. Agent-generated `bash` tool calls are always intercepted regardless of this setting.
 
@@ -245,7 +245,7 @@ Project hooks are gated by trust because they can run arbitrary `bash` with your
 Two ways to trust a project:
 
 ```bash
-PI_HOOKS_TRUST_PROJECT=1 pi
+PI_YAML_HOOKS_TRUST_PROJECT=1 pi
 ```
 
 or use the built-in command:

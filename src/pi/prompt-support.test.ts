@@ -30,29 +30,29 @@ function createFakePi(): FakePi {
 }
 
 function withTrust<T>(trusted: boolean, run: () => Promise<T>): Promise<T> {
-  const previous = process.env.PI_HOOKS_TRUST_PROJECT
-  if (trusted) process.env.PI_HOOKS_TRUST_PROJECT = "1"
-  else delete process.env.PI_HOOKS_TRUST_PROJECT
+  const previous = process.env.PI_YAML_HOOKS_TRUST_PROJECT
+  if (trusted) process.env.PI_YAML_HOOKS_TRUST_PROJECT = "1"
+  else delete process.env.PI_YAML_HOOKS_TRUST_PROJECT
   return run().finally(() => {
-    if (previous === undefined) delete process.env.PI_HOOKS_TRUST_PROJECT
-    else process.env.PI_HOOKS_TRUST_PROJECT = previous
+    if (previous === undefined) delete process.env.PI_YAML_HOOKS_TRUST_PROJECT
+    else process.env.PI_YAML_HOOKS_TRUST_PROJECT = previous
   })
 }
 
 async function withSandbox<T>(opts: { trusted: boolean; awareness?: string | null }, run: (projectDir: string) => Promise<T>): Promise<T> {
-  const projectDir = mkdtempSync(path.join(os.tmpdir(), "pi-hooks-prompt-"))
-  const homeDir = mkdtempSync(path.join(os.tmpdir(), "pi-hooks-home-"))
+  const projectDir = mkdtempSync(path.join(os.tmpdir(), "pi-yaml-hooks-prompt-"))
+  const homeDir = mkdtempSync(path.join(os.tmpdir(), "pi-yaml-hooks-home-"))
   const previousHome = process.env.HOME
   const previousUserProfile = process.env.USERPROFILE
-  const previousAwareness = process.env.PI_HOOKS_PROMPT_AWARENESS
+  const previousAwareness = process.env.PI_YAML_HOOKS_PROMPT_AWARENESS
   process.env.HOME = homeDir
   process.env.USERPROFILE = homeDir
   if (opts.awareness === undefined) {
-    delete process.env.PI_HOOKS_PROMPT_AWARENESS
+    delete process.env.PI_YAML_HOOKS_PROMPT_AWARENESS
   } else if (opts.awareness === null) {
-    delete process.env.PI_HOOKS_PROMPT_AWARENESS
+    delete process.env.PI_YAML_HOOKS_PROMPT_AWARENESS
   } else {
-    process.env.PI_HOOKS_PROMPT_AWARENESS = opts.awareness
+    process.env.PI_YAML_HOOKS_PROMPT_AWARENESS = opts.awareness
   }
   resetPiHooksLoggerForTests()
 
@@ -64,8 +64,8 @@ async function withSandbox<T>(opts: { trusted: boolean; awareness?: string | nul
       else process.env.HOME = previousHome
       if (previousUserProfile === undefined) delete process.env.USERPROFILE
       else process.env.USERPROFILE = previousUserProfile
-      if (previousAwareness === undefined) delete process.env.PI_HOOKS_PROMPT_AWARENESS
-      else process.env.PI_HOOKS_PROMPT_AWARENESS = previousAwareness
+      if (previousAwareness === undefined) delete process.env.PI_YAML_HOOKS_PROMPT_AWARENESS
+      else process.env.PI_YAML_HOOKS_PROMPT_AWARENESS = previousAwareness
       resetPiHooksLoggerForTests()
       rmSync(projectDir, { recursive: true, force: true })
       rmSync(homeDir, { recursive: true, force: true })
@@ -138,7 +138,7 @@ const cases: Case[] = [
         const ok =
           sp.startsWith("base system prompt") &&
           sp.includes("Hook-awareness for this session:") &&
-          sp.includes("pi-hooks loaded 1 hooks")
+          sp.includes("pi-yaml-hooks loaded 1 hooks")
         return ok ? { ok: true } : { ok: false, detail: sp }
       }),
   },
@@ -221,7 +221,7 @@ const cases: Case[] = [
       }),
   },
   {
-    name: "is disabled when PI_HOOKS_PROMPT_AWARENESS=0",
+    name: "is disabled when PI_YAML_HOOKS_PROMPT_AWARENESS=0",
     run: async () =>
       await withSandbox({ trusted: true, awareness: "0" }, async (projectDir) => {
         writeProjectHooks(
@@ -239,7 +239,7 @@ const cases: Case[] = [
       }),
   },
   {
-    name: "remains enabled for any non-'0' value of PI_HOOKS_PROMPT_AWARENESS",
+    name: "remains enabled for any non-'0' value of PI_YAML_HOOKS_PROMPT_AWARENESS",
     run: async () =>
       await withSandbox({ trusted: true, awareness: "1" }, async (projectDir) => {
         const pi = createFakePi()

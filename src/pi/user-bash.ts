@@ -7,7 +7,7 @@ import type { ExtensionAPI, ExtensionContext, UserBashEvent, UserBashEventResult
 
 import type { HooksRuntime } from "../core/runtime.js"
 
-const ENABLE_USER_BASH_ENV = "PI_HOOKS_ENABLE_USER_BASH"
+const ENABLE_USER_BASH_ENV = "PI_YAML_HOOKS_ENABLE_USER_BASH"
 
 // Monotonic fallback counter used when crypto.randomUUID is unavailable.
 let _monotonicCounter = 0
@@ -34,7 +34,7 @@ function emitUserBashWarningOnce(): void {
       : "  (no projects currently in trusted-projects.json)"
 
   process.stderr.write(
-    `[pi-hooks] WARNING: PI_HOOKS_ENABLE_USER_BASH=1 is set.\n` +
+    `[pi-yaml-hooks] WARNING: PI_YAML_HOOKS_ENABLE_USER_BASH=1 is set.\n` +
     `  Every human "!" / "!!" shell command typed in PI will be routed through\n` +
     `  tool.before.bash hooks before execution. Hooks in trusted projects can:\n` +
     `    - observe the full command text\n` +
@@ -100,7 +100,7 @@ export function registerUserBashInterception(
       const message = error instanceof Error ? error.message : String(error)
       return {
         result: {
-          output: `[pi-hooks] user_bash blocked: ${message}`,
+          output: `[pi-yaml-hooks] user_bash blocked: ${message}`,
           exitCode: undefined,
           cancelled: true,
           truncated: false,

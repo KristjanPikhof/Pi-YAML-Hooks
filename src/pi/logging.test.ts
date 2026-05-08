@@ -52,12 +52,12 @@ function createFakeHost(): HostAdapter {
 }
 
 async function withDebugLog<T>(run: (logFile: string) => Promise<T>): Promise<T> {
-  const tempDir = mkdtempSync(path.join(os.tmpdir(), "pi-hooks-logging-"))
-  const logFile = path.join(tempDir, "pi-hooks.ndjson")
-  const previousDebug = process.env.PI_HOOKS_DEBUG
-  const previousLogFile = process.env.PI_HOOKS_LOG_FILE
-  process.env.PI_HOOKS_DEBUG = "1"
-  process.env.PI_HOOKS_LOG_FILE = logFile
+  const tempDir = mkdtempSync(path.join(os.tmpdir(), "pi-yaml-hooks-logging-"))
+  const logFile = path.join(tempDir, "pi-yaml-hooks.ndjson")
+  const previousDebug = process.env.PI_YAML_HOOKS_DEBUG
+  const previousLogFile = process.env.PI_YAML_HOOKS_LOG_FILE
+  process.env.PI_YAML_HOOKS_DEBUG = "1"
+  process.env.PI_YAML_HOOKS_LOG_FILE = logFile
   resetPiHooksLoggerForTests()
 
   try {
@@ -65,15 +65,15 @@ async function withDebugLog<T>(run: (logFile: string) => Promise<T>): Promise<T>
     return await run(logFile)
   } finally {
     if (previousDebug === undefined) {
-      delete process.env.PI_HOOKS_DEBUG
+      delete process.env.PI_YAML_HOOKS_DEBUG
     } else {
-      process.env.PI_HOOKS_DEBUG = previousDebug
+      process.env.PI_YAML_HOOKS_DEBUG = previousDebug
     }
 
     if (previousLogFile === undefined) {
-      delete process.env.PI_HOOKS_LOG_FILE
+      delete process.env.PI_YAML_HOOKS_LOG_FILE
     } else {
-      process.env.PI_HOOKS_LOG_FILE = previousLogFile
+      process.env.PI_YAML_HOOKS_LOG_FILE = previousLogFile
     }
     resetPiHooksLoggerForTests()
     rmSync(tempDir, { recursive: true, force: true })
@@ -292,12 +292,12 @@ const cases: Case[] = [
   {
     name: "adapter dispatch failures are visible without debug mode",
     run: async () => {
-      const previousDebug = process.env.PI_HOOKS_DEBUG
-      const previousLevel = process.env.PI_HOOKS_LOG_LEVEL
-      const previousFile = process.env.PI_HOOKS_LOG_FILE
-      delete process.env.PI_HOOKS_DEBUG
-      delete process.env.PI_HOOKS_LOG_LEVEL
-      delete process.env.PI_HOOKS_LOG_FILE
+      const previousDebug = process.env.PI_YAML_HOOKS_DEBUG
+      const previousLevel = process.env.PI_YAML_HOOKS_LOG_LEVEL
+      const previousFile = process.env.PI_YAML_HOOKS_LOG_FILE
+      delete process.env.PI_YAML_HOOKS_DEBUG
+      delete process.env.PI_YAML_HOOKS_LOG_LEVEL
+      delete process.env.PI_YAML_HOOKS_LOG_FILE
       resetPiHooksLoggerForTests()
 
       const originalError = console.error
@@ -310,12 +310,12 @@ const cases: Case[] = [
         reportDispatchFailure(getPiHooksLogger(), { cwd: "/repo", event: "session.idle", sessionId: "s1" }, new Error("boom"))
       } finally {
         console.error = originalError
-        if (previousDebug === undefined) delete process.env.PI_HOOKS_DEBUG
-        else process.env.PI_HOOKS_DEBUG = previousDebug
-        if (previousLevel === undefined) delete process.env.PI_HOOKS_LOG_LEVEL
-        else process.env.PI_HOOKS_LOG_LEVEL = previousLevel
-        if (previousFile === undefined) delete process.env.PI_HOOKS_LOG_FILE
-        else process.env.PI_HOOKS_LOG_FILE = previousFile
+        if (previousDebug === undefined) delete process.env.PI_YAML_HOOKS_DEBUG
+        else process.env.PI_YAML_HOOKS_DEBUG = previousDebug
+        if (previousLevel === undefined) delete process.env.PI_YAML_HOOKS_LOG_LEVEL
+        else process.env.PI_YAML_HOOKS_LOG_LEVEL = previousLevel
+        if (previousFile === undefined) delete process.env.PI_YAML_HOOKS_LOG_FILE
+        else process.env.PI_YAML_HOOKS_LOG_FILE = previousFile
         resetPiHooksLoggerForTests()
       }
 

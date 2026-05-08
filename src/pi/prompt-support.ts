@@ -3,7 +3,7 @@ import type { BeforeAgentStartEvent, ExtensionAPI, ExtensionContext } from "@mar
 import { resolveProjectHookResolution } from "../core/config-paths.js"
 import { loadDiscoveredHooksSnapshot, summarizeHookSources } from "../core/load-hooks.js"
 
-const PROMPT_AWARENESS_DISABLE_ENV = "PI_HOOKS_PROMPT_AWARENESS"
+const PROMPT_AWARENESS_DISABLE_ENV = "PI_YAML_HOOKS_PROMPT_AWARENESS"
 
 export function registerPromptSupport(pi: ExtensionAPI): void {
   pi.on("before_agent_start", (event: BeforeAgentStartEvent, ctx: ExtensionContext) => {
@@ -39,7 +39,7 @@ function buildHookAwarenessSystemPrompt(ctx: ExtensionContext): string | undefin
     lines.push(`- current hook files have ${loaded.errors.length} validation issue(s); the runtime may be using the valid subset or a last known good hook set`)
     lines.push("- use /hooks-validate for the exact validation errors and active trust state")
   } else {
-    lines.push(`- pi-hooks loaded ${summary.total} hooks (${summary.global} global, ${summary.project} project)`)
+    lines.push(`- pi-yaml-hooks loaded ${summary.total} hooks (${summary.global} global, ${summary.project} project)`)
     lines.push(trustLine)
   }
 

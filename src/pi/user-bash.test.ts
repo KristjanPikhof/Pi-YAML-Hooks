@@ -64,7 +64,7 @@ const cases: Case[] = [
         _resetUserBashWarningForTests()
       }
 
-      const warningLines = lines.filter((l) => l.includes("PI_HOOKS_ENABLE_USER_BASH"))
+      const warningLines = lines.filter((l) => l.includes("PI_YAML_HOOKS_ENABLE_USER_BASH"))
       return warningLines.length === 1
         ? { ok: true }
         : { ok: false, detail: `expected 1 warning line, got ${warningLines.length}` }
