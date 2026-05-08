@@ -259,26 +259,69 @@ export function loadDiscoveredHooks(options: HookLoadOptions = {}): HookDiscover
 
 // P1 #10 fix: cache the last parsed snapshot keyed on a cheap stat-based
 // fingerprint so the hot-path dispatcher does not re-read + re-parse every
-// hooks.yaml on every tool call. Cache is bounded to one entry per (file
-// list + fingerprint) tuple — typically just one entry in practice.
+// hooks.yaml on every tool call.
+//
+// P1 #8 fix: the cache is now an LRU bounded at SNAPSHOT_CACHE_MAX entries.
+// Operators who switch between worktrees, run multi-project tooling, or
+// invoke the dispatcher across several `projectDir` values would otherwise
+// grow the map unbounded for the lifetime of the process. The cache key is
+// the discovered-entry file list (after import expansion is implicit via the
+// fingerprint), so each distinct project context contributes one entry.
+const SNAPSHOT_CACHE_MAX = 16
+
 interface CachedSnapshot {
   signature: string
   result: HookDiscoveryResult
 }
+// `Map` preserves insertion order in JS. We reuse that ordering to implement
+// classic LRU semantics: every read re-inserts the entry so it becomes the
+// most-recently-used; eviction drops the first key, which is the LRU one.
 const snapshotCache = new Map<string, CachedSnapshot>()
+
+// Test-only hook so unit tests can assert eviction behaviour deterministically
+// without leaking state across cases.
+export function __resetSnapshotCacheForTests(): void {
+  snapshotCache.clear()
+}
+
+export function __snapshotCacheSizeForTests(): number {
+  return snapshotCache.size
+}
+
+export function __snapshotCacheKeysForTests(): string[] {
+  return Array.from(snapshotCache.keys())
+}
 
 export function loadDiscoveredHooksSnapshot(options: HookLoadOptions = {}): HookLoadSnapshot {
   const entries = discoverHookConfigEntries(options)
   const snapshots = snapshotDiscoveredHookFiles(entries, options.readFile ?? defaultReadFile)
   const result = loadDiscoveredHooksFromSnapshots(snapshots)
+  // computeFingerprintSignature consumes `result.files`, which already
+  // contains every imported file expanded by `expandSnapshotImports`. Editing
+  // an imported file therefore changes the signature and busts the cache.
   const fingerprintSignature = computeFingerprintSignature(result.files)
   const cacheKey = entries.map((entry) => entry.filePath).join("\0")
   const cached = snapshotCache.get(cacheKey)
   if (cached && cached.signature === fingerprintSignature) {
+    // Touch on read so this entry becomes most-recently-used.
+    snapshotCache.delete(cacheKey)
+    snapshotCache.set(cacheKey, cached)
     return { ...cached.result, signature: cached.signature }
   }
 
+  // Insert (or refresh) the entry as the most-recently-used.
+  if (snapshotCache.has(cacheKey)) {
+    snapshotCache.delete(cacheKey)
+  }
   snapshotCache.set(cacheKey, { signature: fingerprintSignature, result })
+
+  // Evict LRU entries until we are within bounds.
+  while (snapshotCache.size > SNAPSHOT_CACHE_MAX) {
+    const oldestKey = snapshotCache.keys().next().value
+    if (oldestKey === undefined) break
+    snapshotCache.delete(oldestKey)
+  }
+
   return { ...result, signature: fingerprintSignature }
 }
 
