@@ -273,13 +273,13 @@ Use the generated `.pi/hooks-smoke/evidence.md` as the release artifact. Fill in
 
 ## SDK compatibility checks for maintainers
 
-The supported PI SDK peer range is `^0.68.1 || ^0.69.0`. Keep that range honest by running the compatibility matrix before merging SDK-sensitive changes:
+The supported PI SDK peer range is `^0.74.0` (under the new `@earendil-works` scope). Keep that range honest by running the compatibility matrix before merging SDK-sensitive changes:
 
 ```bash
 npm run compat:sdk-matrix
 ```
 
-This command is safe for normal development state. It copies the repository to a temporary directory, installs the matching `@mariozechner/pi-coding-agent` and `@mariozechner/pi-tui` pair for each SDK spec, then runs the normal verification commands in the temporary copy:
+This command is safe for normal development state. It copies the repository to a temporary directory, installs the matching `@earendil-works/pi-coding-agent` and `@earendil-works/pi-tui` pair for each SDK spec, then runs the normal verification commands in the temporary copy:
 
 1. `npm run typecheck`
 2. `npm test`
