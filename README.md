@@ -111,19 +111,19 @@ scripts/smoke/pi-runtime-smoke.sh
 
 Follow [`docs/setup.md#runtime-pi-smoke-checklist`](./docs/setup.md#runtime-pi-smoke-checklist) and keep the generated evidence file with release notes or SDK-widening PRs.
 
-`0.70.x` is a gated future target, not part of the current peer range. Try it explicitly with:
+Future SDK lines (`0.75.x` and later) are gated, not part of the current peer range. Try them explicitly with:
 
 ```bash
 npm run compat:sdk-matrix:future
 ```
 
-Do not widen support to 0.70.x until both the future matrix and the runtime smoke pass, including the no-builtin-tools gate.
+Do not widen support until both the future matrix and the runtime smoke pass, including the no-builtin-tools gate.
 
 ## Consumption
 
 Two install paths are supported:
 
-**PI package (recommended)** — use `pi install` or add the git URL to your `settings.json` as shown in the [Install](#install) section above. PI manages the clone and loads the extension automatically. This is the primary and fully-supported path.
+**PI package (recommended)** — use `pi install npm:pi-yaml-hooks` (or the git source) or add the entry to your `settings.json` as shown in the [Install](#install) section above. PI manages the install and loads the extension automatically. This is the primary and fully-supported path.
 
 **npm library** — `pi-yaml-hooks` is also published to npm and can be imported directly:
 
