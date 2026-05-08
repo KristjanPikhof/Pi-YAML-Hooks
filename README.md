@@ -25,9 +25,17 @@ Windows is unsupported.
 
 ## Install
 
-`pi-yaml-hooks` is installable as a PI package straight from git. That is the recommended path. PI clones the repo, installs dependencies, and loads the extension declared in `package.json`.
+`pi-yaml-hooks` is installable as a PI package from npm or directly from git. PI fetches the package, installs dependencies, and loads the extension declared in `package.json`.
 
-### Option 1: `pi install` (recommended)
+### Option 1: `pi install` from npm (recommended)
+
+```bash
+pi install npm:pi-yaml-hooks
+```
+
+This pulls the latest published `pi-yaml-hooks` from npm and writes to global settings at `~/.pi/agent/settings.json`. Add `-l` to write to project settings at `.pi/settings.json` instead.
+
+### Option 2: `pi install` from git (latest unreleased changes)
 
 ```bash
 # SSH
@@ -37,9 +45,7 @@ pi install git:git@github.com:KristjanPikhof/pi-yaml-hooks
 pi install https://github.com/KristjanPikhof/pi-yaml-hooks
 ```
 
-This writes to global settings at `~/.pi/agent/settings.json`. Add `-l` to write to project settings at `.pi/settings.json` instead.
-
-### Option 2: edit `settings.json` by hand
+### Option 3: edit `settings.json` by hand
 
 Add the package source to the `packages` array. PI auto-installs missing project packages on startup.
 
@@ -48,7 +54,7 @@ Add the package source to the `packages` array. PI auto-installs missing project
 ```json
 {
   "packages": [
-    "git:git@github.com:KristjanPikhof/pi-yaml-hooks"
+    "npm:pi-yaml-hooks"
   ]
 }
 ```
