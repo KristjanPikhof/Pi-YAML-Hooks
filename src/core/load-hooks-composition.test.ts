@@ -2,7 +2,14 @@ import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs"
 import os from "node:os"
 import path from "node:path"
 
-import { loadDiscoveredHooks, parseHooksFile } from "./load-hooks.js"
+import {
+  __resetSnapshotCacheForTests,
+  __snapshotCacheKeysForTests,
+  __snapshotCacheSizeForTests,
+  loadDiscoveredHooks,
+  loadDiscoveredHooksSnapshot,
+  parseHooksFile,
+} from "./load-hooks.js"
 
 interface Case {
   readonly name: string
