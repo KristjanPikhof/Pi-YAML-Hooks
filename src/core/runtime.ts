@@ -353,6 +353,11 @@ export function createHooksRuntime(host: HostAdapter, options: CreateHooksRuntim
     }
 
     hooks = nextLoaded.hooks
+    // P2-5 fix: rebuild the glob-matcher cache on every successful reload
+    // so newly added/removed conditions do not reuse stale match closures
+    // and so the per-pattern result cache is dropped along with the old
+    // hook set.
+    globMatcherCache = createGlobMatcherCache(nextLoaded.signature)
     // P3 #23: prefer the precomputed loaded.files list over re-flattening the
     // hook map on every reload. The two are equivalent (both are the unique
     // file paths a hook came from), but `loaded.files` is built once during
