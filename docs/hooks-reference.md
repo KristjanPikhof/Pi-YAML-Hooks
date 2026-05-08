@@ -55,6 +55,8 @@ Set `PI_HOOKS_ENABLE_USER_BASH=1` to run human `!` / `!!` shell commands through
 - it does not synthesize `tool.after.*` or `file.changed` for `user_bash`
 - headless confirm behavior stays fail-closed
 
+Enabling this feature expands the trust surface: hooks in trusted projects can observe, block, and potentially exfiltrate the typed command text. See [What trust grants when user_bash is enabled](../README.md#what-trust-grants-when-user_bash-is-enabled) in the main README for a full breakdown of the risks.
+
 ## `imports`
 
 `imports` composes hook files before the current file's own hooks are merged.

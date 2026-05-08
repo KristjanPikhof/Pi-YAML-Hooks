@@ -218,6 +218,18 @@ These are the PI-specific constraints that matter most:
 
 If you are authoring hooks, keep those rules in mind first. They explain most surprising behavior.
 
+### What trust grants when user_bash is enabled
+
+When `PI_HOOKS_ENABLE_USER_BASH=1` is set, every human `!` / `!!` shell command typed in PI is routed through `tool.before.bash` hooks before PI executes it. This expands the trust surface significantly:
+
+- **Observation** — hooks can read the full command text via `PI_TOOL_ARGS` in the bash environment. Any trusted-project hook runs against every command you type.
+- **Blocking** — a `tool.before.bash` hook that exits with code `2` will prevent the command from running. A misconfigured or malicious hook can silently block commands.
+- **Exfiltration risk** — a bash action hook can read `PI_TOOL_ARGS` (which contains the typed command) and forward it to an external service. Only enable `PI_HOOKS_ENABLE_USER_BASH=1` if you trust every hook in every trusted project.
+
+`pi-hooks` emits a one-time stderr warning on startup listing which trusted projects will have access when this env var is set. The warning fires once per process and names the projects currently in `~/.pi/agent/trusted-projects.json`.
+
+This mode is disabled by default. Agent-generated `bash` tool calls are always intercepted regardless of this setting.
+
 ## Config paths and trust
 
 Global root config paths:

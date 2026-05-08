@@ -469,6 +469,137 @@ const cases: Case[] = [
         : { ok: false, detail: JSON.stringify(result.errors) }
     },
   },
+  {
+    name: "yaml payload above 1 MiB is rejected with a [PIHOOKS] error",
+    run: () => {
+      // Build a >1 MiB string of valid-looking YAML so the size guard fires
+      // before YAML.parseDocument has a chance to spin on it.
+      const filler = "# " + "x".repeat(80) + "\n"
+      const repetitions = Math.ceil((1024 * 1024 + 1024) / filler.length)
+      const huge = filler.repeat(repetitions) + "hooks: []\n"
+      const result = parseHooksFile("/virtual/huge.yaml", huge)
+      const matched = result.errors.some(
+        (error) =>
+          error.code === "invalid_frontmatter" &&
+          error.message.includes("[PIHOOKS]") &&
+          error.message.includes("size cap"),
+      )
+      const noHooksLoaded = Array.from(result.hooks.values()).every((list) => list.length === 0)
+      return matched && noHooksLoaded
+        ? { ok: true }
+        : { ok: false, detail: JSON.stringify({ errors: result.errors, size: huge.length }) }
+    },
+  },
+  {
+    name: "snapshotCache evicts least-recently-used entry past 16 distinct project contexts",
+    run: () => {
+      const sandbox = createSandbox("snapshot-cache-lru")
+      try {
+        __resetSnapshotCacheForTests()
+        const homeDir = path.join(sandbox, "home")
+        // Create 17 distinct projects, each with a tiny project hooks.yaml.
+        const projects: string[] = []
+        for (let i = 0; i < 17; i += 1) {
+          const projectRoot = path.join(sandbox, `proj-${i}`)
+          writeYaml(
+            path.join(projectRoot, ".pi", "hook", "hooks.yaml"),
+            `hooks:\n  - id: p${i}\n    event: session.created\n    actions:\n      - notify: p${i}\n`,
+          )
+          projects.push(projectRoot)
+        }
+        // Pre-trust all projects up front.
+        writeYaml(
+          path.join(homeDir, ".pi", "agent", "trusted-projects.json"),
+          JSON.stringify(projects),
+        )
+
+        // Load the first 16 projects — cache fills exactly to its bound.
+        for (let i = 0; i < 16; i += 1) {
+          loadDiscoveredHooksSnapshot({ homeDir, projectDir: projects[i] })
+        }
+        const sizeAfter16 = __snapshotCacheSizeForTests()
+
+        // Capture the cache key for project 0 so we can assert it gets evicted
+        // when the 17th distinct project arrives.
+        const keyForProject0 = __snapshotCacheKeysForTests()[0]
+
+        // Loading the 17th project must evict project 0 (least-recently-used).
+        loadDiscoveredHooksSnapshot({ homeDir, projectDir: projects[16] })
+        const sizeAfter17 = __snapshotCacheSizeForTests()
+        const keysAfter17 = __snapshotCacheKeysForTests()
+        const project0Evicted = !keysAfter17.includes(keyForProject0)
+
+        return sizeAfter16 === 16 && sizeAfter17 === 16 && project0Evicted
+          ? { ok: true }
+          : {
+              ok: false,
+              detail: JSON.stringify({ sizeAfter16, sizeAfter17, project0Evicted, keysAfter17Count: keysAfter17.length }),
+            }
+      } finally {
+        __resetSnapshotCacheForTests()
+        cleanup(sandbox)
+      }
+    },
+  },
+  {
+    name: "snapshotCache busts when an imported file is edited",
+    run: () => {
+      const sandbox = createSandbox("snapshot-import-bust")
+      try {
+        __resetSnapshotCacheForTests()
+        const homeDir = path.join(sandbox, "home")
+        const projectRoot = path.join(sandbox, "project")
+        const importedPath = writeYaml(
+          path.join(projectRoot, "shared", "leaf.yaml"),
+          `hooks:\n  - id: leaf\n    event: session.created\n    actions:\n      - notify: original\n`,
+        )
+        writeYaml(
+          path.join(projectRoot, ".pi", "hook", "hooks.yaml"),
+          `imports:\n  - ../../shared/leaf.yaml\nhooks: []\n`,
+        )
+        writeYaml(path.join(homeDir, ".pi", "agent", "trusted-projects.json"), JSON.stringify([projectRoot]))
+
+        const first = loadDiscoveredHooksSnapshot({ homeDir, projectDir: projectRoot })
+        const firstNotify = first.hooks.get("session.created")?.[0]?.actions[0]
+        const firstHasOriginal = firstNotify && "notify" in firstNotify && firstNotify.notify === "original"
+
+        // Mutate mtime + size + content. Bump mtime far enough in the future
+        // so high-resolution filesystems definitely see a change.
+        const future = new Date(Date.now() + 5_000)
+        writeFileSync(
+          importedPath,
+          `hooks:\n  - id: leaf\n    event: session.created\n    actions:\n      - notify: edited\n`,
+          "utf8",
+        )
+        // Force a distinct mtime by touching the file via fs.utimes equivalent.
+        // Using writeFileSync alone is usually enough but we additionally bump
+        // mtime to be paranoid on coarse filesystems.
+        const fs = require("node:fs") as typeof import("node:fs")
+        fs.utimesSync(importedPath, future, future)
+
+        const second = loadDiscoveredHooksSnapshot({ homeDir, projectDir: projectRoot })
+        const secondNotify = second.hooks.get("session.created")?.[0]?.actions[0]
+        const secondHasEdited = secondNotify && "notify" in secondNotify && secondNotify.notify === "edited"
+
+        const signaturesDiffer = first.signature !== second.signature
+
+        return firstHasOriginal && secondHasEdited && signaturesDiffer
+          ? { ok: true }
+          : {
+              ok: false,
+              detail: JSON.stringify({
+                firstNotify,
+                secondNotify,
+                firstSignature: first.signature,
+                secondSignature: second.signature,
+              }),
+            }
+      } finally {
+        __resetSnapshotCacheForTests()
+        cleanup(sandbox)
+      }
+    },
+  },
 ]
 
 export function main(): number {
