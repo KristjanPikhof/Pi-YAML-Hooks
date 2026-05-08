@@ -1,4 +1,4 @@
-import type { BeforeAgentStartEvent, ExtensionAPI, ExtensionContext } from "@mariozechner/pi-coding-agent"
+import type { BeforeAgentStartEvent, ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent"
 
 import { resolveProjectHookResolution } from "../core/config-paths.js"
 import { loadDiscoveredHooksSnapshot, summarizeHookSources } from "../core/load-hooks.js"

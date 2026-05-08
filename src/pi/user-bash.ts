@@ -3,7 +3,7 @@ import { existsSync, readFileSync } from "node:fs"
 import os from "node:os"
 import path from "node:path"
 
-import type { ExtensionAPI, ExtensionContext, UserBashEvent, UserBashEventResult } from "@mariozechner/pi-coding-agent"
+import type { ExtensionAPI, ExtensionContext, UserBashEvent, UserBashEventResult } from "@earendil-works/pi-coding-agent"
 
 import type { HooksRuntime } from "../core/runtime.js"
 
