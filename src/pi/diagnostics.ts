@@ -1,7 +1,7 @@
 import type { ExtensionAPI } from "@mariozechner/pi-coding-agent"
 import { Box, Text } from "@mariozechner/pi-tui"
 
-export const PI_HOOKS_DIAGNOSTICS_MESSAGE_TYPE = "pi-hooks-diagnostics"
+export const PI_YAML_HOOKS_DIAGNOSTICS_MESSAGE_TYPE = "pi-yaml-hooks-diagnostics"
 
 export interface HookDiagnosticsMessageDetails {
   readonly title: string
@@ -14,11 +14,11 @@ export interface HookDiagnosticsMessageDetails {
 
 export function registerHookDiagnostics(pi: ExtensionAPI): void {
   pi.registerMessageRenderer<HookDiagnosticsMessageDetails>(
-    PI_HOOKS_DIAGNOSTICS_MESSAGE_TYPE,
+    PI_YAML_HOOKS_DIAGNOSTICS_MESSAGE_TYPE,
     (message, { expanded }, theme) => {
       const details = message.details
       const level = details?.level ?? "info"
-      const title = details?.title ?? "pi-hooks diagnostics"
+      const title = details?.title ?? "pi-yaml-hooks diagnostics"
       const badgeColor = level === "error" ? "error" : level === "warning" ? "warning" : "success"
       const lines = [`${theme.fg(badgeColor, `[${level.toUpperCase()}]`)} ${title}`, String(message.content)]
 
@@ -47,7 +47,7 @@ export function sendHookDiagnostics(
   },
 ): void {
   pi.sendMessage<HookDiagnosticsMessageDetails>({
-    customType: PI_HOOKS_DIAGNOSTICS_MESSAGE_TYPE,
+    customType: PI_YAML_HOOKS_DIAGNOSTICS_MESSAGE_TYPE,
     content: message.content,
     display: true,
     details: {

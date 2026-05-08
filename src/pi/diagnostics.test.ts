@@ -1,5 +1,5 @@
 import {
-  PI_HOOKS_DIAGNOSTICS_MESSAGE_TYPE,
+  PI_YAML_HOOKS_DIAGNOSTICS_MESSAGE_TYPE,
   registerHookDiagnostics,
   sendHookDiagnostics,
 } from "./diagnostics.js"
@@ -45,17 +45,17 @@ const cases: Case[] = [
       const pi = createFakePi()
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       registerHookDiagnostics(pi as any)
-      return pi.renderers.has(PI_HOOKS_DIAGNOSTICS_MESSAGE_TYPE)
+      return pi.renderers.has(PI_YAML_HOOKS_DIAGNOSTICS_MESSAGE_TYPE)
         ? { ok: true }
         : { ok: false, detail: JSON.stringify(Array.from(pi.renderers.keys())) }
     },
   },
   {
-    name: "PI_HOOKS_DIAGNOSTICS_MESSAGE_TYPE is the canonical pi-hooks-diagnostics string",
+    name: "PI_YAML_HOOKS_DIAGNOSTICS_MESSAGE_TYPE is the canonical pi-yaml-hooks-diagnostics string",
     run: () =>
-      PI_HOOKS_DIAGNOSTICS_MESSAGE_TYPE === "pi-hooks-diagnostics"
+      PI_YAML_HOOKS_DIAGNOSTICS_MESSAGE_TYPE === "pi-yaml-hooks-diagnostics"
         ? { ok: true }
-        : { ok: false, detail: PI_HOOKS_DIAGNOSTICS_MESSAGE_TYPE },
+        : { ok: false, detail: PI_YAML_HOOKS_DIAGNOSTICS_MESSAGE_TYPE },
   },
   {
     name: "sendHookDiagnostics emits a structured message with display=true",
@@ -72,7 +72,7 @@ const cases: Case[] = [
       }
       const msg = pi.messages[0]
       const details = msg.details as { title?: string; level?: string; sections?: unknown }
-      if (msg.customType !== PI_HOOKS_DIAGNOSTICS_MESSAGE_TYPE) {
+      if (msg.customType !== PI_YAML_HOOKS_DIAGNOSTICS_MESSAGE_TYPE) {
         return { ok: false, detail: `customType=${msg.customType}` }
       }
       if (msg.content !== "test content") {
@@ -127,7 +127,7 @@ const cases: Case[] = [
       const pi = createFakePi()
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       registerHookDiagnostics(pi as any)
-      const renderer = pi.renderers.get(PI_HOOKS_DIAGNOSTICS_MESSAGE_TYPE) as (
+      const renderer = pi.renderers.get(PI_YAML_HOOKS_DIAGNOSTICS_MESSAGE_TYPE) as (
         message: { content: string; details: { title: string; level: "info" | "warning" | "error"; sections?: Array<{ label: string; lines: string[] }> } | undefined },
         opts: { expanded: boolean },
         theme: { fg: (color: string, text: string) => string; bg: (color: string, text: string) => string },
@@ -186,7 +186,7 @@ const cases: Case[] = [
       const pi = createFakePi()
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       registerHookDiagnostics(pi as any)
-      const renderer = pi.renderers.get(PI_HOOKS_DIAGNOSTICS_MESSAGE_TYPE) as (
+      const renderer = pi.renderers.get(PI_YAML_HOOKS_DIAGNOSTICS_MESSAGE_TYPE) as (
         message: { content: string; details: { title: string; level: "info"; sections?: Array<{ label: string; lines: string[] }> } | undefined },
         opts: { expanded: boolean },
         theme: { fg: (color: string, text: string) => string; bg: (color: string, text: string) => string },
@@ -224,7 +224,7 @@ const cases: Case[] = [
       const pi = createFakePi()
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       registerHookDiagnostics(pi as any)
-      const renderer = pi.renderers.get(PI_HOOKS_DIAGNOSTICS_MESSAGE_TYPE) as (
+      const renderer = pi.renderers.get(PI_YAML_HOOKS_DIAGNOSTICS_MESSAGE_TYPE) as (
         message: { content: string; details: { title: string; level: "info"; sections?: never } | undefined },
         opts: { expanded: boolean },
         theme: { fg: (color: string, text: string) => string; bg: (color: string, text: string) => string },

@@ -13,33 +13,33 @@ function withLoggerEnv<T>(
   options: { debug?: boolean; level?: string; logFile?: string },
   run: (logFile: string) => T,
 ): T {
-  const tempDir = mkdtempSync(path.join(os.tmpdir(), "pi-hooks-logger-"))
-  const logFile = options.logFile ?? path.join(tempDir, "pi-hooks.ndjson")
+  const tempDir = mkdtempSync(path.join(os.tmpdir(), "pi-yaml-hooks-logger-"))
+  const logFile = options.logFile ?? path.join(tempDir, "pi-yaml-hooks.ndjson")
 
-  const previousDebug = process.env.PI_HOOKS_DEBUG
-  const previousLogLevel = process.env.PI_HOOKS_LOG_LEVEL
-  const previousLogFile = process.env.PI_HOOKS_LOG_FILE
+  const previousDebug = process.env.PI_YAML_HOOKS_DEBUG
+  const previousLogLevel = process.env.PI_YAML_HOOKS_LOG_LEVEL
+  const previousLogFile = process.env.PI_YAML_HOOKS_LOG_FILE
 
-  if (options.debug) process.env.PI_HOOKS_DEBUG = "1"
-  else delete process.env.PI_HOOKS_DEBUG
+  if (options.debug) process.env.PI_YAML_HOOKS_DEBUG = "1"
+  else delete process.env.PI_YAML_HOOKS_DEBUG
 
-  if (options.level !== undefined) process.env.PI_HOOKS_LOG_LEVEL = options.level
-  else delete process.env.PI_HOOKS_LOG_LEVEL
+  if (options.level !== undefined) process.env.PI_YAML_HOOKS_LOG_LEVEL = options.level
+  else delete process.env.PI_YAML_HOOKS_LOG_LEVEL
 
-  process.env.PI_HOOKS_LOG_FILE = logFile
+  process.env.PI_YAML_HOOKS_LOG_FILE = logFile
   resetPiHooksLoggerForTests()
 
   try {
     return run(logFile)
   } finally {
-    if (previousDebug === undefined) delete process.env.PI_HOOKS_DEBUG
-    else process.env.PI_HOOKS_DEBUG = previousDebug
+    if (previousDebug === undefined) delete process.env.PI_YAML_HOOKS_DEBUG
+    else process.env.PI_YAML_HOOKS_DEBUG = previousDebug
 
-    if (previousLogLevel === undefined) delete process.env.PI_HOOKS_LOG_LEVEL
-    else process.env.PI_HOOKS_LOG_LEVEL = previousLogLevel
+    if (previousLogLevel === undefined) delete process.env.PI_YAML_HOOKS_LOG_LEVEL
+    else process.env.PI_YAML_HOOKS_LOG_LEVEL = previousLogLevel
 
-    if (previousLogFile === undefined) delete process.env.PI_HOOKS_LOG_FILE
-    else process.env.PI_HOOKS_LOG_FILE = previousLogFile
+    if (previousLogFile === undefined) delete process.env.PI_YAML_HOOKS_LOG_FILE
+    else process.env.PI_YAML_HOOKS_LOG_FILE = previousLogFile
 
     resetPiHooksLoggerForTests()
     rmSync(tempDir, { recursive: true, force: true })
@@ -75,9 +75,9 @@ const cases: Case[] = [
   {
     name: "refuses to write log when target path is a symlink",
     run: () => {
-      const tempDir = mkdtempSync(path.join(os.tmpdir(), "pi-hooks-logger-symlink-"))
+      const tempDir = mkdtempSync(path.join(os.tmpdir(), "pi-yaml-hooks-logger-symlink-"))
       const realTarget = path.join(tempDir, "real-elsewhere.log")
-      const linkPath = path.join(tempDir, "pi-hooks.ndjson")
+      const linkPath = path.join(tempDir, "pi-yaml-hooks.ndjson")
 
       writeFileSync(realTarget, "")
       try {

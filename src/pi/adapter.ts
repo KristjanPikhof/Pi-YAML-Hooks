@@ -1,5 +1,5 @@
 /**
- * PI adapter for pi-hooks.
+ * PI adapter for pi-yaml-hooks.
  *
  * Loads hooks.yaml via `core/load-hooks.ts`, constructs the core runtime via
  * `createHooksRuntime`, and forwards every relevant PI event into the
@@ -67,7 +67,7 @@ export function registerAdapter(pi: ExtensionAPI): void {
   if (process.platform === "win32") {
     // eslint-disable-next-line no-console
     console.warn(
-      "[pi-hooks] bash hooks require a POSIX bash on PATH; Windows is unsupported. Extension is a no-op.",
+      "[pi-yaml-hooks] bash hooks require a POSIX bash on PATH; Windows is unsupported. Extension is a no-op.",
     );
     logger.warn("adapter_disabled", "Windows is unsupported; extension registered as a no-op.", {
       details: { platform: process.platform },
@@ -82,8 +82,8 @@ export function registerAdapter(pi: ExtensionAPI): void {
   if (typeof (path as { matchesGlob?: unknown }).matchesGlob !== "function") {
     // eslint-disable-next-line no-console
     console.error(
-      `[pi-hooks] node:path.matchesGlob is unavailable on this Node runtime (${process.version}). ` +
-        `pi-hooks requires Node >= 22.0.0 for path conditions to work. Extension is a no-op.`,
+      `[pi-yaml-hooks] node:path.matchesGlob is unavailable on this Node runtime (${process.version}). ` +
+        `pi-yaml-hooks requires Node >= 22.0.0 for path conditions to work. Extension is a no-op.`,
     );
     logger.error("adapter_disabled", "node:path.matchesGlob is unavailable; extension registered as a no-op.", {
       details: { nodeVersion: process.version },
@@ -179,7 +179,7 @@ export function registerAdapter(pi: ExtensionAPI): void {
     if (loaded.errors.length > 0) {
       // eslint-disable-next-line no-console
       console.error(
-        `[pi-hooks] Failed to load some hooks; continuing with valid hooks:\n${loaded.errors
+        `[pi-yaml-hooks] Failed to load some hooks; continuing with valid hooks:\n${loaded.errors
           .map((error) => `${error.filePath}${error.path ? `#${error.path}` : ""}: ${error.message}`)
           .join("\n")}`,
       );
@@ -537,7 +537,7 @@ export function createHostAdapter(
         if (!warnedNoNotify) {
           // eslint-disable-next-line no-console
           console.warn(
-            "[pi-hooks] notify action skipped: PI UI surface unavailable (likely print/RPC mode).",
+            "[pi-yaml-hooks] notify action skipped: PI UI surface unavailable (likely print/RPC mode).",
           );
           logger.warn("host_notify", "notify action skipped because PI UI surface is unavailable.", {
             cwd: projectDir,
@@ -581,20 +581,20 @@ export function createHostAdapter(
         if (!warnedNoConfirm) {
           // eslint-disable-next-line no-console
           console.warn(
-            "[pi-hooks] confirm action denied: PI UI surface unavailable (likely print/RPC mode). " +
+            "[pi-yaml-hooks] confirm action denied: PI UI surface unavailable (likely print/RPC mode). " +
               "confirm: hooks fail closed in headless mode so destructive operations are not silently auto-approved. " +
-              "Set PI_HOOKS_CONFIRM_AUTO_APPROVE=1 to override.",
+              "Set PI_YAML_HOOKS_CONFIRM_AUTO_APPROVE=1 to override.",
           );
           logger.warn("host_confirm", "confirm action denied because PI UI surface is unavailable.", {
             cwd: projectDir,
-            details: { autoApprove: process.env.PI_HOOKS_CONFIRM_AUTO_APPROVE === "1" },
+            details: { autoApprove: process.env.PI_YAML_HOOKS_CONFIRM_AUTO_APPROVE === "1" },
           });
           warnedNoConfirm = true;
         }
         // P1 #5 fix: fail closed in headless mode. Returning false routes
         // through the runtime's block path for pre-tool hooks. Operators who
         // explicitly want to keep the old behavior can opt back in.
-        return process.env.PI_HOOKS_CONFIRM_AUTO_APPROVE === "1";
+        return process.env.PI_YAML_HOOKS_CONFIRM_AUTO_APPROVE === "1";
       }
       try {
         // PI's confirm takes (title, message) as positional args; title is
@@ -624,7 +624,7 @@ export function createHostAdapter(
         if (!warnedNoSetStatus) {
           // eslint-disable-next-line no-console
           console.warn(
-            "[pi-hooks] setStatus action skipped: PI UI surface unavailable (likely print/RPC mode).",
+            "[pi-yaml-hooks] setStatus action skipped: PI UI surface unavailable (likely print/RPC mode).",
           );
           logger.warn("host_set_status", "setStatus action skipped because PI UI surface is unavailable.", {
             cwd: projectDir,
@@ -684,7 +684,7 @@ export function reportDispatchFailure(
     details: { ...(context.details ?? {}), error: message },
   });
   // eslint-disable-next-line no-console
-  console.error(`[pi-hooks] ${context.event} dispatch failed: ${message}`);
+  console.error(`[pi-yaml-hooks] ${context.event} dispatch failed: ${message}`);
 }
 
 function safeGetSessionId(sessionManager: ReadonlySessionManager | undefined): string | undefined {
@@ -714,9 +714,9 @@ function isStaleSessionBoundError(error: unknown): boolean {
 }
 
 function debugLog(message: string): void {
-  if (process.env.PI_HOOKS_DEBUG) {
+  if (process.env.PI_YAML_HOOKS_DEBUG) {
     getPiHooksLogger().debug("adapter_debug", message)
     // eslint-disable-next-line no-console
-    console.warn(`[pi-hooks] ${message}`);
+    console.warn(`[pi-yaml-hooks] ${message}`);
   }
 }

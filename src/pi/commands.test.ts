@@ -4,7 +4,7 @@ import path from "node:path"
 
 import { resetPiHooksLoggerForTests } from "../core/logger.js"
 import { registerCommands } from "./commands.js"
-import { PI_HOOKS_DIAGNOSTICS_MESSAGE_TYPE } from "./diagnostics.js"
+import { PI_YAML_HOOKS_DIAGNOSTICS_MESSAGE_TYPE } from "./diagnostics.js"
 
 interface Case {
   readonly name: string
@@ -86,15 +86,15 @@ function trustedFilePath(): string {
 }
 
 async function withSandbox<T>(opts: { trusted: boolean }, run: (projectDir: string) => Promise<T>): Promise<T> {
-  const projectDir = mkdtempSync(path.join(os.tmpdir(), "pi-hooks-cmds-"))
-  const homeDir = mkdtempSync(path.join(os.tmpdir(), "pi-hooks-home-"))
+  const projectDir = mkdtempSync(path.join(os.tmpdir(), "pi-yaml-hooks-cmds-"))
+  const homeDir = mkdtempSync(path.join(os.tmpdir(), "pi-yaml-hooks-home-"))
   const previousHome = process.env.HOME
   const previousUserProfile = process.env.USERPROFILE
-  const previousTrust = process.env.PI_HOOKS_TRUST_PROJECT
+  const previousTrust = process.env.PI_YAML_HOOKS_TRUST_PROJECT
   process.env.HOME = homeDir
   process.env.USERPROFILE = homeDir
-  if (opts.trusted) process.env.PI_HOOKS_TRUST_PROJECT = "1"
-  else delete process.env.PI_HOOKS_TRUST_PROJECT
+  if (opts.trusted) process.env.PI_YAML_HOOKS_TRUST_PROJECT = "1"
+  else delete process.env.PI_YAML_HOOKS_TRUST_PROJECT
   resetPiHooksLoggerForTests()
   const previousInfo = console.info
   console.info = () => {}
@@ -106,8 +106,8 @@ async function withSandbox<T>(opts: { trusted: boolean }, run: (projectDir: stri
     else process.env.HOME = previousHome
     if (previousUserProfile === undefined) delete process.env.USERPROFILE
     else process.env.USERPROFILE = previousUserProfile
-    if (previousTrust === undefined) delete process.env.PI_HOOKS_TRUST_PROJECT
-    else process.env.PI_HOOKS_TRUST_PROJECT = previousTrust
+    if (previousTrust === undefined) delete process.env.PI_YAML_HOOKS_TRUST_PROJECT
+    else process.env.PI_YAML_HOOKS_TRUST_PROJECT = previousTrust
     resetPiHooksLoggerForTests()
     rmSync(projectDir, { recursive: true, force: true })
     rmSync(homeDir, { recursive: true, force: true })
@@ -140,7 +140,7 @@ const cases: Case[] = [
         const ctx = createCtx({ cwd: projectDir, hasUI: true })
         await pi.commands.get("hooks-status")!("", ctx as never)
 
-        const diag = pi.messages.find((m) => m.customType === PI_HOOKS_DIAGNOSTICS_MESSAGE_TYPE)
+        const diag = pi.messages.find((m) => m.customType === PI_YAML_HOOKS_DIAGNOSTICS_MESSAGE_TYPE)
         if (!diag) return { ok: false, detail: "no diagnostics message" }
         const content = String(diag.content ?? "")
         return content.includes("Project trusted: yes") && content.includes("Hook log:")
@@ -158,7 +158,7 @@ const cases: Case[] = [
         const ctx = createCtx({ cwd: projectDir, hasUI: true })
         await pi.commands.get("hooks-status")!("", ctx as never)
 
-        const diag = pi.messages.find((m) => m.customType === PI_HOOKS_DIAGNOSTICS_MESSAGE_TYPE)
+        const diag = pi.messages.find((m) => m.customType === PI_YAML_HOOKS_DIAGNOSTICS_MESSAGE_TYPE)
         const content = String(diag?.content ?? "")
         return content.includes("Project trusted: no") && content.includes("Project hooks exist but are not active")
           ? { ok: true }
@@ -175,7 +175,7 @@ const cases: Case[] = [
         const ctx = createCtx({ cwd: projectDir, hasUI: true })
         await pi.commands.get("hooks-validate")!("", ctx as never)
 
-        const diag = pi.messages.find((m) => m.customType === PI_HOOKS_DIAGNOSTICS_MESSAGE_TYPE)
+        const diag = pi.messages.find((m) => m.customType === PI_YAML_HOOKS_DIAGNOSTICS_MESSAGE_TYPE)
         const content = String(diag?.content ?? "")
         return content.includes("valid but untrusted") && content.includes("/hooks-trust")
           ? { ok: true }
@@ -192,7 +192,7 @@ const cases: Case[] = [
         const ctx = createCtx({ cwd: projectDir, hasUI: true })
         await pi.commands.get("hooks-validate")!("", ctx as never)
 
-        const diag = pi.messages.find((m) => m.customType === PI_HOOKS_DIAGNOSTICS_MESSAGE_TYPE)
+        const diag = pi.messages.find((m) => m.customType === PI_YAML_HOOKS_DIAGNOSTICS_MESSAGE_TYPE)
         const details = diag?.details as { level?: string } | undefined
         return details?.level === "warning" ? { ok: true } : { ok: false, detail: JSON.stringify(diag) }
       }),

@@ -143,7 +143,7 @@ export function registerCommands(pi: ExtensionAPI): void {
         ctx.ui.notify(message, "info")
       } else {
         // eslint-disable-next-line no-console
-        console.info(`[pi-hooks] ${message}`)
+        console.info(`[pi-yaml-hooks] ${message}`)
       }
       await ctx.reload()
     },
@@ -233,7 +233,7 @@ function notifyCommand(
     ctx.ui.notify(message, level)
   }
   // eslint-disable-next-line no-console
-  console.info(`[pi-hooks] ${message}`)
+  console.info(`[pi-yaml-hooks] ${message}`)
 }
 
 function getTrustedProjectsFilePath(): string {

@@ -217,18 +217,18 @@ function writeProjectHooks(projectDir: string, content: string): void {
 }
 
 function withTrust<T>(trusted: boolean, run: () => Promise<T>): Promise<T> {
-  const previousTrust = process.env.PI_HOOKS_TRUST_PROJECT
-  if (trusted) process.env.PI_HOOKS_TRUST_PROJECT = "1"
-  else delete process.env.PI_HOOKS_TRUST_PROJECT
+  const previousTrust = process.env.PI_YAML_HOOKS_TRUST_PROJECT
+  if (trusted) process.env.PI_YAML_HOOKS_TRUST_PROJECT = "1"
+  else delete process.env.PI_YAML_HOOKS_TRUST_PROJECT
   return run().finally(() => {
-    if (previousTrust === undefined) delete process.env.PI_HOOKS_TRUST_PROJECT
-    else process.env.PI_HOOKS_TRUST_PROJECT = previousTrust
+    if (previousTrust === undefined) delete process.env.PI_YAML_HOOKS_TRUST_PROJECT
+    else process.env.PI_YAML_HOOKS_TRUST_PROJECT = previousTrust
   })
 }
 
 async function withIsolatedProject<T>(trusted: boolean, run: (projectDir: string) => Promise<T>): Promise<T> {
-  const projectDir = mkdtempSync(path.join(os.tmpdir(), "pi-hooks-adapter-"))
-  const homeDir = mkdtempSync(path.join(os.tmpdir(), "pi-hooks-home-"))
+  const projectDir = mkdtempSync(path.join(os.tmpdir(), "pi-yaml-hooks-adapter-"))
+  const homeDir = mkdtempSync(path.join(os.tmpdir(), "pi-yaml-hooks-home-"))
   const previousWarn = console.warn
   const previousInfo = console.info
   const previousError = console.error
@@ -335,7 +335,7 @@ const cases: Case[] = [
       await withIsolatedProject(true, async (projectDir) => {
         const harness = new FakePiHarness(projectDir)
         harness.register()
-        return harness.messageRenderers.has("pi-hooks-diagnostics")
+        return harness.messageRenderers.has("pi-yaml-hooks-diagnostics")
           ? { ok: true }
           : { ok: false, detail: `renderers=${JSON.stringify(Array.from(harness.messageRenderers.keys()))}` }
       }),
@@ -362,7 +362,7 @@ const cases: Case[] = [
             "systemPrompt" in result &&
             typeof result.systemPrompt === "string" &&
             result.systemPrompt.includes("Hook-awareness for this session:") &&
-            result.systemPrompt.includes("pi-hooks loaded 1 hooks")
+            result.systemPrompt.includes("pi-yaml-hooks loaded 1 hooks")
           ? { ok: true }
           : { ok: false, detail: `result=${JSON.stringify(result)}` }
       }),
@@ -425,8 +425,8 @@ const cases: Case[] = [
     name: "before_agent_start can be disabled by environment variable",
     run: async () =>
       await withIsolatedProject(true, async (projectDir) => {
-        const previous = process.env.PI_HOOKS_PROMPT_AWARENESS
-        process.env.PI_HOOKS_PROMPT_AWARENESS = "0"
+        const previous = process.env.PI_YAML_HOOKS_PROMPT_AWARENESS
+        process.env.PI_YAML_HOOKS_PROMPT_AWARENESS = "0"
         try {
           writeProjectHooks(
             projectDir,
@@ -445,8 +445,8 @@ const cases: Case[] = [
             ? { ok: true }
             : { ok: false, detail: `result=${JSON.stringify(result)}` }
         } finally {
-          if (previous === undefined) delete process.env.PI_HOOKS_PROMPT_AWARENESS
-          else process.env.PI_HOOKS_PROMPT_AWARENESS = previous
+          if (previous === undefined) delete process.env.PI_YAML_HOOKS_PROMPT_AWARENESS
+          else process.env.PI_YAML_HOOKS_PROMPT_AWARENESS = previous
         }
       }),
   },
@@ -530,8 +530,8 @@ const cases: Case[] = [
     name: "opt-in user_bash interception blocks destructive commands via pre-bash hooks",
     run: async () =>
       await withIsolatedProject(true, async (projectDir) => {
-        const previous = process.env.PI_HOOKS_ENABLE_USER_BASH
-        process.env.PI_HOOKS_ENABLE_USER_BASH = "1"
+        const previous = process.env.PI_YAML_HOOKS_ENABLE_USER_BASH
+        process.env.PI_YAML_HOOKS_ENABLE_USER_BASH = "1"
         try {
           writeProjectHooks(
             projectDir,
@@ -562,8 +562,8 @@ const cases: Case[] = [
             ? { ok: true }
             : { ok: false, detail: `result=${JSON.stringify(result)}` }
         } finally {
-          if (previous === undefined) delete process.env.PI_HOOKS_ENABLE_USER_BASH
-          else process.env.PI_HOOKS_ENABLE_USER_BASH = previous
+          if (previous === undefined) delete process.env.PI_YAML_HOOKS_ENABLE_USER_BASH
+          else process.env.PI_YAML_HOOKS_ENABLE_USER_BASH = previous
         }
       }),
   },
@@ -571,7 +571,7 @@ const cases: Case[] = [
     name: "user_bash interception is disabled by default",
     run: async () =>
       await withIsolatedProject(true, async (projectDir) => {
-        delete process.env.PI_HOOKS_ENABLE_USER_BASH
+        delete process.env.PI_YAML_HOOKS_ENABLE_USER_BASH
         writeProjectHooks(
           projectDir,
           `hooks:
@@ -597,8 +597,8 @@ const cases: Case[] = [
     name: "allowed user_bash commands can run repeatedly without stale pre-hook state",
     run: async () =>
       await withIsolatedProject(true, async (projectDir) => {
-        const previous = process.env.PI_HOOKS_ENABLE_USER_BASH
-        process.env.PI_HOOKS_ENABLE_USER_BASH = "1"
+        const previous = process.env.PI_YAML_HOOKS_ENABLE_USER_BASH
+        process.env.PI_YAML_HOOKS_ENABLE_USER_BASH = "1"
         try {
           writeProjectHooks(
             projectDir,
@@ -621,8 +621,8 @@ const cases: Case[] = [
                 detail: `first=${JSON.stringify(first)}, second=${JSON.stringify(second)}, notifications=${JSON.stringify(harness.notifications)}`,
               }
         } finally {
-          if (previous === undefined) delete process.env.PI_HOOKS_ENABLE_USER_BASH
-          else process.env.PI_HOOKS_ENABLE_USER_BASH = previous
+          if (previous === undefined) delete process.env.PI_YAML_HOOKS_ENABLE_USER_BASH
+          else process.env.PI_YAML_HOOKS_ENABLE_USER_BASH = previous
         }
       }),
   },
@@ -842,7 +842,7 @@ hooks: []
         harness.register()
         await harness.command("hooks-status")
 
-        return harness.customMessages.some((message) => message.customType === "pi-hooks-diagnostics") &&
+        return harness.customMessages.some((message) => message.customType === "pi-yaml-hooks-diagnostics") &&
             harness.customMessages.some((message) => JSON.stringify(message.content).includes("Project trusted: yes"))
           ? { ok: true }
           : { ok: false, detail: `messages=${JSON.stringify(harness.customMessages)}` }
@@ -1028,7 +1028,7 @@ hooks: []
         harness.register()
         await harness.agentEnd()
 
-        return harness.customMessages.some((message) => message.customType === "pi-hooks-diagnostics") &&
+        return harness.customMessages.some((message) => message.customType === "pi-yaml-hooks-diagnostics") &&
             harness.customMessages.some((message) => JSON.stringify(message.content).includes("validation issue"))
           ? { ok: true }
           : { ok: false, detail: `messages=${JSON.stringify(harness.customMessages)}` }

@@ -89,14 +89,14 @@ function writeProjectHooks(projectDir: string, content: string): void {
 }
 
 async function withSandbox<T>(run: (projectDir: string) => Promise<T>): Promise<T> {
-  const projectDir = mkdtempSync(path.join(os.tmpdir(), "pi-hooks-autocomplete-"))
-  const homeDir = mkdtempSync(path.join(os.tmpdir(), "pi-hooks-home-"))
+  const projectDir = mkdtempSync(path.join(os.tmpdir(), "pi-yaml-hooks-autocomplete-"))
+  const homeDir = mkdtempSync(path.join(os.tmpdir(), "pi-yaml-hooks-home-"))
   const previousHome = process.env.HOME
   const previousUserProfile = process.env.USERPROFILE
-  const previousTrust = process.env.PI_HOOKS_TRUST_PROJECT
+  const previousTrust = process.env.PI_YAML_HOOKS_TRUST_PROJECT
   process.env.HOME = homeDir
   process.env.USERPROFILE = homeDir
-  process.env.PI_HOOKS_TRUST_PROJECT = "1"
+  process.env.PI_YAML_HOOKS_TRUST_PROJECT = "1"
   resetPiHooksLoggerForTests()
   resetHookAutocompleteForTests()
   try {
@@ -106,8 +106,8 @@ async function withSandbox<T>(run: (projectDir: string) => Promise<T>): Promise<
     else process.env.HOME = previousHome
     if (previousUserProfile === undefined) delete process.env.USERPROFILE
     else process.env.USERPROFILE = previousUserProfile
-    if (previousTrust === undefined) delete process.env.PI_HOOKS_TRUST_PROJECT
-    else process.env.PI_HOOKS_TRUST_PROJECT = previousTrust
+    if (previousTrust === undefined) delete process.env.PI_YAML_HOOKS_TRUST_PROJECT
+    else process.env.PI_YAML_HOOKS_TRUST_PROJECT = previousTrust
     resetPiHooksLoggerForTests()
     resetHookAutocompleteForTests()
     rmSync(projectDir, { recursive: true, force: true })

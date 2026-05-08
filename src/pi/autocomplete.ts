@@ -56,7 +56,7 @@ const TOOL_HOOK_EVENTS = [
 ] as const
 
 const LOG_OPTION_ITEMS: AutocompleteItem[] = [
-  { value: "--follow", label: "--follow", description: "Follow the pi-hooks NDJSON log with tail -F" },
+  { value: "--follow", label: "--follow", description: "Follow the pi-yaml-hooks NDJSON log with tail -F" },
   { value: "--path", label: "--path", description: "Use the hook log file path" },
 ]
 
@@ -127,7 +127,7 @@ function createHookAutocompleteState(cwd: string): HookAutocompleteState {
     .map((filePath) => ({
       value: filePath,
       label: filePath,
-      description: "pi-hooks config path",
+      description: "pi-yaml-hooks config path",
     }))
 
   const logFilePath = getPiHooksLogFilePath()
@@ -139,11 +139,11 @@ function createHookAutocompleteState(cwd: string): HookAutocompleteState {
     eventItems: [...SESSION_HOOK_EVENTS, ...TOOL_HOOK_EVENTS].map((event) => ({
       value: event,
       label: event,
-      description: "pi-hooks event name",
+      description: "pi-yaml-hooks event name",
     })),
     configPathItems,
     logItems: [
-      { value: logFilePath, label: logFilePath, description: "pi-hooks log file path" },
+      { value: logFilePath, label: logFilePath, description: "pi-yaml-hooks log file path" },
       { value: `tail -F ${JSON.stringify(logFilePath)}`, label: "tail -F hook log", description: "Ready-to-run log tail command" },
       ...LOG_OPTION_ITEMS,
     ],

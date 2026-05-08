@@ -33,7 +33,7 @@ function withEnv<T>(key: string, value: string | undefined, run: () => T): T {
 }
 
 function createSandbox(name: string): string {
-  return mkdtempSync(path.join(os.tmpdir(), `pi-hooks-${name}-`))
+  return mkdtempSync(path.join(os.tmpdir(), `pi-yaml-hooks-${name}-`))
 }
 
 function runGit(args: string[], cwd: string): string {
@@ -85,7 +85,7 @@ const cases: Case[] = [
         runGit(["init", repoDir], sandbox)
         const configPath = writePreferredHooks(repoDir)
         writeTrustedProjects(homeDir, [repoDir])
-        const paths = withEnv("PI_HOOKS_TRUST_PROJECT", undefined, () =>
+        const paths = withEnv("PI_YAML_HOOKS_TRUST_PROJECT", undefined, () =>
           discoverHookConfigPaths({ homeDir, projectDir: nestedDir }),
         )
         return JSON.stringify(paths) === JSON.stringify([configPath]) ? { ok: true } : { ok: false, detail: JSON.stringify(paths) }
@@ -212,7 +212,7 @@ const cases: Case[] = [
       try {
         mkdirSync(nestedDir, { recursive: true })
         const configPath = writeFlatHooks(projectDir)
-        const paths = withEnv("PI_HOOKS_TRUST_PROJECT", "1", () => discoverHookConfigPaths({ homeDir, projectDir: nestedDir }))
+        const paths = withEnv("PI_YAML_HOOKS_TRUST_PROJECT", "1", () => discoverHookConfigPaths({ homeDir, projectDir: nestedDir }))
         return JSON.stringify(paths) === JSON.stringify([configPath]) ? { ok: true } : { ok: false, detail: JSON.stringify(paths) }
       } finally {
         cleanup(sandbox)
