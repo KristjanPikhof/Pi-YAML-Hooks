@@ -292,7 +292,9 @@ const cases: Case[] = [
   {
     // P2-10 regression #2: when the idle dispatch fails with a
     // host-died-style error, pending changes must be RETAINED so the
-    // next idle (after the host comes back up) can replay them.
+    // next idle (after the host comes back up) can replay them. Same
+    // path-condition trick as the previous test isolates the assertion
+    // to whether the change set survived.
     name: "session.idle retains changes when host appears to have died",
     run: async () => {
       const seenCommands: string[] = []
@@ -300,6 +302,7 @@ const cases: Case[] = [
       const hooks = buildHookMap(
         [{ bash: "job:idle" }],
         "session.idle",
+        [{ matchesAnyPath: ["**/*.ts"] }],
       )
       const runtime = createHooksRuntime(createFakeHost([]), {
         directory: "/repo",
