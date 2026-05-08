@@ -64,15 +64,15 @@ Add the package source to the `packages` array. PI auto-installs missing project
 ```json
 {
   "packages": [
-    "git:git@github.com:KristjanPikhof/pi-yaml-hooks"
+    "npm:pi-yaml-hooks"
   ]
 }
 ```
 
-### Option 3: one-off trial
+### Option 4: one-off trial
 
 ```bash
-pi -e git:git@github.com:KristjanPikhof/pi-yaml-hooks
+pi -e npm:pi-yaml-hooks
 ```
 
 This loads `pi-yaml-hooks` for the current run only. Nothing is written to settings.
