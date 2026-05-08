@@ -732,6 +732,7 @@ async function dispatchToolHooks(
       dispatchStates,
       actionRecursionGuards,
       asyncQueues,
+      globMatcher,
     )
   }
 
@@ -749,6 +750,7 @@ async function dispatchToolHooks(
       dispatchStates,
       actionRecursionGuards,
       asyncQueues,
+      globMatcher,
     )
 
     if (result.blocked) {
