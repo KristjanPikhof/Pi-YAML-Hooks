@@ -251,6 +251,71 @@ const cases: Case[] = [
     },
   },
   {
+    name: "synchronous throw inside async hook does not leak activeCount",
+    run: async () => {
+      // Wire up a hook whose bash executor throws synchronously on the first
+      // call (mimicking a sync exception thrown before any await). Without
+      // the IIFE wrapper in enqueueAsyncHook, .finally() never runs and the
+      // queue's activeCount stays >0, blocking subsequent hooks forever.
+      const seenCommands: string[] = []
+      let throwOnce = true
+      const hooks = parseHooksFile(
+        "/virtual/hooks.yaml",
+        `hooks:
+  - id: sync-throw
+    event: tool.after.write
+    async: true
+    actions:
+      - bash: "job:first"
+  - id: follow-up
+    event: tool.after.write
+    async: true
+    actions:
+      - bash: "job:second"
+`,
+      ).hooks as HookMap
+      const runtime = createHooksRuntime(createFakeHost(), {
+        directory: "/repo",
+        hooks,
+        executeBash: (request: BashExecutionRequest): Promise<BashHookResult> => {
+          seenCommands.push(request.command)
+          if (throwOnce) {
+            throwOnce = false
+            // Throw synchronously rather than returning a rejected promise.
+            throw new Error("simulated sync throw")
+          }
+          return Promise.resolve({
+            command: request.command,
+            exitCode: 0,
+            stdout: "",
+            stderr: "",
+            timedOut: false,
+            blocking: false,
+            status: "success" as const,
+            durationMs: 0,
+            signal: null,
+          })
+        },
+      })
+
+      await runtime["tool.execute.after"]({
+        tool: "write",
+        sessionID: "s1",
+        callID: "c1",
+        args: { path: "/repo/file.txt", content: "ok" },
+      })
+      await sleep(60)
+
+      // If activeCount leaked, the second job ("job:second") would never have
+      // started. Confirm both bash calls were observed.
+      const sawFirst = seenCommands.some((c) => c.includes("job:first"))
+      const sawSecond = seenCommands.some((c) => c.includes("job:second"))
+      return sawFirst && sawSecond
+        ? { ok: true }
+        : { ok: false, detail: `seenCommands=${JSON.stringify(seenCommands)}` }
+    },
+  },
+  {
     name: "bounded async concurrency allows more than one in a group",
     run: async () => {
       const activeCounts: number[] = []
