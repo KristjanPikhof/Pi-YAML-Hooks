@@ -26,8 +26,8 @@ cat > "$EVIDENCE_DIR/evidence.md" <<EOF
 - pi-yaml-hooks checkout: $ROOT_DIR
 - Smoke project: $SMOKE_DIR
 - PI version: 
-- @mariozechner/pi-coding-agent version:
-- @mariozechner/pi-tui version:
+- @earendil-works/pi-coding-agent version:
+- @earendil-works/pi-tui version:
 - Node version: $(node --version)
 - OS: $(uname -a)
 - Extension entry: $ROOT_DIR/extensions/index.ts
@@ -64,7 +64,7 @@ pi -e "$ROOT_DIR/extensions/index.ts"
 | session.created / idle / deleted |  |  |
 | /new or session switch |  |  |
 | /quit |  |  |
-| 0.70.x no-builtin-tools gate |  |  |
+| Future SDK no-builtin-tools gate |  |  |
 
 ## Attachments
 

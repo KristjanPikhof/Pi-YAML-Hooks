@@ -42,7 +42,7 @@ Each action entry must define exactly one action key.
 
 At agent start, `pi-yaml-hooks` appends a short hook-awareness note to the system prompt. It summarizes the loaded hook count, current project trust state, and the main PI-specific limitations that matter while authoring or debugging hooks.
 
-This prompt injection is part of the current compatibility surface for the documented peer range `^0.68.1 || ^0.69.0`.
+This prompt injection is part of the current compatibility surface for the documented peer range `^0.74.0` on the `@earendil-works` scope.
 
 Set `PI_YAML_HOOKS_PROMPT_AWARENESS=0` to disable this prompt injection.
 
@@ -508,7 +508,7 @@ For a real PI run in the documented peer range, verify these compatibility-sensi
 - `/new` triggers lossy cleanup via `session.deleted` and a fresh `session.created`
 - `/resume` and `/fork` do not re-fire `session.created` for an existing session re-entry
 - `/new`, `/resume`, `/fork`, and `/quit` do not double-run `session.deleted` cleanup when PI emits both `session_before_switch` and `session_shutdown`
-- PI 0.70.x remains gated until the future SDK matrix and the runtime smoke both pass, including the no-builtin-tools check
+- Future PI minor lines (e.g. `0.75.x`) remain gated until `npm run compat:sdk-matrix:future` and the runtime smoke both pass, including the no-builtin-tools check
 
 ## Unsupported and advisory cases
 

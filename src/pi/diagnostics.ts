@@ -1,5 +1,5 @@
-import type { ExtensionAPI } from "@mariozechner/pi-coding-agent"
-import { Box, Text } from "@mariozechner/pi-tui"
+import type { ExtensionAPI } from "@earendil-works/pi-coding-agent"
+import { Box, Text } from "@earendil-works/pi-tui"
 
 export const PI_YAML_HOOKS_DIAGNOSTICS_MESSAGE_TYPE = "pi-yaml-hooks-diagnostics"
 

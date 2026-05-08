@@ -1,6 +1,6 @@
 # pi-yaml-hooks
 
-`pi-yaml-hooks` adds YAML-driven hooks to the [PI coding agent](https://www.npmjs.com/package/@mariozechner/pi-coding-agent). You can run `bash` around tool calls and session events, block risky actions before they run, and surface PI-native notifications, confirmations, and status entries from `hooks.yaml`.
+`pi-yaml-hooks` adds YAML-driven hooks to the [PI coding agent](https://www.npmjs.com/package/@earendil-works/pi-coding-agent). You can run `bash` around tool calls and session events, block risky actions before they run, and surface PI-native notifications, confirmations, and status entries from `hooks.yaml`.
 
 This repo is the PI port of [OpenCode-Hooks](https://github.com/KristjanPikhof/OpenCode-Hooks). The hook model is familiar, but the runtime is PI-native and the limits are explicit.
 
@@ -19,15 +19,23 @@ This repo is the PI port of [OpenCode-Hooks](https://github.com/KristjanPikhof/O
 - macOS or Linux
 - Node.js `>=22.0.0`
 - `bash` on `$PATH` (override with `PI_YAML_HOOKS_BASH_EXECUTABLE`)
-- `@mariozechner/pi-coding-agent ^0.68.1 || ^0.69.0`
+- `@earendil-works/pi-coding-agent ^0.74.0`
 
 Windows is unsupported.
 
 ## Install
 
-`pi-yaml-hooks` is installable as a PI package straight from git. That is the recommended path. PI clones the repo, installs dependencies, and loads the extension declared in `package.json`.
+`pi-yaml-hooks` is installable as a PI package from npm or directly from git. PI fetches the package, installs dependencies, and loads the extension declared in `package.json`.
 
-### Option 1: `pi install` (recommended)
+### Option 1: `pi install` from npm (recommended)
+
+```bash
+pi install npm:pi-yaml-hooks
+```
+
+This pulls the latest published `pi-yaml-hooks` from npm and writes to global settings at `~/.pi/agent/settings.json`. Add `-l` to write to project settings at `.pi/settings.json` instead.
+
+### Option 2: `pi install` from git (latest unreleased changes)
 
 ```bash
 # SSH
@@ -37,9 +45,7 @@ pi install git:git@github.com:KristjanPikhof/pi-yaml-hooks
 pi install https://github.com/KristjanPikhof/pi-yaml-hooks
 ```
 
-This writes to global settings at `~/.pi/agent/settings.json`. Add `-l` to write to project settings at `.pi/settings.json` instead.
-
-### Option 2: edit `settings.json` by hand
+### Option 3: edit `settings.json` by hand
 
 Add the package source to the `packages` array. PI auto-installs missing project packages on startup.
 
@@ -48,7 +54,7 @@ Add the package source to the `packages` array. PI auto-installs missing project
 ```json
 {
   "packages": [
-    "git:git@github.com:KristjanPikhof/pi-yaml-hooks"
+    "npm:pi-yaml-hooks"
   ]
 }
 ```
@@ -58,15 +64,15 @@ Add the package source to the `packages` array. PI auto-installs missing project
 ```json
 {
   "packages": [
-    "git:git@github.com:KristjanPikhof/pi-yaml-hooks"
+    "npm:pi-yaml-hooks"
   ]
 }
 ```
 
-### Option 3: one-off trial
+### Option 4: one-off trial
 
 ```bash
-pi -e git:git@github.com:KristjanPikhof/pi-yaml-hooks
+pi -e npm:pi-yaml-hooks
 ```
 
 This loads `pi-yaml-hooks` for the current run only. Nothing is written to settings.
@@ -89,7 +95,7 @@ Before widening PI peer support or merging SDK-sensitive changes, run the repeat
 npm run compat:sdk-matrix
 ```
 
-The matrix checks the minimum supported SDK (`@mariozechner/pi-coding-agent` and `@mariozechner/pi-tui` `0.68.1`) and the current supported `0.69.x` line. It creates a temporary copy of the repository, installs each SDK pair in that copy only, then runs `npm run typecheck` and `npm test`. The working checkout's `package.json`, `package-lock.json`, and normal `node_modules` are not mutated.
+The matrix checks the supported SDK (`@earendil-works/pi-coding-agent` and `@earendil-works/pi-tui` `0.74.0`). It creates a temporary copy of the repository, installs each SDK pair in that copy only, then runs `npm run typecheck` and `npm test`. The working checkout's `package.json`, `package-lock.json`, and normal `node_modules` are not mutated.
 
 To preview the workflow without installing anything:
 
@@ -105,19 +111,19 @@ scripts/smoke/pi-runtime-smoke.sh
 
 Follow [`docs/setup.md#runtime-pi-smoke-checklist`](./docs/setup.md#runtime-pi-smoke-checklist) and keep the generated evidence file with release notes or SDK-widening PRs.
 
-`0.70.x` is a gated future target, not part of the current peer range. Try it explicitly with:
+Future SDK lines (`0.75.x` and later) are gated, not part of the current peer range. Try them explicitly with:
 
 ```bash
 npm run compat:sdk-matrix:future
 ```
 
-Do not widen support to 0.70.x until both the future matrix and the runtime smoke pass, including the no-builtin-tools gate.
+Do not widen support until both the future matrix and the runtime smoke pass, including the no-builtin-tools gate.
 
 ## Consumption
 
 Two install paths are supported:
 
-**PI package (recommended)** — use `pi install` or add the git URL to your `settings.json` as shown in the [Install](#install) section above. PI manages the clone and loads the extension automatically. This is the primary and fully-supported path.
+**PI package (recommended)** — use `pi install npm:pi-yaml-hooks` (or the git source) or add the entry to your `settings.json` as shown in the [Install](#install) section above. PI manages the install and loads the extension automatically. This is the primary and fully-supported path.
 
 **npm library** — `pi-yaml-hooks` is also published to npm and can be imported directly:
 
@@ -201,7 +207,7 @@ When an event matches, `pi-yaml-hooks` evaluates conditions and runs the configu
 
 `/hooks-status`, `/hooks-validate`, and hook-load validation errors also emit structured in-session diagnostics when PI supports custom messages.
 
-When PI exposes `ctx.ui.addAutocompleteProvider` (PI 0.69+), `pi-yaml-hooks` also layers guarded `/hooks` autocomplete into the editor. Older supported PI versions that do not expose that UI method continue loading normally. Suggestions include the command names plus contextual hook IDs, event names, config paths, and log-tail options where useful.
+PI exposes `ctx.ui.addAutocompleteProvider` on the supported `^0.74.0` line, so `pi-yaml-hooks` layers guarded `/hooks` autocomplete into the editor. Suggestions include the command names plus contextual hook IDs, event names, config paths, and log-tail options where useful.
 
 ## Important limitations
 

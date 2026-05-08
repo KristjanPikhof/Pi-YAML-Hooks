@@ -1,69 +1,107 @@
 # AGENTS.md
 
-This is the short contract for agents editing `pi-yaml-hooks`. Keep it compact:
-facts that prevent wrong implementation or misleading docs belong here; broad
-tutorial content belongs in `docs/`.
+Contract for agents editing `pi-yaml-hooks`. Facts only; tutorials in `docs/`.
 
-## Product surface
+## SDK peer
 
-Built-in PI-facing features:
+- `@earendil-works/pi-coding-agent` + `@earendil-works/pi-tui` `^0.74.0`
+- Migrated from `@mariozechner/*` at 0.74.0; never reintroduce old scope
+- Node `>=22.0.0`; macOS/Linux only (Windows guarded in `src/pi/adapter.ts`)
 
-- events: `tool.before.*`, `tool.after.*`, `file.changed`,
-  `session.created`, `session.idle`, `session.deleted`
-- actions: `bash`, `tool`, `notify`, `confirm`, `setStatus`
-- commands: `/hooks-status`, `/hooks-validate`, `/hooks-trust`,
-  `/hooks-reload`, `/hooks-tail-log`
-- structured diagnostics via custom PI messages
-- hook-awareness prompt injection before agent start
-- opt-in `user_bash` interception through `tool.before.bash`
+## Layout
 
-Path conditions:
+| Path | Purpose |
+|---|---|
+| `src/index.ts` | PI entry; default export wires adapter + commands + autocomplete + diagnostics + prompt |
+| `src/core/` | Host-agnostic: load-hooks, runtime, bash-executor, types, logger |
+| `src/pi/` | PI glue: `adapter`, `commands`, `autocomplete`, `diagnostics`, `prompt-support`, `user-bash`, `session-lineage`, `unsupported` |
+| `extensions/index.ts` | Symlink target for local-dev installs |
+| `examples/` | Copyable patterns only — not product features |
+| `scripts/check-sdk-matrix.sh` | SDK compat runner |
+| `scripts/smoke/pi-runtime-smoke.sh` | Manual runtime smoke |
+| `dist/` | Build output |
 
-- `matchesCodeFiles` works when an event has file context
-- `matchesAnyPath` and `matchesAllPaths` are supported on `file.changed`,
-  `session.idle`, and `tool.after.*`
-- non-mutating tool events usually have no paths, so path filters do not match
+## Surface
 
-Example-only, not built-in product features:
+Built-ins:
 
-- the atomic commit snapshot worker
-- any `/snapshot-*` workflow
-- developer guard and feedback packs under `examples/`
+- Events: `tool.before.*`, `tool.after.*`, `file.changed`, `session.{created,idle,deleted}`
+- Actions: `bash`, `tool`, `notify`, `confirm`, `setStatus`
+- Commands: `/hooks-{status,validate,trust,reload,tail-log}`
+- Structured diagnostics via PI custom messages
+- Hook-awareness prompt injection before agent start
+- Opt-in `user_bash` interception via `tool.before.bash`
 
-## PI-specific limits
+Path conditions (`src/core/types.ts`):
 
-- `command:` actions are unsupported on PI and are rejected at load time
-- `tool:` actions are prompt injection, not imperative tool execution
-- `runIn: main` is rejected for non-`bash` actions
-- do not rely on `runIn: main` to change bash process/session context
-- prefer `scope` for real main-vs-child routing decisions
-- `action: stop` only has real effect on `tool.before.*`
-- `session.deleted` is intentionally lossy
-- `user_bash` interception is opt-in via `PI_YAML_HOOKS_ENABLE_USER_BASH=1`
+- `matchesCodeFiles` — legacy, single-file events
+- `matchesAnyPath` / `matchesAllPaths` — only on `file.changed`, `session.idle`, `tool.after.*`
+- Non-mutating tool events have no paths → path filters never match
 
-## Config, imports, and trust
+Examples-only (not product): `examples/atomic-commit-snapshot-worker/`, `/snapshot-*`, `examples/post-tool-developer-feedback/`, `examples/pre-tool-developer-guards/`.
 
-- discover at most one global root config and one project root config
-- each root may import more hook files with top-level `imports:`
-- project discovery is repo/worktree-aware, not exact-cwd-only
-- trust is evaluated against the repo/worktree anchor, not an arbitrary nested path string
-- project hooks are ignored until that anchor is trusted
+## PI limits
 
-## Documentation rules
+- `command:` actions rejected at load
+- `tool:` injects a follow-up prompt, not imperative execution
+- `runIn: main` rejected for non-`bash`; does not change bash process/session context
+- Prefer `scope` for main-vs-child routing
+- `action: stop` only effective on `tool.before.*`
+- `session.deleted` lossy (shutdown + `/new`, `/resume`, `/fork`)
+- `user_bash` opt-in via `PI_YAML_HOOKS_ENABLE_USER_BASH=1`
 
-- keep built-in features separate from examples
-- use `action: stop`, not `behavior: stop`
-- if a feature is opt-in, say so explicitly
-- if docs mention trust, be clear whether they mean cwd, project root, or repo/worktree anchor
-- when documenting `tool:`, state that PI receives a follow-up prompt
-- when documenting examples, say they are copyable patterns, not product features
+## Config + trust
+
+- One global root + one project root; each may `imports:` more
+- Project discovery repo/worktree-aware, not exact-cwd
+- Trust against repo/worktree anchor; project hooks ignored until trusted
+- Shortcuts: `/hooks-trust` or `PI_YAML_HOOKS_TRUST_PROJECT=1`
+
+## Env vars
+
+| Var | Effect |
+|---|---|
+| `PI_YAML_HOOKS_ENABLE_USER_BASH` | `=1` enable `user_bash` |
+| `PI_YAML_HOOKS_TRUST_PROJECT` | `=1` trust current project |
+| `PI_YAML_HOOKS_PROMPT_AWARENESS` | `=0` disable prompt injection |
+| `PI_YAML_HOOKS_BASH_EXECUTABLE` | Override bash path |
+| `PI_YAML_HOOKS_MAX_OUTPUT_BYTES` | Bash out cap (def 1 MiB) |
+| `PI_YAML_HOOKS_MAX_STDIN_BYTES` | Bash stdin cap (def 256 KiB) |
+| `PI_YAML_HOOKS_CONFIRM_AUTO_APPROVE` | Auto-accept `confirm:` (testing) |
+| `PI_YAML_HOOKS_ALLOW_GLOBAL_IMPORTS` | Allow imports outside config root |
+| `PI_YAML_HOOKS_ALLOW_PACKAGE_IMPORTS` | Allow npm-package imports |
+| `PI_YAML_HOOKS_DEBUG` | `=1` verbose |
+| `PI_YAML_HOOKS_LOG_LEVEL` | `debug\|info\|warn\|error` |
+| `PI_YAML_HOOKS_LOG_FILE` | Override log path |
+| `PI_YAML_HOOKS_LOG_STDERR` | `=1` mirror to stderr |
+
+## Doc rules
+
+- Built-ins ≠ examples; never blur
+- `action: stop`, not `behavior: stop`
+- Mark opt-in features explicitly
+- Name the trust anchor (cwd / project root / repo-worktree anchor)
+- `tool:` doc must say PI receives a follow-up prompt
 
 ## Lockfile
 
-`package-lock.json` is canonical. `bun.lock` is not committed. Use `npm install` to update dependencies.
+`package-lock.json` canonical; no `bun.lock`. `npm install` to update.
 
-## Verification expectations
+## Verification
 
-- run `npm run typecheck` after TypeScript changes
-- run `npm run build` before executing compiled test files from `dist/`
-- use focused tests for the touched surface; `npm run test:internal` runs the full dev suite
+| Command | Use |
+|---|---|
+| `npm run typecheck` | After any TS change |
+| `npm run build` | Before running `dist/**/*.test.js` |
+| `npm run test:internal` | Full dev suite (builds first); known flake: `timed out bash hooks kill descendant background processes on POSIX` |
+| `npm run compat:sdk-matrix[:dry-run]` | Peer-range check in temp clone |
+| `npm run compat:sdk-matrix:future` | Advisory next-minor probe; does not widen peer |
+| `scripts/smoke/pi-runtime-smoke.sh` | Runtime smoke; keep evidence on SDK-widening PRs |
+
+`npm test` is a consumer no-op; use `test:internal` for validation.
+
+## Quirks
+
+- Atomic-commit hook auto-commits per Edit/Write; expect one commit per edit
+- `prepack` runs `build:publish` (clean rebuild via `tsconfig.publish.json`)
+- `scripts/tail-hook-log.sh` backs `/hooks-tail-log`

@@ -16,7 +16,7 @@
  * root, everything else resolves to itself.
  */
 
-import type { ExtensionContext, SessionHeader } from "@mariozechner/pi-coding-agent";
+import type { ExtensionContext, SessionHeader } from "@earendil-works/pi-coding-agent";
 import { closeSync, openSync, readSync } from "node:fs";
 
 // P2 #19: bound the lineage walk + per-file read so a pathological session

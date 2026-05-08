@@ -7,17 +7,25 @@ This guide gets `pi-yaml-hooks` installed and gives you a safe place to put `hoo
 - macOS or Linux
 - Node.js `>= 22.0.0`
 - `bash` on `PATH`
-- `@mariozechner/pi-coding-agent ^0.68.1 || ^0.69.0`
+- `@earendil-works/pi-coding-agent ^0.74.0`
 
 Windows is unsupported because the hook runner expects a POSIX `bash`.
 
-This repository documents the peer support range exactly as `^0.68.1 || ^0.69.0`. Older 0.67-era installs are no longer part of the documented contract, even if some behavior still happens to work.
+This repository documents the peer support range exactly as `^0.74.0` against the new `@earendil-works` scope (PI moved from `@mariozechner/*` to `@earendil-works/*` in 0.74.0). Older 0.67–0.73 installs on the legacy scope are no longer part of the documented contract, even if some behavior still happens to work.
 
 ## Install the extension
 
-`pi-yaml-hooks` is installable as a PI package straight from git. That should be your default unless you are actively editing a local checkout.
+`pi-yaml-hooks` is installable as a PI package from npm or directly from git. The npm path should be your default unless you are actively editing a local checkout or chasing unreleased changes.
 
-### Recommended: `pi install`
+### Recommended: `pi install npm:pi-yaml-hooks`
+
+```bash
+pi install npm:pi-yaml-hooks
+```
+
+This pulls the latest published `pi-yaml-hooks` from npm. By default it writes to `~/.pi/agent/settings.json`. Add `-l` to install into `.pi/settings.json` for the current project instead.
+
+To install from git instead (e.g. for unreleased changes):
 
 ```bash
 # SSH
@@ -27,18 +35,16 @@ pi install git:git@github.com:KristjanPikhof/pi-yaml-hooks
 pi install https://github.com/KristjanPikhof/pi-yaml-hooks
 ```
 
-By default this writes to `~/.pi/agent/settings.json`. Add `-l` to install into `.pi/settings.json` for the current project instead.
-
 ### Add it through `packages`
 
-If you prefer to edit settings directly, add the git source to the `packages` array.
+If you prefer to edit settings directly, add the npm source to the `packages` array.
 
 **Global**, in `~/.pi/agent/settings.json`:
 
 ```json
 {
   "packages": [
-    "git:git@github.com:KristjanPikhof/pi-yaml-hooks"
+    "npm:pi-yaml-hooks"
   ]
 }
 ```
@@ -48,7 +54,7 @@ If you prefer to edit settings directly, add the git source to the `packages` ar
 ```json
 {
   "packages": [
-    "git:git@github.com:KristjanPikhof/pi-yaml-hooks"
+    "npm:pi-yaml-hooks"
   ]
 }
 ```
@@ -59,7 +65,8 @@ Project settings override global ones, and PI installs missing project packages 
 
 | Method | Use when |
 |---|---|
-| `pi -e git:git@github.com:KristjanPikhof/pi-yaml-hooks` | You want a one-off run without writing settings |
+| `pi -e npm:pi-yaml-hooks` | You want a one-off run without writing settings |
+| `pi install git:git@github.com:KristjanPikhof/pi-yaml-hooks` | You need unreleased changes from `main` |
 | `ln -s "$PWD/extensions/index.ts" ~/.pi/agent/extensions/pi-yaml-hooks.ts` | You are editing a local checkout and want PI to load that working tree |
 | `<project>/.pi/extensions/pi-yaml-hooks.ts` | You want a project-local local-dev install from a checkout |
 
@@ -265,7 +272,7 @@ Start PI with the command printed by the script. It uses:
 | Idle | Let the agent finish a turn. | `.pi/hooks-smoke/events.ndjson` records `session.idle`, and status updates to `pi-yaml-hooks smoke: idle observed` when UI status is available. | Events file. |
 | Session switch | Run `/new`. Optionally check `/resume` and `/fork` when available. | `/new` causes lossy `session.deleted` cleanup for the previous session and a fresh `session.created`. `/resume` and `/fork` should not double-run cleanup when PI emits both switch and shutdown lifecycle hooks. Existing-session re-entry should not re-fire `session.created`. | Events file with ordering notes. |
 | `/quit` | Run `/quit`. | PI exits cleanly. If PI emits shutdown lifecycle hooks, the smoke event log may include lossy `session.deleted` cleanup for the active session. | Terminal transcript and final events file. |
-| 0.70.x future gate | In a separate checkout or temporary matrix run, execute `npm run compat:sdk-matrix:future`, then run this same smoke procedure against 0.70.x before changing `peerDependencies`. | Treat failure to expose built-in tools, slash commands, custom messages, autocomplete, or lifecycle hooks as a release blocker. Passing the future matrix alone is advisory and does not widen support. | Matrix output plus full smoke evidence. |
+| Future SDK gate | In a separate checkout or temporary matrix run, execute `npm run compat:sdk-matrix:future`, then run this same smoke procedure against the next minor (e.g. `0.75.x`) before changing `peerDependencies`. | Treat failure to expose built-in tools, slash commands, custom messages, autocomplete, or lifecycle hooks as a release blocker. Passing the future matrix alone is advisory and does not widen support. | Matrix output plus full smoke evidence. |
 
 ### Evidence template
 
@@ -273,25 +280,24 @@ Use the generated `.pi/hooks-smoke/evidence.md` as the release artifact. Fill in
 
 ## SDK compatibility checks for maintainers
 
-The supported PI SDK peer range is `^0.68.1 || ^0.69.0`. Keep that range honest by running the compatibility matrix before merging SDK-sensitive changes:
+The supported PI SDK peer range is `^0.74.0` (under the new `@earendil-works` scope). Keep that range honest by running the compatibility matrix before merging SDK-sensitive changes:
 
 ```bash
 npm run compat:sdk-matrix
 ```
 
-This command is safe for normal development state. It copies the repository to a temporary directory, installs the matching `@mariozechner/pi-coding-agent` and `@mariozechner/pi-tui` pair for each SDK spec, then runs the normal verification commands in the temporary copy:
+This command is safe for normal development state. It copies the repository to a temporary directory, installs the matching `@earendil-works/pi-coding-agent` and `@earendil-works/pi-tui` pair for each SDK spec, then runs the normal verification commands in the temporary copy:
 
 1. `npm run typecheck`
 2. `npm test`
 
 The default matrix covers:
 
-- `0.68.1` — minimum supported SDK
-- `0.69.x` — current supported SDK line
+- `0.74.0` — minimum supported SDK on the `@earendil-works` scope
 
 Use `npm run compat:sdk-matrix:dry-run` to print the exact workflow without installing temporary dependencies.
 
-`0.70.x` is intentionally not part of the documented peer range yet. Maintainers can run `npm run compat:sdk-matrix:future` as an advisory future gate, but passing that command alone does not widen package support.
+Future SDK lines (`0.75.x` and later) can be probed via `npm run compat:sdk-matrix:future` as an advisory gate, but passing that command alone does not widen package support.
 
 ## Next step
 
