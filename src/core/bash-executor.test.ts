@@ -2,7 +2,12 @@ import { mkdtempSync, readFileSync, rmSync } from "node:fs"
 import os from "node:os"
 import path from "node:path"
 
-import { executeBashHook, resetExecutionContextCacheForTests, resolveExecutionContext } from "./bash-executor.js"
+import {
+  executeBashHook,
+  redactSensitiveContent,
+  resetExecutionContextCacheForTests,
+  resolveExecutionContext,
+} from "./bash-executor.js"
 
 interface Case {
   readonly name: string
@@ -22,7 +27,113 @@ function isProcessAlive(pid: number): boolean {
   }
 }
 
+function expectRedacted(input: string, mustNotContain: string[]): { ok: boolean; detail?: string } {
+  const out = redactSensitiveContent(input)
+  for (const needle of mustNotContain) {
+    if (out.includes(needle)) {
+      return { ok: false, detail: `expected no '${needle}' in ${JSON.stringify(out)}` }
+    }
+  }
+  if (!out.includes("[REDACTED]")) {
+    return { ok: false, detail: `expected '[REDACTED]' marker in ${JSON.stringify(out)}` }
+  }
+  return { ok: true }
+}
+
 const cases: Case[] = [
+  {
+    name: "redacts GitHub personal access tokens (ghp_)",
+    run: async () => expectRedacted("token=ghp_abcdefghijklmnopqrstuvwxyz0123456789", ["ghp_abcdefghijklmnopqrstuvwxyz0123456789"]),
+  },
+  {
+    name: "redacts GitHub fine-grained PATs (github_pat_)",
+    run: async () => expectRedacted("github_pat_11ABCDEFG0_abcdefghijklmnopqrstuvwxyz0123456789", ["abcdefghijklmnopqrstuvwxyz0123456789"]),
+  },
+  {
+    name: "redacts GitLab personal access tokens (glpat-)",
+    run: async () => expectRedacted("export FOO=glpat-abcdefghijklmnop1234", ["glpat-abcdefghijklmnop1234"]),
+  },
+  {
+    name: "redacts Slack bot tokens (xoxb-)",
+    run: async () => expectRedacted("slack=xoxb-1234567890-1234567890-AbCdEfGhIjKlMnOp", ["xoxb-1234567890-1234567890-AbCdEfGhIjKlMnOp"]),
+  },
+  {
+    name: "redacts Slack user tokens (xoxp-)",
+    run: async () => expectRedacted("xoxp-9876543210-fakeslackuserstring", ["xoxp-9876543210-fakeslackuserstring"]),
+  },
+  {
+    name: "redacts Slack admin/legacy app tokens (xoxa-)",
+    run: async () => expectRedacted("xoxa-2-foobarbazsecret123", ["foobarbazsecret123"]),
+  },
+  {
+    name: "redacts basic-auth URLs (https://user:pass@host)",
+    run: async () => expectRedacted("connecting to https://alice:hunter2@example.com/path", ["hunter2"]),
+  },
+  {
+    name: "redacts basic-auth in postgres://user:pass@host",
+    run: async () => expectRedacted("DB=postgres://user:supersecretpw@db.example.com:5432/x", ["supersecretpw"]),
+  },
+  {
+    name: "redacts JWT (three base64url segments separated by dots)",
+    run: async () => expectRedacted(
+      "auth=eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTYifQ.SflKxwRJSMeKKF2QT4fwpMeJf36POk6yJV_adQssw5c",
+      ["SflKxwRJSMeKKF2QT4fwpMeJf36POk6yJV_adQssw5c"],
+    ),
+  },
+  {
+    name: "redacts uppercase env-style names ending in TOKEN/SECRET/KEY/PASSWORD",
+    run: async () => {
+      const cases = [
+        "GITHUB_TOKEN=abcdef12345",
+        "AWS_SECRET_ACCESS_KEY=verysecretvalue",
+        "MY_API_KEY=zxc987",
+        "DATABASE_PASSWORD=p@ssw0rd",
+      ]
+      for (const input of cases) {
+        const out = redactSensitiveContent(input)
+        if (out.includes("abcdef12345") || out.includes("verysecretvalue") || out.includes("zxc987") || out.includes("p@ssw0rd")) {
+          return { ok: false, detail: `leak in ${input} -> ${out}` }
+        }
+        if (!out.includes("[REDACTED]")) {
+          return { ok: false, detail: `no marker in ${out}` }
+        }
+      }
+      return { ok: true }
+    },
+  },
+  {
+    name: "redacts PEM private key blocks",
+    run: async () => {
+      const pem = [
+        "-----BEGIN PRIVATE KEY-----",
+        "MIIEvQIBADANBgkqhkiG9w0BAQEFAASCBKcwggSjAgEAAoIBAQC7VJTUt9Us8cKj",
+        "MZeBESxhfakekeymaterialfortest==",
+        "-----END PRIVATE KEY-----",
+      ].join("\n")
+      const out = redactSensitiveContent(`prefix\n${pem}\nsuffix`)
+      if (out.includes("fakekeymaterialfortest")) {
+        return { ok: false, detail: `leaked PEM body: ${out}` }
+      }
+      if (!out.includes("[REDACTED]")) {
+        return { ok: false, detail: `no marker: ${out}` }
+      }
+      return { ok: true }
+    },
+  },
+  {
+    name: "redacts RSA-typed PEM private key blocks",
+    run: async () => {
+      const pem = [
+        "-----BEGIN RSA PRIVATE KEY-----",
+        "fakekeymaterialfortest1234567890",
+        "-----END RSA PRIVATE KEY-----",
+      ].join("\n")
+      const out = redactSensitiveContent(pem)
+      return out.includes("[REDACTED]") && !out.includes("fakekeymaterialfortest1234567890")
+        ? { ok: true }
+        : { ok: false, detail: out }
+    },
+  },
   {
     name: "execution context cache reuses git probe results across the same worktree",
     run: async () => {
