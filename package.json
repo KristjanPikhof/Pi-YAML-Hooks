@@ -25,7 +25,9 @@
   "files": [
     "extensions",
     "docs",
-    "examples",
+    "examples/post-tool-developer-feedback",
+    "examples/pre-tool-developer-guards",
+    "examples/README.md",
     "scripts",
     "README.md"
   ],
