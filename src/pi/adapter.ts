@@ -225,6 +225,7 @@ export function registerAdapter(pi: ExtensionAPI): void {
       reloadDiscoveredHooks: true,
     });
     runtimes.set(cwd, runtime);
+    evictIfNeeded();
     return runtime;
   }
 
