@@ -258,10 +258,13 @@ const runtimeCases: RuntimeCase[] = [
         args: { path: "/tmp/x.txt", content: "ok" },
       })
       const statuses = records.filter((r) => r.kind === "setStatus").map((r) => r.args as { hookId: string; text: string })
+      // P3 #28: status slot keys are now stable on hookId only so a hooks
+      // file rename/move keeps the existing slot. Duplicate ids in the same
+      // file remain distinct here because they each have their own id.
       return statuses.length === 2 &&
           statuses[0]?.hookId !== statuses[1]?.hookId &&
-          statuses[0]?.hookId === "pi-hooks:build-status@/virtual/hooks.yaml" &&
-          statuses[1]?.hookId === "pi-hooks:test-status@/virtual/hooks.yaml"
+          statuses[0]?.hookId === "pi-hooks:build-status" &&
+          statuses[1]?.hookId === "pi-hooks:test-status"
         ? { ok: true }
         : { ok: false, detail: `statuses=${JSON.stringify(statuses)}` }
     },
@@ -301,8 +304,13 @@ const runtimeCases: RuntimeCase[] = [
     },
   },
   {
-    name: "setStatus keys stay distinct for duplicate ids across different files",
+    name: "setStatus collapses duplicate ids across files (stable-hookId semantics)",
     run: async () => {
+      // P3 #28: with stable-hookId-only keys, two hooks that share the same
+      // user-supplied `id:` across different files intentionally share one
+      // status slot. Authors are expected to keep `id:` unique across the
+      // project; the unsuffixed form keeps the slot stable across file
+      // rename/move, which is the more common operational case.
       const { host, records } = createFakeHost()
       const hooks: HookMap = new Map()
       hooks.set("tool.after.write", [
@@ -332,9 +340,8 @@ const runtimeCases: RuntimeCase[] = [
       })
       const statuses = records.filter((r) => r.kind === "setStatus").map((r) => r.args as { hookId: string; text: string })
       return statuses.length === 2 &&
-          statuses[0]?.hookId !== statuses[1]?.hookId &&
-          statuses[0]?.hookId === "pi-hooks:shared-status@/virtual/global-hooks.yaml" &&
-          statuses[1]?.hookId === "pi-hooks:shared-status@/virtual/project-hooks.yaml"
+          statuses[0]?.hookId === "pi-hooks:shared-status" &&
+          statuses[1]?.hookId === "pi-hooks:shared-status"
         ? { ok: true }
         : { ok: false, detail: `statuses=${JSON.stringify(statuses)}` }
     },
