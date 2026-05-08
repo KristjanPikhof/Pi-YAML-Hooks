@@ -45,6 +45,8 @@ const REDACTED = "[REDACTED]"
 
 let cachedLogger: PiHooksLogger | undefined
 let warnedAboutLoggerFailure = false
+let cachedLogFd: number | undefined
+let cachedLogFdPath: string | undefined
 
 export function getPiHooksLogger(): PiHooksLogger {
   cachedLogger ??= createPiHooksLogger()
@@ -58,6 +60,58 @@ export function getPiHooksLogFilePath(): string {
 export function resetPiHooksLoggerForTests(): void {
   cachedLogger = undefined
   warnedAboutLoggerFailure = false
+  if (cachedLogFd !== undefined) {
+    try {
+      closeSync(cachedLogFd)
+    } catch {
+      // ignore — best effort close on reset
+    }
+  }
+  cachedLogFd = undefined
+  cachedLogFdPath = undefined
+}
+
+function openLogFileSafely(filePath: string): number | undefined {
+  // Reuse the existing descriptor only if it points at the same path. The
+  // path may change across resetPiHooksLoggerForTests() calls when tests
+  // override PI_HOOKS_LOG_FILE.
+  if (cachedLogFd !== undefined && cachedLogFdPath === filePath) {
+    return cachedLogFd
+  }
+
+  if (cachedLogFd !== undefined) {
+    try {
+      closeSync(cachedLogFd)
+    } catch {
+      // ignore
+    }
+    cachedLogFd = undefined
+    cachedLogFdPath = undefined
+  }
+
+  // Refuse to follow symlinks. If a symlink already exists at filePath, do
+  // not open it — even if it points inside the home dir, an attacker who can
+  // create symlinks can redirect the log writes elsewhere.
+  try {
+    const stat = lstatSync(filePath)
+    if (stat.isSymbolicLink()) {
+      throw new Error(`refusing to write log to symlink: ${filePath}`)
+    }
+  } catch (error) {
+    const errno = (error as NodeJS.ErrnoException).code
+    if (errno !== "ENOENT") {
+      throw error
+    }
+    // ENOENT is expected on first open; continue and let openSync create it.
+  }
+
+  // O_APPEND ("a") with 0o600 mode so the file is created restricted to the
+  // current user. O_NOFOLLOW would be ideal but openSync flag composition is
+  // platform-sensitive; the lstat check above gives us equivalent protection.
+  const fd = openSync(filePath, "a", 0o600)
+  cachedLogFd = fd
+  cachedLogFdPath = filePath
+  return fd
 }
 
 function createPiHooksLogger(): PiHooksLogger {
