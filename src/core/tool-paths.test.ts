@@ -197,7 +197,8 @@ const cases: Case[] = [
     name: "getToolFileChanges handles quoted paths with spaces",
     run: () => {
       const changes = getToolFileChanges("bash", { command: 'rm "with spaces.txt"' })
-      return changes.length === 1 && changes[0].path === "with spaces.txt"
+      const first = changes[0]
+      return changes.length === 1 && first.operation === "delete" && first.path === "with spaces.txt"
         ? { ok: true }
         : { ok: false, detail: JSON.stringify(changes) }
     },
