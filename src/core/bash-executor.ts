@@ -23,6 +23,11 @@ const SUPPORTS_PROCESS_GROUP_TIMEOUT_KILL = process.platform !== "win32"
 // into the host process. Override via PI_HOOKS_MAX_OUTPUT_BYTES.
 const MAX_OUTPUT_BYTES = parseMaxOutputBytes(process.env.PI_HOOKS_MAX_OUTPUT_BYTES) ?? 1_048_576
 const TRUNCATION_MARKER = "\n…[pi-hooks: output truncated]"
+// P3 #25: cap the JSON-serialized context payload that we feed to the bash
+// hook over stdin. A pathological hook context (e.g. a write tool with a
+// multi-MB content body) would otherwise be buffered into the child's stdin
+// in one shot. Override via PI_HOOKS_MAX_STDIN_BYTES.
+const MAX_STDIN_BYTES = parseMaxOutputBytes(process.env.PI_HOOKS_MAX_STDIN_BYTES) ?? 262_144
 const executionContextCache = new Map<string, ExecutionContext>()
 
 interface ExecutionContext {
