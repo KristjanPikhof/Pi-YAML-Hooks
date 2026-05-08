@@ -1,4 +1,4 @@
-import { existsSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs"
+import { existsSync, mkdtempSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs"
 import os from "node:os"
 import path from "node:path"
 
@@ -71,6 +71,69 @@ const cases: Case[] = [
         ? { ok: true }
         : { ok: false, detail: `line=${lines[0]}` }
     }),
+  },
+  {
+    name: "refuses to write log when target path is a symlink",
+    run: () => {
+      const tempDir = mkdtempSync(path.join(os.tmpdir(), "pi-hooks-logger-symlink-"))
+      const realTarget = path.join(tempDir, "real-elsewhere.log")
+      const linkPath = path.join(tempDir, "pi-hooks.ndjson")
+
+      writeFileSync(realTarget, "")
+      try {
+        symlinkSync(realTarget, linkPath)
+      } catch (error) {
+        // Some environments (e.g. restricted CI) cannot create symlinks; treat as skipped.
+        rmSync(tempDir, { recursive: true, force: true })
+        const message = error instanceof Error ? error.message : String(error)
+        console.info(`SKIP  refuses symlink target — symlink unsupported: ${message}`)
+        return { ok: true }
+      }
+
+      return withLoggerEnv({ debug: true, logFile: linkPath }, () => {
+        const sizeBefore = readFileSync(realTarget, "utf8").length
+        const previousWarn = console.warn
+        let warnings = 0
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        console.warn = (..._args: any[]) => {
+          warnings += 1
+        }
+        try {
+          const logger = getPiHooksLogger()
+          logger.info("symlink_test", "should not be written through symlink")
+        } finally {
+          console.warn = previousWarn
+        }
+
+        const sizeAfter = readFileSync(realTarget, "utf8").length
+        rmSync(tempDir, { recursive: true, force: true })
+
+        if (sizeBefore !== sizeAfter) {
+          return { ok: false, detail: `wrote through symlink: before=${sizeBefore} after=${sizeAfter}` }
+        }
+        if (warnings === 0) {
+          return { ok: false, detail: "expected a warning to be emitted on symlink refusal" }
+        }
+        return { ok: true }
+      })
+    },
+  },
+  {
+    name: "creates log file with restrictive 0o600 permissions on first write",
+    run: () => {
+      if (process.platform === "win32") return { ok: true }
+      return withLoggerEnv({ debug: true }, (logFile) => {
+        const logger = getPiHooksLogger()
+        logger.info("perm_test", "create file")
+        if (!existsSync(logFile)) return { ok: false, detail: "log file not created" }
+        const mode = statSync(logFile).mode & 0o777
+        // Honor process umask: at minimum group/other must not be writable; we created with 0o600.
+        if ((mode & 0o077) !== 0) {
+          return { ok: false, detail: `expected 0o600-ish, got 0o${mode.toString(8)}` }
+        }
+        return { ok: true }
+      })
+    },
   },
   {
     name: "redacts sensitive strings and truncates large payloads",
