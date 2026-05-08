@@ -1129,6 +1129,50 @@ hooks: []
           : { ok: false, detail: `providers=${harness.autocompleteProviders.length}` }
       }),
   },
+  {
+    name: "LRU touch promotes existing key to most recent insertion order",
+    run: async () => {
+      const map = new Map<string, number>()
+      map.set("a", 1)
+      map.set("b", 2)
+      map.set("c", 3)
+      adapterTesting.touchLruEntry(map, "a")
+      const order = Array.from(map.keys())
+      // After promotion, 'a' is most recent (last); 'b' is now oldest.
+      return order.join(",") === "b,c,a"
+        ? { ok: true }
+        : { ok: false, detail: `order=${order.join(",")}` }
+    },
+  },
+  {
+    name: "LRU eviction drops oldest entries beyond cap and mirrors a companion map",
+    run: async () => {
+      const runtimes = new Map<string, string>()
+      const ctxs = new Map<string, string>()
+      for (let i = 0; i < 10; i += 1) {
+        runtimes.set(`/cwd-${i}`, `runtime-${i}`)
+        ctxs.set(`/cwd-${i}`, `ctx-${i}`)
+      }
+      const evicted = adapterTesting.evictLruEntries(runtimes, 8, ctxs)
+      // First two cwds (oldest) should have been evicted from both maps.
+      const sizesOk = runtimes.size === 8 && ctxs.size === 8
+      const evictedOk = evicted.length === 2 && evicted[0] === "/cwd-0" && evicted[1] === "/cwd-1"
+      const companionDropped = !ctxs.has("/cwd-0") && !ctxs.has("/cwd-1")
+      const newest = Array.from(runtimes.keys()).pop()
+      return sizesOk && evictedOk && companionDropped && newest === "/cwd-9"
+        ? { ok: true }
+        : { ok: false, detail: `runtimes=${runtimes.size} ctxs=${ctxs.size} evicted=${evicted.join(",")} newest=${newest}` }
+    },
+  },
+  {
+    name: "LRU touch is a no-op when the key is missing",
+    run: async () => {
+      const map = new Map<string, number>([["a", 1], ["b", 2]])
+      adapterTesting.touchLruEntry(map, "missing")
+      const order = Array.from(map.keys()).join(",")
+      return order === "a,b" ? { ok: true } : { ok: false, detail: order }
+    },
+  },
 ]
 
 export async function main(): Promise<number> {
