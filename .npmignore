@@ -5,6 +5,3 @@ src/pi/*.test.ts
 
 # Exclude TypeScript build info files
 *.tsbuildinfo
-
-# Exclude large example scripts (Python workers) from tarball
-examples/atomic-commit-snapshot-worker/*.py
