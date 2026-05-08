@@ -6,6 +6,12 @@
   "engines": {
     "node": ">=22.0.0"
   },
+  "main": "./dist/index.js",
+  "exports": {
+    ".": "./dist/index.js",
+    "./extensions": "./dist/extensions/index.js",
+    "./package.json": "./package.json"
+  },
   "pi": {
     "extensions": [
       "./dist/extensions/index.js"
