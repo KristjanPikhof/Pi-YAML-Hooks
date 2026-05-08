@@ -1780,11 +1780,17 @@ function enqueueAsyncHook(
       }
 
       state.activeCount += 1
-      // P2 #13: wrap the call in an async IIFE so a synchronous throw from
-      // `next()` (e.g. before the function awaits) is converted into a
-      // rejected promise. Without this wrapper a sync throw would skip
-      // .catch/.finally and leak activeCount, eventually wedging the queue.
-      void (async () => next())()
+      // P2 #13: wrap the call so a synchronous throw from `next()` (e.g.
+      // before the function awaits) is converted into a rejected promise.
+      // Without this wrapper a sync throw would skip .catch/.finally and
+      // leak activeCount, eventually wedging the queue.
+      // P3-1 simplification: `Promise.resolve().then(next)` expresses the
+      // same semantics with one fewer Promise allocation than the
+      // previous `(async () => next())()` IIFE — both convert sync
+      // throws to rejections; the `.then` form skips the implicit
+      // async-function wrapper promise.
+      void Promise.resolve()
+        .then(next)
         .catch(onError)
         .finally(() => {
           state.activeCount -= 1
