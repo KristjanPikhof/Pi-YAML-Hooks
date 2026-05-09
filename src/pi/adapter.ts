@@ -268,7 +268,14 @@ export function registerAdapter(pi: ExtensionAPI): void {
   // src/core/runtime.ts:282 — so YAML file.changed hooks fire from this path.
   pi.on("tool_result", async (event: ToolResultEvent, ctx: ExtensionContext): Promise<void> => {
     rememberContext(ctx.cwd, ctx);
-    const sessionId = safeGetSessionId(ctx.sessionManager) ?? callIdsToSessionIds.get(event.toolCallId);
+    // P2-7 fix: prefer the recorded callIdsToSessionIds entry over the live
+    // ctx session id. The recorded entry is the session that was active
+    // when the tool_call fired, which is authoritative for routing this
+    // call's after-hooks. Falling back to the live ctx is only useful
+    // when the call straddled a /new|/resume — and even then routing the
+    // after-hook to the *new* session is incorrect, but it is at least a
+    // session that exists. Live ctx is the fallback, not the primary.
+    const sessionId = callIdsToSessionIds.get(event.toolCallId) ?? safeGetSessionId(ctx.sessionManager);
 
     if (sessionId) {
       try {
