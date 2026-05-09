@@ -28,10 +28,14 @@ import type {
 import path from "node:path";
 import { getPiHooksLogger } from "../core/logger.js";
 import {
-  type ToolExecuteAfterInput,
-  type ToolExecuteBeforeInput,
-  type ToolExecuteBeforeOutput,
-} from "../core/runtime.js";
+  buildSessionCreatedEvent,
+  buildSessionDeletedEvent,
+  buildSessionIdleEvent,
+  extractReason,
+  mapToolCallToBeforeInput,
+  mapToolCallToBeforeOutput,
+  mapToolResultToAfterInput,
+} from "./event-mappers.js";
 import {
   debugLog,
   isStaleSessionBoundError,
