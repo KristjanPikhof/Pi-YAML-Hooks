@@ -95,7 +95,15 @@ interface ParsedHooksFileEnvelope {
 
 const nodeRequire = createRequire(import.meta.url)
 
-export function parseHooksFile(filePath: string, content: string): ParsedHooksFileResult {
+export interface ParseHooksOptions {
+  readonly policy?: HookPolicy
+}
+
+export function parseHooksFile(
+  filePath: string,
+  content: string,
+  options: ParseHooksOptions = {},
+): ParsedHooksFileResult {
   const envelope = parseHooksFileEnvelope(filePath, content)
   if (envelope.errors.length > 0 || !envelope.body) {
     return {
@@ -106,7 +114,7 @@ export function parseHooksFile(filePath: string, content: string): ParsedHooksFi
     }
   }
 
-  return parseHooksObject(filePath, envelope.body)
+  return parseHooksObject(filePath, envelope.body, options.policy)
 }
 
 // P2 #16 fix: hard cap YAML payload size at 1 MiB before handing it to
