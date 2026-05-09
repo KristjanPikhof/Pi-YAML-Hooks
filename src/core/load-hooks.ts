@@ -945,7 +945,7 @@ function parseHookDefinition(
   const scopeResult = parseScope(filePath, hookDefinition.scope, index)
   const runInResult = parseRunIn(filePath, hookDefinition.runIn, index)
   const actionResult = parseHookAction(filePath, hookDefinition.action, event, index)
-  const asyncResult = parseAsync(filePath, hookDefinition.async, event, hookDefinition.actions, index)
+  const asyncResult = parseAsync(filePath, hookDefinition.async, event, hookDefinition.actions, hookDefinition.action, index)
 
   const conditionsResult = parseConditions(filePath, hookDefinition.conditions, event, index)
   const actionsResult = parseActions(filePath, hookDefinition.actions, index)
