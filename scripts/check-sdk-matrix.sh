@@ -98,6 +98,12 @@ For each SDK spec, the script will:
   6. delete the temporary copy
 
 Future gate: pass --include-future to try 0.75.x without widening package peerDependencies.
+
+P2-9 note: the matrix tests include src/pi/adapter.test.ts, which pins known
+SDK-emitted "stale session-bound" error messages against
+isStaleSessionBoundError. If a future SDK rewrites the wording,
+"isStaleSessionBoundError matches known SDK error messages" will fail and
+the brittle regex must be updated.
 PLAN
 }
 
