@@ -523,25 +523,3 @@ export function reportDispatchFailure(
   console.error(`[pi-yaml-hooks] ${context.event} dispatch failed: ${message}`);
 }
 
-function safeGetSessionId(sessionManager: ReadonlySessionManager | undefined): string | undefined {
-  if (!sessionManager) return undefined;
-  try {
-    const id = sessionManager.getSessionId();
-    return typeof id === "string" && id.length > 0 ? id : undefined;
-  } catch {
-    return undefined;
-  }
-}
-
-function isStaleSessionBoundError(error: unknown): boolean {
-  const message = error instanceof Error ? error.message : String(error);
-  return /stale|invalidated|replaced session|session-bound/i.test(message);
-}
-
-function debugLog(message: string): void {
-  if (process.env.PI_YAML_HOOKS_DEBUG) {
-    getPiHooksLogger().debug("adapter_debug", message)
-    // eslint-disable-next-line no-console
-    console.warn(`[pi-yaml-hooks] ${message}`);
-  }
-}
