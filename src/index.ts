@@ -27,3 +27,57 @@ export default function piHooksExtension(pi: ExtensionAPI): void {
   pi.on("before_agent_start", (_event, ctx) => registerHookAutocomplete(ctx));
   registerAdapter(pi);
 }
+
+// Public type re-exports (P3-7). Consumers building type-aware tooling on
+// top of pi-yaml-hooks (custom YAML linters, generators) can import these
+// from `pi-yaml-hooks/types` (the published subpath) or from the package
+// root. Only the stable, documented contract surface is re-exported; runtime
+// internals remain private.
+export type {
+  HookConfig,
+  HookAction,
+  HookCommandAction,
+  HookCommandActionConfig,
+  HookToolAction,
+  HookToolActionConfig,
+  HookBashAction,
+  HookBashActionConfig,
+  HookNotifyAction,
+  HookNotifyActionConfig,
+  HookNotifyLevel,
+  HookConfirmAction,
+  HookConfirmActionConfig,
+  HookSetStatusAction,
+  HookSetStatusActionConfig,
+  HookCondition,
+  HookPathCondition,
+  HookPathConditionKey,
+  HookLegacyCondition,
+  HookEvent,
+  ToolHookEvent,
+  ToolHookPhase,
+  SessionHookEvent,
+  HookScope,
+  HookRunIn,
+  HookBehavior,
+  HookAsyncConfig,
+  HookSkipReason,
+  HookValidationError,
+  HookValidationErrorCode,
+  HookOverrideEntry,
+  HookConfigSource,
+  HookMap,
+  HookPolicy,
+  HookPolicyDiagnostics,
+  HostAdapter,
+  HostDeliveryResult,
+  ParsedHooksFile,
+  SessionDeletedReason,
+  FileChange,
+  CreateFileChange,
+  ModifyFileChange,
+  DeleteFileChange,
+  RenameFileChange,
+} from "./core/types.js";
+
+export type { BashHookContext, BashHookResult, BashHookResultStatus, BashExecutionRequest, BashProcessResult } from "./core/bash-types.js";
