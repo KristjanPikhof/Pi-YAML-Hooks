@@ -82,39 +82,24 @@ export interface HookBashActionConfig {
   readonly timeout?: number
 }
 
-/**
- * P2-24: each HookAction member uses `never`-typed excluders for the keys
- * carried by sibling members. This makes the union discriminated by
- * key-presence at compile time: an action carrying both `command` and
- * `bash`, for example, fails type-checking. The runtime loader still
- * validates the same thing, but the static check catches typos at the
- * authoring site.
- */
+// HookAction variants are discriminated by which key is present. The union
+// already enforces mutual exclusion structurally — a literal carrying two
+// action keys (e.g. `{ command: ..., tool: ... }`) does not assign to any
+// member of the union. Excess-property checks at the call site catch the
+// rest. Adding `?: never` excluders here was attempted (P2-24) but breaks
+// `"key" in action` narrowing in callers (every variant ends up carrying
+// every key, so `"tool" in action` no longer narrows the union). The
+// runtime loader is the load-bearing check for malformed input.
 export interface HookCommandAction {
   readonly command: string | HookCommandActionConfig
-  readonly tool?: never
-  readonly bash?: never
-  readonly notify?: never
-  readonly confirm?: never
-  readonly setStatus?: never
 }
 
 export interface HookToolAction {
   readonly tool: HookToolActionConfig
-  readonly command?: never
-  readonly bash?: never
-  readonly notify?: never
-  readonly confirm?: never
-  readonly setStatus?: never
 }
 
 export interface HookBashAction {
   readonly bash: string | HookBashActionConfig
-  readonly command?: never
-  readonly tool?: never
-  readonly notify?: never
-  readonly confirm?: never
-  readonly setStatus?: never
 }
 
 export type HookNotifyLevel = "info" | "success" | "warning" | "error"
@@ -126,11 +111,6 @@ export interface HookNotifyActionConfig {
 
 export interface HookNotifyAction {
   readonly notify: string | HookNotifyActionConfig
-  readonly command?: never
-  readonly tool?: never
-  readonly bash?: never
-  readonly confirm?: never
-  readonly setStatus?: never
 }
 
 export interface HookConfirmActionConfig {
@@ -140,11 +120,6 @@ export interface HookConfirmActionConfig {
 
 export interface HookConfirmAction {
   readonly confirm: HookConfirmActionConfig
-  readonly command?: never
-  readonly tool?: never
-  readonly bash?: never
-  readonly notify?: never
-  readonly setStatus?: never
 }
 
 export interface HookSetStatusActionConfig {
@@ -153,11 +128,6 @@ export interface HookSetStatusActionConfig {
 
 export interface HookSetStatusAction {
   readonly setStatus: string | HookSetStatusActionConfig
-  readonly command?: never
-  readonly tool?: never
-  readonly bash?: never
-  readonly notify?: never
-  readonly confirm?: never
 }
 
 export type HookAction =
