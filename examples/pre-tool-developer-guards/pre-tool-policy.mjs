@@ -1,5 +1,12 @@
 #!/usr/bin/env node
 
+// Command-start prefix: beginning of string, whitespace, or a shell separator
+// (semicolon, ampersand, pipe, backtick, opening paren). This is intentionally
+// coarse — it catches obvious chained commands like `cd /tmp; rm -rf /` but is
+// not a security boundary. Determined attackers can defeat it with quoting,
+// env vars, eval, or aliasing. Use OS-level controls for real isolation.
+const CMD_START = String.raw`(?:^|[\s;&|\x60(])`
+
 const payload = JSON.parse(await readStdin())
 const packageInstallOnly = process.argv.includes("--package-install-only")
 const toolName = String(payload.tool_name ?? "")
@@ -19,13 +26,6 @@ if (toolName === "write" || toolName === "edit") {
     block(`Blocked ${toolName} to protected path: ${filePath}`)
   }
 }
-
-// Command-start prefix: beginning of string, whitespace, or a shell separator
-// (semicolon, ampersand, pipe, backtick, opening paren). This is intentionally
-// coarse — it catches obvious chained commands like `cd /tmp; rm -rf /` but is
-// not a security boundary. Determined attackers can defeat it with quoting,
-// env vars, eval, or aliasing. Use OS-level controls for real isolation.
-const CMD_START = String.raw`(?:^|[\s;&|\x60(])`
 
 function getRiskyCommandReason(command) {
   const compact = command.replace(/\s+/g, " ").trim()
