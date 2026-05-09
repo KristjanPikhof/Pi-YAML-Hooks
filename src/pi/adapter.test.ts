@@ -172,12 +172,12 @@ class FakePiHarness {
     await this.emit("session_start", { reason })
   }
 
-  async sessionBeforeSwitch(): Promise<void> {
-    await this.emit("session_before_switch")
+  async sessionBeforeSwitch(reason?: "new" | "resume"): Promise<void> {
+    await this.emit("session_before_switch", reason ? { type: "session_before_switch", reason } : {})
   }
 
-  async sessionShutdown(): Promise<void> {
-    await this.emit("session_shutdown")
+  async sessionShutdown(reason?: "quit" | "reload" | "new" | "resume" | "fork"): Promise<void> {
+    await this.emit("session_shutdown", reason ? { type: "session_shutdown", reason } : {})
   }
 
   async beforeAgentStart(prompt = "hi", systemPrompt = "base system prompt"): Promise<unknown> {
