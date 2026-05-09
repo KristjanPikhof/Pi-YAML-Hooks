@@ -607,10 +607,18 @@ export function createHooksRuntime(host: HostAdapter, options: CreateHooksRuntim
 
         state.rememberSession(sessionID, pickString(info?.parentID) ?? undefined)
         state.deleteSession(sessionID)
+        // P1-4 fix: surface the `reason` PI emits on session_shutdown /
+        // session_before_switch (e.g. "quit", "reload", "new", "resume",
+        // "fork") in dispatch telemetry so operators can tell graceful
+        // shutdowns apart from /new|/resume|/fork transitions. The reason
+        // travels with the envelope but is otherwise advisory; hook
+        // matching is unaffected.
+        const deletedReason = pickString(properties.reason)
         logger.debug("dispatch_start", "Dispatching session.deleted hooks.", {
           cwd: projectDir,
           event: "session.deleted",
           sessionId: sessionID,
+          ...(deletedReason ? { details: { reason: deletedReason } } : {}),
         })
         await dispatchHooks(
           activeHooks,
