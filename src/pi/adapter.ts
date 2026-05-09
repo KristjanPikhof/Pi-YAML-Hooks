@@ -167,6 +167,20 @@ export function registerAdapter(pi: ExtensionAPI): void {
       return existing;
     }
 
+    // P2-23: if construction for this cwd is already in flight, refuse to
+    // start a second one. Any caller that re-enters mid-construction (e.g.
+    // a hook running during initial load that itself dispatches another
+    // event) would otherwise trigger a duplicate `loadDiscoveredHooksSnapshot`
+    // and `createHooksRuntime`. The in-flight runtime will be in `runtimes`
+    // momentarily; throwing is preferable to silently returning a stale
+    // runtime, since legitimate re-entry is a programming error.
+    if (constructingRuntimes.has(cwd)) {
+      throw new Error(
+        `[pi-yaml-hooks] runtime construction is already in flight for ${cwd}; a hook fired during initial load is the most likely cause.`,
+      );
+    }
+    constructingRuntimes.add(cwd);
+
     // P1 #3 fix: do not close over a particular sessionManager. Read the
     // current one from the latest ctx on every host call so /new, /resume,
     // /fork get the correct lineage.
