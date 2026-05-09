@@ -18,8 +18,19 @@ export function registerPromptSupport(pi: ExtensionAPI): void {
   })
 }
 
+// P3-3: accept a small set of common "off" spellings so users do not have to
+// remember a single canonical form. We treat env var presence the same way
+// other PI knobs do: trim + lowercase compare against an allow-list.
+const PROMPT_AWARENESS_DISABLE_VALUES = new Set(["0", "false", "off", "no"])
+
+function isPromptAwarenessDisabled(): boolean {
+  const raw = process.env[PROMPT_AWARENESS_DISABLE_ENV]
+  if (raw === undefined) return false
+  return PROMPT_AWARENESS_DISABLE_VALUES.has(raw.trim().toLowerCase())
+}
+
 function buildHookAwarenessSystemPrompt(ctx: ExtensionContext): string | undefined {
-  if (process.env[PROMPT_AWARENESS_DISABLE_ENV] === "0") {
+  if (isPromptAwarenessDisabled()) {
     return undefined
   }
 
