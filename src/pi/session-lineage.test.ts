@@ -24,9 +24,11 @@ interface FakeManager {
 }
 
 function withTmpDir<T>(run: (dir: string) => Promise<T> | T): Promise<T> {
+  resetSessionLineageCacheForTests()
   const dir = mkdtempSync(path.join(os.tmpdir(), "pi-yaml-hooks-lineage-"))
   return Promise.resolve(run(dir)).finally(() => {
     rmSync(dir, { recursive: true, force: true })
+    resetSessionLineageCacheForTests()
   }) as Promise<T>
 }
 
