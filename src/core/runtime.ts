@@ -1125,17 +1125,6 @@ async function abortSession(host: HostAdapter, sessionID: string): Promise<void>
   }
 }
 
-async function resolveParentSessionID(host: HostAdapter, sessionID: string): Promise<string | null> {
-  // The host only exposes a root-session lookup, so callers that need a parent
-  // fall back to "is this already the root?" as a best-effort parent resolver.
-  try {
-    const rootID = await host.getRootSessionId(sessionID)
-    return rootID && rootID !== sessionID ? rootID : null
-  } catch {
-    return null
-  }
-}
-
 // P1-1 helper: cheap stat-based fingerprint shared by the runtime-side
 // refreshHooks short-circuit. Returns a stable string that changes whenever
 // any of the listed files' mtime/size changes, or whenever a file appears
