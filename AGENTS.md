@@ -70,6 +70,7 @@ Examples-only (not product): `examples/atomic-commit-snapshot-worker/`, `/snapsh
 | `PI_YAML_HOOKS_CONFIRM_AUTO_APPROVE` | Auto-accept `confirm:` (testing) |
 | `PI_YAML_HOOKS_ALLOW_GLOBAL_IMPORTS` | Allow imports outside config root |
 | `PI_YAML_HOOKS_ALLOW_PACKAGE_IMPORTS` | Allow npm-package imports |
+| `PI_YAML_HOOKS_ALLOW_PROJECT_IMPORTS_OUTSIDE_TRUST_ANCHOR` | Allow project imports whose target escapes the trust anchor |
 | `PI_YAML_HOOKS_DEBUG` | `=1` verbose |
 | `PI_YAML_HOOKS_LOG_LEVEL` | `debug\|info\|warn\|error` |
 | `PI_YAML_HOOKS_LOG_FILE` | Override log path |
