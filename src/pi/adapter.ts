@@ -469,10 +469,14 @@ function evictLruEntries<T>(
  * Test-only re-export of the production LRU helpers. Tests verify the
  * eviction policy via these functions; production code uses the same
  * implementations inline (see `touchCwd` / `evictIfNeeded` above).
+ *
+ * Also exposes `isStaleSessionBoundError` so unit tests can pin known
+ * SDK-emitted error messages against the regex (P2-9).
  */
 export const __testing__ = {
   touchLruEntry,
   evictLruEntries,
+  isStaleSessionBoundError,
 };
 
 export function createHostAdapter(
