@@ -567,12 +567,18 @@ export function createHooksRuntime(host: HostAdapter, options: CreateHooksRuntim
           return
         }
 
-        state.rememberSession(sessionID, pickString(info?.parentID) ?? null)
+        // P1-3 fix: when `parentID` is omitted (the PI adapter no longer
+        // forwards `header.parentSession`, which was a file path rather than
+        // a session ID), seed the SessionRecord without a parentID so the
+        // runtime defers lineage resolution to `host.getRootSessionId`. When
+        // a host does provide a parentID, honour it as-is.
+        const parentID = pickString(info?.parentID)
+        state.rememberSession(sessionID, parentID === undefined ? undefined : parentID)
         logger.debug("dispatch_start", "Dispatching session.created hooks.", {
           cwd: projectDir,
           event: "session.created",
           sessionId: sessionID,
-          details: { parentID: pickString(info?.parentID) ?? null },
+          details: { parentID: parentID ?? null },
         })
         await dispatchHooks(
           activeHooks,
