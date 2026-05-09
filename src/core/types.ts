@@ -1,4 +1,16 @@
 export const SESSION_HOOK_EVENTS = ["session.idle", "session.created", "session.deleted", "file.changed"] as const
+
+/**
+ * Reason values forwarded with `session.deleted` envelopes.
+ *
+ * PI emits both `session_shutdown` and `session_before_switch` with their own
+ * `reason` field (e.g. "quit", "reload", "new", "resume", "fork"). The
+ * adapter forwards that value verbatim into the runtime envelope so hook
+ * authors can distinguish a graceful shutdown from a /new|/resume|/fork
+ * transition. The string is opaque to the runtime: handlers should treat
+ * unknown values as a forward-compatible extension.
+ */
+export type SessionDeletedReason = string
 export const LEGACY_HOOK_CONDITIONS = ["matchesCodeFiles"] as const
 export const PATH_HOOK_CONDITION_KEYS = ["matchesAnyPath", "matchesAllPaths"] as const
 export const HOOK_SCOPES = ["all", "main", "child"] as const
