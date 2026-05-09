@@ -1173,6 +1173,44 @@ hooks: []
       return order === "a,b" ? { ok: true } : { ok: false, detail: order }
     },
   },
+  {
+    // P2-9: regression — pin known SDK-emitted stale-context messages so the
+    // brittle isStaleSessionBoundError regex does not silently drift if the
+    // SDK rewrites the wording. Update this list when widening the peer
+    // range (`npm run compat:sdk-matrix:future`) reveals new shapes.
+    name: "isStaleSessionBoundError matches known SDK error messages",
+    run: async () => {
+      const knownStaleMessages = [
+        // Verbatim from @earendil-works/pi-coding-agent ExtensionRuntime
+        // invalidate() default at 0.74.0 (dist/core/extensions/runner.js).
+        "This extension ctx is stale after session replacement or reload. Do not use a captured pi or command ctx after ctx.newSession(), ctx.fork(), ctx.switchSession(), or ctx.reload(). For newSession, fork, and switchSession, move post-replacement work into withSession and use the ctx passed to withSession. For reload, do not use the old ctx after await ctx.reload().",
+        // Shorter shapes that have appeared historically in the SDK / fakes.
+        "stale session-bound ExtensionAPI after replacement",
+        "stale session-bound ExtensionContext after replacement",
+        "extension runtime invalidated",
+        "replaced session: ctx is stale",
+      ]
+      const knownNonStaleMessages = [
+        "ENOENT: no such file or directory",
+        "RangeError: Maximum call stack size exceeded",
+        "TypeError: Cannot read properties of undefined",
+      ]
+      const failures: string[] = []
+      for (const message of knownStaleMessages) {
+        if (!adapterTesting.isStaleSessionBoundError(new Error(message))) {
+          failures.push(`stale-positive miss: ${message.slice(0, 60)}…`)
+        }
+      }
+      for (const message of knownNonStaleMessages) {
+        if (adapterTesting.isStaleSessionBoundError(new Error(message))) {
+          failures.push(`stale-negative match: ${message}`)
+        }
+      }
+      return failures.length === 0
+        ? { ok: true }
+        : { ok: false, detail: failures.join("; ") }
+    },
+  },
 ]
 
 export async function main(): Promise<number> {
