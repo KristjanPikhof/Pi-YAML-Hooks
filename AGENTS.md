@@ -47,7 +47,7 @@ Examples-only (not product): `examples/atomic-commit-snapshot-worker/`, `/snapsh
 - `runIn: main` rejected for non-`bash`; does not change bash process/session context
 - Prefer `scope` for main-vs-child routing
 - `action: stop` only effective on `tool.before.*`
-- `session.deleted` lossy (shutdown + `/new`, `/resume`, `/fork`)
+- `session.deleted` fires for shutdown + `/new`, `/resume`, `/fork`; PI's `reason` (`quit`/`reload`/`new`/`resume`/`fork`) flows through on the envelope so hooks can disambiguate
 - `user_bash` opt-in via `PI_YAML_HOOKS_ENABLE_USER_BASH=1`
 
 ## Config + trust
