@@ -1,3 +1,7 @@
+// Side-effect import: registers the PI HookPolicy with the core loader.
+// P2 #22 separated core/load-hooks from src/pi/*; standalone tests that
+// exercise PI diagnostics through `parseHooksFile` must opt the policy in.
+import "./unsupported.js"
 import { parseHooksFile } from "../core/load-hooks.js"
 
 interface Case {
