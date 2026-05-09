@@ -78,7 +78,7 @@ Trust on PI is anchored at the repo or worktree anchor, not at every imported fi
 
 1. The global hooks file (which always loads) cannot pull in additional files unless `PI_YAML_HOOKS_ALLOW_GLOBAL_IMPORTS=1` is set, so a global hook cannot silently extend its own footprint.
 2. Bare-specifier imports that resolve through `node_modules` are gated behind `PI_YAML_HOOKS_ALLOW_PACKAGE_IMPORTS=1`, so an arbitrary npm dependency cannot register hooks just by being installed.
-3. Project imports cannot escape the project's trust anchor (its repo/worktree root, or the discovered project root). The check follows symlinks, so a link that lives inside the project but points outside is still refused. Set `PI_YAML_HOOKS_ALLOW_PROJECT_IMPORTS_OUTSIDE_TRUST_ANCHOR=1` to opt in.
+3. Project imports cannot escape the project's trust anchor (its repo or worktree anchor, or the discovered project root). The check follows symlinks, so a link that lives inside the project but points outside is still refused. Set `PI_YAML_HOOKS_ALLOW_PROJECT_IMPORTS_OUTSIDE_TRUST_ANCHOR=1` to opt in.
 
 All three gates fail closed with a `[PIYAMLHOOKS]` error message so operators see exactly which import was refused and which env var to set.
 
