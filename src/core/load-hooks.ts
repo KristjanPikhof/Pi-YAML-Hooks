@@ -1106,6 +1106,7 @@ function parseAsync(
   async_: unknown,
   event: unknown,
   actions: unknown,
+  hookAction: unknown,
   index: number,
 ): { async?: true | HookAsyncConfig; errors: HookValidationError[] } {
   if (async_ === undefined) {
@@ -1128,6 +1129,27 @@ function parseAsync(
   if (typeof event === "string" && event === "session.idle") {
     return {
       errors: [createError(filePath, "invalid_async", `hooks[${index}].async cannot be true for session.idle events because idle dispatch must complete before tracked changes are consumed.`, `hooks[${index}].async`)],
+    }
+  }
+
+  // P2 #21 fix: `action: stop` only takes effect on `tool.before.*` (those
+  // events are already rejected above as async). For any other event the
+  // combination is meaningless: the action runs after the tool has already
+  // executed, and the runtime would silently drop the stop. Earlier we
+  // returned silently here; now we surface a parse-time error so authors
+  // see the misconfiguration instead of debugging a no-op at runtime.
+  // The core-runtime lane added a runtime-side warning as a defence-in-depth
+  // safety net; this rejection is the front-of-line gate.
+  if (isHookBehavior(hookAction) && hookAction === "stop") {
+    return {
+      errors: [
+        createError(
+          filePath,
+          "invalid_hook_action",
+          `hooks[${index}] async hooks cannot use action: stop. action: stop only blocks tool.before.* events, which already disallow async execution.`,
+          `hooks[${index}].action`,
+        ),
+      ],
     }
   }
 
