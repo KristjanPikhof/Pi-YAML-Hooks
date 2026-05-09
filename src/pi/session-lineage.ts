@@ -130,12 +130,13 @@ function readSessionHeaderFromFile(filePath: string): SessionHeader | null {
   // bounded if a file is unexpectedly huge.
   let fd: number | undefined;
   try {
-    fd = openSync(filePath, "r");
-    // P2-15: ensure we are reading a regular file. A FIFO, socket, or
-    // device node could otherwise block readSync indefinitely or yield
-    // attacker-controlled bytes for a sessionId. The lineage walker only
-    // ever expects PI session JSONL files (regular files on disk), so any
-    // other file type is treated as unreadable.
+    // P2-15: open with O_NONBLOCK so a FIFO with no writer doesn't block
+    // openSync forever. We immediately fstat the descriptor and bail on
+    // anything that isn't a regular file (FIFO, socket, char/block device).
+    // For regular files O_NONBLOCK is a no-op, so this is safe to apply
+    // unconditionally — Linux/macOS both ignore the flag when opening
+    // disk files. The flag is dropped before readSync via fstat-only path.
+    fd = openSync(filePath, fsConstants.O_RDONLY | fsConstants.O_NONBLOCK);
     const stat = fstatSync(fd);
     if (!stat.isFile()) {
       return null;
