@@ -454,6 +454,11 @@ const runtimeCases: RuntimeCase[] = [
     },
   },
   {
+    // P2-8: with matching sessions the call reaches sendUserMessage; if PI
+    // throws a stale-session message we recognise it via the regex and
+    // degrade rather than re-throwing. Mismatched sessions short-circuit
+    // earlier (covered by the "PI can only target the current session"
+    // case above) and never exercise this stale-error branch.
     name: "adapter sendPrompt reports degraded for stale session-bound PI API",
     run: async () => {
       const pi = {
@@ -461,7 +466,12 @@ const runtimeCases: RuntimeCase[] = [
           throw new Error("stale session-bound ExtensionAPI after replacement")
         },
       } as unknown as Parameters<typeof createHostAdapter>[0]
-      const host = createHostAdapter(pi, "/tmp", () => undefined, () => undefined)
+      const host = createHostAdapter(
+        pi,
+        "/tmp",
+        () => ({ getSessionId: () => "s1" } as never),
+        () => undefined,
+      )
       const result = host.sendPrompt("s1", "hello")
       return result && typeof result === "object" && "status" in result && result.status === "degraded" && result.reason === "stale_session_context"
         ? { ok: true }
