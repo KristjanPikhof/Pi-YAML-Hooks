@@ -87,24 +87,6 @@ export interface HookMatchDecision {
   readonly details?: Record<string, unknown>
 }
 
-interface DispatchState {
-  active: boolean
-  pending: DispatchRequest[]
-}
-
-interface DispatchRequest {
-  readonly context: RuntimeActionContext
-  readonly options: { canBlock?: boolean }
-  readonly resolve?: (result: HookExecutionResult) => void
-  readonly reject?: (error: unknown) => void
-  // P1-13 fix: capture the AsyncLocalStorage store at park time so the
-  // queued execution re-enters the *enqueueing* dispatch's recursion-guard
-  // frame on drain. Without this, drained requests run under whatever the
-  // initial-dispatch's frame happens to be (often a fresh, empty Set), and
-  // the per-action dedup keys leak across unrelated dispatch chains.
-  readonly recursionGuardStore?: Set<string>
-}
-
 type ExecuteBashHook = (request: BashExecutionRequest) => Promise<BashHookResult>
 
 export interface HooksRuntime {
