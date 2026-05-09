@@ -1,12 +1,19 @@
 import { AsyncLocalStorage } from "node:async_hooks"
 import { statSync } from "node:fs"
-import { extname, isAbsolute, matchesGlob, relative } from "node:path"
 
 import { executeBashHook } from "./bash-executor.js"
 import type { BashExecutionRequest, BashHookResult } from "./bash-types.js"
 import { discoverHookConfigEntries } from "./config-paths.js"
 import { loadDiscoveredHooksSnapshot } from "./load-hooks.js"
 import { getPiHooksLogger } from "./logger.js"
+import {
+  buildPathMatchContext,
+  createGlobMatcherCache,
+  evaluatePathConditions,
+  getGlobMatcher,
+  type GlobMatcher,
+  type GlobMatcherCache,
+} from "./runtime/path-filter.js"
 import { SessionStateStore } from "./session-state.js"
 import { getChangedPaths, getMutationToolHookNames, getToolFileChanges } from "./tool-paths.js"
 import type {
@@ -21,88 +28,7 @@ import type {
   HostAdapter,
 } from "./types.js"
 
-const CODE_EXTENSIONS = new Set([
-  ".ts",
-  ".tsx",
-  ".mts",
-  ".cts",
-  ".js",
-  ".jsx",
-  ".mjs",
-  ".cjs",
-  ".json",
-  ".jsonc",
-  ".json5",
-  ".yml",
-  ".yaml",
-  ".toml",
-  ".xml",
-  ".ini",
-  ".cfg",
-  ".conf",
-  ".properties",
-  ".css",
-  ".scss",
-  ".sass",
-  ".less",
-  ".html",
-  ".vue",
-  ".svelte",
-  ".astro",
-  ".mdx",
-  ".graphql",
-  ".gql",
-  ".proto",
-  ".sql",
-  ".prisma",
-  ".go",
-  ".rs",
-  ".zig",
-  ".c",
-  ".h",
-  ".cpp",
-  ".cc",
-  ".cxx",
-  ".hpp",
-  ".java",
-  ".groovy",
-  ".gradle",
-  ".py",
-  ".rb",
-  ".php",
-  ".sh",
-  ".bash",
-  ".zsh",
-  ".fish",
-  ".ps1",
-  ".psm1",
-  ".psd1",
-  ".bat",
-  ".cmd",
-  ".kt",
-  ".kts",
-  ".swift",
-  ".m",
-  ".mm",
-  ".cs",
-  ".fs",
-  ".scala",
-  ".clj",
-  ".hs",
-  ".lua",
-  ".dart",
-  ".elm",
-  ".ex",
-  ".exs",
-  ".erl",
-  ".hrl",
-  ".nim",
-  ".nix",
-  ".r",
-  ".rkt",
-  ".tf",
-  ".tfvars",
-])
+export { buildPathMatchContext } from "./runtime/path-filter.js"
 
 export interface ToolExecuteBeforeInput {
   readonly tool: string
