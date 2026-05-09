@@ -59,19 +59,32 @@ async function main() {
 
   console.log(`[run-tests] discovered ${tests.length} test file(s) under dist/`)
 
-  // Pass each compiled test file to node --test as a positional argument.
-  // node executes them sequentially in one process group, which keeps signal
-  // handling sane when the developer hits Ctrl-C mid-run.
-  const child = spawn(process.execPath, ["--test", ...tests], {
-    stdio: "inherit",
-    cwd: repoRoot,
-  })
-  child.on("exit", (code, signal) => {
-    if (signal) {
-      console.error(`[run-tests] node --test killed by ${signal}`)
-      process.exit(1)
+  // Run each compiled test file in its own node --test process. This keeps
+  // execution strictly sequential while preserving the explicit zero-test
+  // guard above and sane Ctrl-C/signal reporting.
+  for (const testFile of tests) {
+    console.log(`[run-tests] running ${path.relative(repoRoot, testFile)}`)
+    const exitCode = await runTestFile(testFile)
+    if (exitCode !== 0) {
+      process.exit(exitCode)
     }
-    process.exit(code ?? 1)
+  }
+}
+
+function runTestFile(testFile) {
+  return new Promise((resolve) => {
+    const child = spawn(process.execPath, ["--test", testFile], {
+      stdio: "inherit",
+      cwd: repoRoot,
+    })
+    child.on("exit", (code, signal) => {
+      if (signal) {
+        console.error(`[run-tests] node --test killed by ${signal}`)
+        resolve(1)
+        return
+      }
+      resolve(code ?? 1)
+    })
   })
 }
 
