@@ -1196,17 +1196,6 @@ function getHookIdentifier(hook: HookConfig): string {
   return hook.id ?? `${hook.source.filePath}#hooks[${hook.source.index}]`
 }
 
-function getStatusSlotKey(hookId: string, _sourceFilePath: string): string {
-  // P3 #28: previously suffixed with sourceFilePath, which meant a hooks file
-  // move (rename, dir reshuffle) caused the host's status slot to be
-  // orphaned and re-created. Key on the stable hookId only so a renamed
-  // hooks.yaml keeps its slot. Hook IDs are user-supplied via `id:` and
-  // namespaced via `${filePath}#hooks[idx]` when missing — the latter still
-  // changes on file move, in which case the slot is intentionally
-  // drop-and-recreate (the hook has no stable identity to track).
-  return `pi-yaml-hooks:${hookId}`
-}
-
 function formatHookSource(hook: HookConfig): string {
   return `${hook.source.filePath}#hooks[${hook.source.index}]`
 }
