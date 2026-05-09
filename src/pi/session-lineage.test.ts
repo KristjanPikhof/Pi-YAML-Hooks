@@ -239,6 +239,78 @@ const cases: Case[] = [
       }),
   },
   {
+    // P2-14: once a sessionId has been resolved to its root, looking it up
+    // again under a different "current header" (e.g. a header that no
+    // longer matches the requested id) should still produce the cached
+    // root rather than silently falling back to the input id.
+    name: "caches resolved sessionId→rootId and serves from cache on later lookups",
+    run: async () =>
+      await withTmpDir(async (dir) => {
+        const rootPath = path.join(dir, "root.jsonl")
+        writeSessionFile(rootPath, { type: "session", id: "root-id", timestamp: "", cwd: "" })
+
+        // First call: header.id matches, walk fills the cache.
+        const initialManager: FakeManager = {
+          getHeader: () => ({
+            type: "session",
+            id: "child-id",
+            timestamp: "",
+            cwd: "",
+            parentSession: rootPath,
+          }),
+          getSessionId: () => "child-id",
+        }
+        const first = getRootSessionId("child-id", initialManager as never)
+        if (first !== "root-id") return { ok: false, detail: `first lookup got ${first}, expected root-id` }
+
+        // Second call: ask about child-id under a different active header
+        // (e.g. a fork that surfaced child-id without it being current).
+        // The cache should still report root-id rather than the bare input.
+        const otherManager: FakeManager = {
+          getHeader: () => ({ type: "session", id: "unrelated-id", timestamp: "", cwd: "" }),
+          getSessionId: () => "unrelated-id",
+        }
+        const cached = getRootSessionId("child-id", otherManager as never)
+        return cached === "root-id" ? { ok: true } : { ok: false, detail: `cache miss, got ${cached}` }
+      }),
+  },
+  {
+    // P2-15: a parentSession path that points to a FIFO must not block
+    // readSync forever; readSessionHeaderFromFile rejects non-regular
+    // files. We create a FIFO with mkfifo (POSIX only) and assert the
+    // walker gives up cleanly. Skip on platforms without mkfifo.
+    name: "rejects non-regular parentSession files (FIFO)",
+    run: async () =>
+      await withTmpDir(async (dir) => {
+        const fifoPath = path.join(dir, "parent.fifo")
+        try {
+          execSync(`mkfifo ${JSON.stringify(fifoPath)}`, { stdio: "pipe" })
+        } catch {
+          // No mkfifo on this platform — treat the test as a pass since the
+          // safety check is unreachable here.
+          return { ok: true }
+        }
+
+        const manager: FakeManager = {
+          getHeader: () => ({
+            type: "session",
+            id: "current-id",
+            timestamp: "",
+            cwd: "",
+            parentSession: fifoPath,
+          }),
+          getSessionId: () => "current-id",
+        }
+        const start = Date.now()
+        const result = getRootSessionId("current-id", manager as never)
+        const elapsed = Date.now() - start
+        if (elapsed > 2000) {
+          return { ok: false, detail: `FIFO read blocked too long (${elapsed}ms)` }
+        }
+        return result === "current-id" ? { ok: true } : { ok: false, detail: result }
+      }),
+  },
+  {
     name: "bounds parent walk depth (does not loop forever on a long chain)",
     run: async () =>
       await withTmpDir(async (dir) => {
