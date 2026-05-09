@@ -300,24 +300,10 @@ export function createHooksRuntime(host: HostAdapter, options: CreateHooksRuntim
         details: { callID: eventInput.callID, toolArgs },
       })
 
-      const result = await dispatchToolHooks(
-        activeHooks,
-        state,
-        host,
-        projectDir,
-        runBashHook,
-        dispatchStates,
-        actionRecursionGuards,
-        asyncQueues,
-        "before",
-        eventInput.tool,
-        sessionID,
-        {
-          toolName: eventInput.tool,
-          toolArgs,
-        },
-        boundGlobMatcher,
-      )
+      const result = await invokeDispatchToolHooks(activeHooks, "before", eventInput.tool, sessionID, {
+        toolName: eventInput.tool,
+        toolArgs,
+      })
 
       if (result.blocked) {
         state.consumePendingToolCall(eventInput.callID)
