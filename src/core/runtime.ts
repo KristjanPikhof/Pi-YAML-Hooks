@@ -355,48 +355,20 @@ export function createHooksRuntime(host: HostAdapter, options: CreateHooksRuntim
       state.addFileChanges(sessionID, changes)
 
       if (changes.length > 0) {
-        await dispatchHooks(
-          activeHooks,
-          state,
-          host,
-          projectDir,
-          runBashHook,
-          "file.changed",
-          sessionID,
-          {
-            files,
-            changes,
-            toolName: eventInput.tool,
-            toolArgs,
-          },
-          {},
-          dispatchStates,
-          actionRecursionGuards,
-          asyncQueues,
-          boundGlobMatcher,
-        )
-      }
-
-      await dispatchToolHooks(
-        activeHooks,
-        state,
-        host,
-        projectDir,
-        runBashHook,
-        dispatchStates,
-        actionRecursionGuards,
-        asyncQueues,
-        "after",
-        eventInput.tool,
-        sessionID,
-        {
+        await invokeDispatchHooks(activeHooks, "file.changed", sessionID, {
           files,
           changes,
           toolName: eventInput.tool,
           toolArgs,
-        },
-        boundGlobMatcher,
-      )
+        })
+      }
+
+      await invokeDispatchToolHooks(activeHooks, "after", eventInput.tool, sessionID, {
+        files,
+        changes,
+        toolName: eventInput.tool,
+        toolArgs,
+      })
 
       logger.debug("dispatch_end", "Finished post-tool dispatch.", {
         cwd: projectDir,
