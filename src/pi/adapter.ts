@@ -96,45 +96,9 @@ export function registerAdapter(pi: ExtensionAPI): void {
     details: { platform: process.platform, nodeVersion: process.version },
   });
 
-  // Runtime is created lazily on the first event so that `ctx.cwd` is
-  // available and we honour the project's hooks.yaml location. Once built,
-  // we cache the runtime keyed by cwd so subsequent cwd changes in the same
-  // process (should PI ever support that) pick up the right project config.
-  //
-  // P2 #18: bound the runtime + latestContexts maps with an LRU eviction so
-  // long-lived processes that move between many directories (e.g. monorepo
-  // tooling) do not retain runtimes for cwds we will never see again. Maps
-  // preserve insertion order, so we promote on access by re-setting the key.
-  const runtimes = new Map<string, HooksRuntime>();
-  // P2-23: track cwds whose runtime construction is currently in-flight so
-  // a re-entrant call (e.g. an early hook firing during construction) can
-  // see and reuse the partially-built runtime instead of triggering a
-  // second `loadDiscoveredHooksSnapshot` + `createHooksRuntime`. Today
-  // construction is synchronous so reentry is the only realistic dual-load
-  // path; if we ever make `loadDiscoveredHooksSnapshot` async, this slot
-  // also gives us a place to stash the in-flight Promise.
-  const constructingRuntimes = new Set<string>();
+  const { getRuntimeFor, rememberContext } = createRuntimeRegistry(pi);
+
   const callIdsToSessionIds = new Map<string, string>();
-  // Track the most recently observed ExtensionContext per cwd so that the
-  // HostAdapter UI methods (notify/confirm/setStatus) can reach ctx.ui even
-  // though they live outside the event handler scope. The ctx is replayed
-  // for each PI event, so "last seen" is the right handle to use.
-  const latestContexts = new Map<string, ExtensionContext>();
-  const MAX_CWD_ENTRIES = 8;
-
-  function touchCwd(cwd: string): void {
-    // P2-6 fix: prod LRU promotion goes through the same helper used by
-    // tests so the eviction policy has a single implementation.
-    touchLruEntry(latestContexts, cwd);
-    touchLruEntry(runtimes, cwd);
-  }
-
-  function evictIfNeeded(): void {
-    // P2-6 fix: same — prod eviction reuses the shared helper. The companion
-    // map keeps both maps in sync as the oldest entries are dropped.
-    evictLruEntries(latestContexts, MAX_CWD_ENTRIES, runtimes);
-    evictLruEntries(runtimes, MAX_CWD_ENTRIES, latestContexts);
-  }
   // P1 #4 fix: PI emits both session_before_switch AND session_shutdown for
   // the same logical /new, /resume, /fork transition. Track which session
   // ids we have already fired session.deleted for so cleanup hooks do not
@@ -147,98 +111,6 @@ export function registerAdapter(pi: ExtensionAPI): void {
     // before_switch/shutdown pair, short enough not to leak forever.
     setTimeout(() => deletedSessionIds.delete(sessionId), 5_000).unref?.();
     return true;
-  }
-
-  function rememberContext(cwd: string, ctx: ExtensionContext): void {
-    // Promote this cwd to most-recent, then evict oldest if over the cap.
-    if (latestContexts.has(cwd)) latestContexts.delete(cwd);
-    latestContexts.set(cwd, ctx);
-    touchCwd(cwd);
-    evictIfNeeded();
-  }
-
-  function getRuntimeFor(cwd: string): HooksRuntime {
-    const existing = runtimes.get(cwd);
-    if (existing) {
-      touchCwd(cwd);
-      return existing;
-    }
-
-    // P2-23: if construction for this cwd is already in flight, refuse to
-    // start a second one. Any caller that re-enters mid-construction (e.g.
-    // a hook running during initial load that itself dispatches another
-    // event) would otherwise trigger a duplicate `loadDiscoveredHooksSnapshot`
-    // and `createHooksRuntime`. The in-flight runtime will be in `runtimes`
-    // momentarily; throwing is preferable to silently returning a stale
-    // runtime, since legitimate re-entry is a programming error.
-    if (constructingRuntimes.has(cwd)) {
-      throw new Error(
-        `[pi-yaml-hooks] runtime construction is already in flight for ${cwd}; a hook fired during initial load is the most likely cause.`,
-      );
-    }
-    constructingRuntimes.add(cwd);
-    try {
-      // P1 #3 fix: do not close over a particular sessionManager. Read the
-      // current one from the latest ctx on every host call so /new, /resume,
-      // /fork get the correct lineage.
-      const getLiveSessionManager = (): ReadonlySessionManager | undefined =>
-        latestContexts.get(cwd)?.sessionManager;
-      const host = createHostAdapter(pi, cwd, getLiveSessionManager, () => latestContexts.get(cwd));
-      const loaded = loadDiscoveredHooksSnapshot({ projectDir: cwd });
-      if (loaded.errors.length > 0) {
-        // eslint-disable-next-line no-console
-        console.error(
-          `[pi-yaml-hooks] Failed to load some hooks; continuing with valid hooks:\n${loaded.errors
-            .map((error) => `${error.filePath}${error.path ? `#${error.path}` : ""}: ${error.message}`)
-            .join("\n")}`,
-        );
-        logger.error("config_load", "Hook loading reported validation errors.", {
-          cwd,
-          details: {
-            files: loaded.files,
-            errors: loaded.errors.map((error) => ({
-              filePath: error.filePath,
-              path: error.path,
-              code: error.code,
-              message: error.message,
-            })),
-          },
-        });
-        sendHookDiagnostics(pi, {
-          title: "Hook configuration issues",
-          level: "warning",
-          content: `Hook loading found ${loaded.errors.length} validation issue(s). Valid hooks, if any, stayed active.`,
-          sections: [
-            {
-              label: "Files",
-              lines: loaded.files,
-            },
-            {
-              label: "Validation errors",
-              lines: loaded.errors.map((error) => `${error.filePath}${error.path ? `#${error.path}` : ""}: ${error.message}`),
-            },
-          ],
-        });
-      }
-      const summary = formatHookLoadSummary(loaded);
-      // eslint-disable-next-line no-console
-      console.info(summary);
-      logger.info("config_load", "Hook configuration loaded.", {
-        cwd,
-        details: { files: loaded.files, summary, sources: loaded.sources },
-      });
-      const runtime = createHooksRuntime(host, {
-        directory: cwd,
-        hooks: loaded.hooks,
-        initialSignature: loaded.signature,
-        reloadDiscoveredHooks: true,
-      });
-      runtimes.set(cwd, runtime);
-      evictIfNeeded();
-      return runtime;
-    } finally {
-      constructingRuntimes.delete(cwd);
-    }
   }
 
   registerUserBashInterception(pi, {
