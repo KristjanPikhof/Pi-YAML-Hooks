@@ -216,22 +216,9 @@ export function registerAdapter(pi: ExtensionAPI): void {
     const sessionId = safeGetSessionId(ctx.sessionManager);
     if (!sessionId) return;
 
-    // P1-3 fix: do NOT forward `header.parentSession` here. PI's
-    // `parentSession` field is a FILE PATH to the parent session's JSONL
-    // file, not a session ID. Forwarding it as `parentID` poisoned the
-    // runtime's session-state with a non-id value and mis-classified
-    // scope:main|child for forked sessions. Instead, omit it and let the
-    // runtime resolve lineage lazily via `host.getRootSessionId`, which is
-    // wired up to the session-lineage helper that walks parent files
-    // correctly.
     try {
       const runtime = getRuntimeFor(ctx.cwd);
-      await runtime.event({
-        event: {
-          type: "session.created",
-          properties: { info: { id: sessionId } },
-        },
-      });
+      await runtime.event(buildSessionCreatedEvent(sessionId));
     } catch (error) {
       reportDispatchFailure(logger, { cwd: ctx.cwd, event: "session.created", sessionId }, error);
     }
