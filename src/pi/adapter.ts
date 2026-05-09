@@ -27,22 +27,21 @@ import type {
 
 import path from "node:path";
 import { getPiHooksLogger } from "../core/logger.js";
-import { formatHookLoadSummary, loadDiscoveredHooksSnapshot } from "../core/load-hooks.js";
 import {
-  createHooksRuntime,
-  type HooksRuntime,
   type ToolExecuteAfterInput,
   type ToolExecuteBeforeInput,
   type ToolExecuteBeforeOutput,
 } from "../core/runtime.js";
-import { sendHookDiagnostics } from "./diagnostics.js";
 import {
-  createHostAdapter,
   debugLog,
   isStaleSessionBoundError,
-  type ReadonlySessionManager,
   safeGetSessionId,
 } from "./host-adapter.js";
+import {
+  createRuntimeRegistry,
+  evictLruEntries,
+  touchLruEntry,
+} from "./runtime-registry.js";
 import { registerUserBashInterception } from "./user-bash.js";
 
 export { createHostAdapter } from "./host-adapter.js";
