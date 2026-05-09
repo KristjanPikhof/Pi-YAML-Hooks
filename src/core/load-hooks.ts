@@ -1,9 +1,10 @@
-import { readdirSync, readFileSync, realpathSync, statSync } from "node:fs"
+import { readdirSync, readFileSync, realpathSync, statSync, type Stats } from "node:fs"
 import path from "node:path"
 import { createRequire } from "node:module"
 
 import YAML from "yaml"
 
+import { getPiHooksLogger } from "./logger.js"
 import {
   type HookAction,
   type HookAsyncConfig,
@@ -16,6 +17,8 @@ import {
   type HookNotifyActionConfig,
   type HookNotifyLevel,
   type HookOverrideEntry,
+  type HookPolicy,
+  type HookPolicyDiagnostics,
   type HookRunIn,
   type HookScope,
   type HookMap,
@@ -33,11 +36,30 @@ import {
 } from "./types.js"
 import {
   discoverHookConfigEntries,
+  resolveProjectHookResolution,
   type DiscoveredHookConfigPath,
   type HookConfigDiscoveryOptions,
   type HookConfigSourceScope,
+  type ProjectHookResolution,
 } from "./config-paths.js"
-import { collectUnsupportedDiagnostics } from "../pi/unsupported.js"
+
+// P2 #22 fix: the core loader no longer imports from `src/pi/*`. Host runtimes
+// inject their own `HookPolicy` via `setActiveHookPolicy`; the production PI
+// path registers itself from `src/pi/unsupported.ts` (which is loaded by
+// `src/index.ts`). When no policy is registered, the loader runs with a no-op
+// policy so non-PI embedders (and isolated unit tests) parse cleanly.
+const NOOP_POLICY: HookPolicy = {
+  diagnose: () => ({ errors: [], advisories: [], invalidHooks: new Set<HookConfig>() }),
+}
+let activeHookPolicy: HookPolicy = NOOP_POLICY
+
+export function setActiveHookPolicy(policy: HookPolicy | undefined): void {
+  activeHookPolicy = policy ?? NOOP_POLICY
+}
+
+export function getActiveHookPolicy(): HookPolicy {
+  return activeHookPolicy
+}
 
 export interface HookSourceSummary {
   readonly scope: HookConfigSourceScope
