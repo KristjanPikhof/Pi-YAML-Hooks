@@ -236,18 +236,10 @@ export function registerAdapter(pi: ExtensionAPI): void {
     if (!sessionId) return;
     if (!markSessionDeleted(sessionId)) return; // already fired via before_switch
 
-    const reason = typeof event?.reason === "string" ? event.reason : undefined;
+    const reason = extractReason(event);
     try {
       const runtime = getRuntimeFor(ctx.cwd);
-      await runtime.event({
-        event: {
-          type: "session.deleted",
-          properties: {
-            info: { id: sessionId },
-            ...(reason ? { reason } : {}),
-          },
-        },
-      });
+      await runtime.event(buildSessionDeletedEvent(sessionId, reason));
     } catch (error) {
       reportDispatchFailure(
         logger,
