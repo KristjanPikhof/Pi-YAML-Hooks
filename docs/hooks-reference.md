@@ -498,7 +498,7 @@ The process working directory is the current project directory.
 
 ## PI compatibility smoke-check checklist
 
-Use the repeatable runtime checklist in [`setup.md#runtime-pi-smoke-checklist`](./setup.md#runtime-pi-smoke-checklist) for real PI verification before widening SDK support or changing session, UI, prompt, command, or tool-event behavior. The local harness lives in [`scripts/smoke/`](../scripts/smoke/) and creates an evidence file for future release updates.
+Use the repeatable runtime checklist in [`maintaining.md`](./maintaining.md) for real PI verification before widening SDK support or changing session, UI, prompt, command, or tool-event behavior. The local harness lives in [`scripts/smoke/`](../scripts/smoke/) and creates an evidence file for future release updates.
 
 For a real PI run in the documented peer range, verify these compatibility-sensitive surfaces:
 
