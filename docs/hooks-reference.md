@@ -537,16 +537,7 @@ PI_YAML_HOOKS_DEBUG=1 pi
 ~/.pi/agent/logs/pi-yaml-hooks.ndjson
 ```
 
-Useful environment variables:
-
-| Variable | Meaning |
-|---|---|
-| `PI_YAML_HOOKS_DEBUG=1` | enable debug-level persistent logging |
-| `PI_YAML_HOOKS_LOG_FILE=/path/file.ndjson` | override the log file location |
-| `PI_YAML_HOOKS_LOG_LEVEL=debug|info|warn|error` | explicitly set the log level |
-| `PI_YAML_HOOKS_LOG_STDERR=1` | mirror structured log entries to stderr |
-
-The easiest way to inspect the log is:
+For the full environment-variable reference (debug logging, log level, log file, stderr mirroring, and other knobs), see [`setup.md`](./setup.md#environment-variables). The easiest way to inspect the log is:
 
 ```bash
 ./scripts/tail-hook-log.sh
