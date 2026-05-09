@@ -180,65 +180,68 @@ export function registerAdapter(pi: ExtensionAPI): void {
       );
     }
     constructingRuntimes.add(cwd);
-
-    // P1 #3 fix: do not close over a particular sessionManager. Read the
-    // current one from the latest ctx on every host call so /new, /resume,
-    // /fork get the correct lineage.
-    const getLiveSessionManager = (): ReadonlySessionManager | undefined =>
-      latestContexts.get(cwd)?.sessionManager;
-    const host = createHostAdapter(pi, cwd, getLiveSessionManager, () => latestContexts.get(cwd));
-    const loaded = loadDiscoveredHooksSnapshot({ projectDir: cwd });
-    if (loaded.errors.length > 0) {
+    try {
+      // P1 #3 fix: do not close over a particular sessionManager. Read the
+      // current one from the latest ctx on every host call so /new, /resume,
+      // /fork get the correct lineage.
+      const getLiveSessionManager = (): ReadonlySessionManager | undefined =>
+        latestContexts.get(cwd)?.sessionManager;
+      const host = createHostAdapter(pi, cwd, getLiveSessionManager, () => latestContexts.get(cwd));
+      const loaded = loadDiscoveredHooksSnapshot({ projectDir: cwd });
+      if (loaded.errors.length > 0) {
+        // eslint-disable-next-line no-console
+        console.error(
+          `[pi-yaml-hooks] Failed to load some hooks; continuing with valid hooks:\n${loaded.errors
+            .map((error) => `${error.filePath}${error.path ? `#${error.path}` : ""}: ${error.message}`)
+            .join("\n")}`,
+        );
+        logger.error("config_load", "Hook loading reported validation errors.", {
+          cwd,
+          details: {
+            files: loaded.files,
+            errors: loaded.errors.map((error) => ({
+              filePath: error.filePath,
+              path: error.path,
+              code: error.code,
+              message: error.message,
+            })),
+          },
+        });
+        sendHookDiagnostics(pi, {
+          title: "Hook configuration issues",
+          level: "warning",
+          content: `Hook loading found ${loaded.errors.length} validation issue(s). Valid hooks, if any, stayed active.`,
+          sections: [
+            {
+              label: "Files",
+              lines: loaded.files,
+            },
+            {
+              label: "Validation errors",
+              lines: loaded.errors.map((error) => `${error.filePath}${error.path ? `#${error.path}` : ""}: ${error.message}`),
+            },
+          ],
+        });
+      }
+      const summary = formatHookLoadSummary(loaded);
       // eslint-disable-next-line no-console
-      console.error(
-        `[pi-yaml-hooks] Failed to load some hooks; continuing with valid hooks:\n${loaded.errors
-          .map((error) => `${error.filePath}${error.path ? `#${error.path}` : ""}: ${error.message}`)
-          .join("\n")}`,
-      );
-      logger.error("config_load", "Hook loading reported validation errors.", {
+      console.info(summary);
+      logger.info("config_load", "Hook configuration loaded.", {
         cwd,
-        details: {
-          files: loaded.files,
-          errors: loaded.errors.map((error) => ({
-            filePath: error.filePath,
-            path: error.path,
-            code: error.code,
-            message: error.message,
-          })),
-        },
+        details: { files: loaded.files, summary, sources: loaded.sources },
       });
-      sendHookDiagnostics(pi, {
-        title: "Hook configuration issues",
-        level: "warning",
-        content: `Hook loading found ${loaded.errors.length} validation issue(s). Valid hooks, if any, stayed active.`,
-        sections: [
-          {
-            label: "Files",
-            lines: loaded.files,
-          },
-          {
-            label: "Validation errors",
-            lines: loaded.errors.map((error) => `${error.filePath}${error.path ? `#${error.path}` : ""}: ${error.message}`),
-          },
-        ],
+      const runtime = createHooksRuntime(host, {
+        directory: cwd,
+        hooks: loaded.hooks,
+        initialSignature: loaded.signature,
+        reloadDiscoveredHooks: true,
       });
+      runtimes.set(cwd, runtime);
+      evictIfNeeded();
+      return runtime;
+    } finally {
+      constructingRuntimes.delete(cwd);
     }
-    const summary = formatHookLoadSummary(loaded);
-    // eslint-disable-next-line no-console
-    console.info(summary);
-    logger.info("config_load", "Hook configuration loaded.", {
-      cwd,
-      details: { files: loaded.files, summary, sources: loaded.sources },
-    });
-    const runtime = createHooksRuntime(host, {
-      directory: cwd,
-      hooks: loaded.hooks,
-      initialSignature: loaded.signature,
-      reloadDiscoveredHooks: true,
-    });
-    runtimes.set(cwd, runtime);
-    evictIfNeeded();
-    return runtime;
   }
 
   registerUserBashInterception(pi, {
