@@ -118,31 +118,17 @@ export function registerAdapter(pi: ExtensionAPI): void {
   const MAX_CWD_ENTRIES = 8;
 
   function touchCwd(cwd: string): void {
-    if (latestContexts.has(cwd)) {
-      const ctx = latestContexts.get(cwd) as ExtensionContext;
-      latestContexts.delete(cwd);
-      latestContexts.set(cwd, ctx);
-    }
-    if (runtimes.has(cwd)) {
-      const runtime = runtimes.get(cwd) as HooksRuntime;
-      runtimes.delete(cwd);
-      runtimes.set(cwd, runtime);
-    }
+    // P2-6 fix: prod LRU promotion goes through the same helper used by
+    // tests so the eviction policy has a single implementation.
+    touchLruEntry(latestContexts, cwd);
+    touchLruEntry(runtimes, cwd);
   }
 
   function evictIfNeeded(): void {
-    while (latestContexts.size > MAX_CWD_ENTRIES) {
-      const oldest = latestContexts.keys().next().value as string | undefined;
-      if (oldest === undefined) break;
-      latestContexts.delete(oldest);
-      runtimes.delete(oldest);
-    }
-    while (runtimes.size > MAX_CWD_ENTRIES) {
-      const oldest = runtimes.keys().next().value as string | undefined;
-      if (oldest === undefined) break;
-      runtimes.delete(oldest);
-      latestContexts.delete(oldest);
-    }
+    // P2-6 fix: same — prod eviction reuses the shared helper. The companion
+    // map keeps both maps in sync as the oldest entries are dropped.
+    evictLruEntries(latestContexts, MAX_CWD_ENTRIES, runtimes);
+    evictLruEntries(runtimes, MAX_CWD_ENTRIES, latestContexts);
   }
   // P1 #4 fix: PI emits both session_before_switch AND session_shutdown for
   // the same logical /new, /resume, /fork transition. Track which session
