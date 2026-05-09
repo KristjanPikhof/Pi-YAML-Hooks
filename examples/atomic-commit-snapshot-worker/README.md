@@ -507,3 +507,4 @@ the base URL HTTPS-only, and do not try to be clever about redaction.
 
 - `snapshot-hook.py`
 - `snapshot-worker.py`
+- `snapshot_shared.py`
