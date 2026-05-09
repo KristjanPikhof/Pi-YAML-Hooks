@@ -154,10 +154,18 @@ for spec in "${SDK_SPECS[@]}"; do
     npm test
   )
 
-  # Drop the just-finished dir so the array does not grow without bound across
-  # long matrices. cleanup_all still runs on EXIT/INT/TERM and handles the rest.
+  # Drop the just-finished dir from the array so cleanup_all does not revisit
+  # an already-removed path on the next signal. Empty slots are tolerated by
+  # cleanup_all's `-n "$dir"` guard.
   rm -rf "$tmp_dir"
-  TMP_DIRS=("${TMP_DIRS[@]/$tmp_dir}")
+  local_tmp_dirs=()
+  for d in ${TMP_DIRS[@]+"${TMP_DIRS[@]}"}; do
+    if [[ "$d" != "$tmp_dir" ]]; then
+      local_tmp_dirs+=("$d")
+    fi
+  done
+  TMP_DIRS=(${local_tmp_dirs[@]+"${local_tmp_dirs[@]}"})
+  unset local_tmp_dirs
   echo "==> Pi SDK $spec passed"
 done
 
