@@ -549,14 +549,15 @@ const cases: Case[] = [
         const homeDir = path.join(sandbox, "home")
         const projectRoot = path.join(sandbox, "project")
         // Place the leaf *outside* the project tree so the import would
-        // step out of the trust anchor.
+        // step out of the trust anchor. Resolved from <project>/.pi/hook,
+        // ../../../external/leaf.yaml lands in <sandbox>/external.
         const externalLeaf = writeYaml(
           path.join(sandbox, "external", "leaf.yaml"),
           `hooks:\n  - id: external\n    event: session.created\n    actions:\n      - notify: external\n`,
         )
         writeYaml(
           path.join(projectRoot, ".pi", "hook", "hooks.yaml"),
-          `imports:\n  - ../../external/leaf.yaml\nhooks: []\n`,
+          `imports:\n  - ../../../external/leaf.yaml\nhooks: []\n`,
         )
 
         const result = withEnv(
@@ -594,7 +595,7 @@ const cases: Case[] = [
         )
         writeYaml(
           path.join(projectRoot, ".pi", "hook", "hooks.yaml"),
-          `imports:\n  - ../../external/leaf.yaml\nhooks: []\n`,
+          `imports:\n  - ../../../external/leaf.yaml\nhooks: []\n`,
         )
 
         const result = withEnv(
