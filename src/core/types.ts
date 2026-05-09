@@ -82,16 +82,39 @@ export interface HookBashActionConfig {
   readonly timeout?: number
 }
 
+/**
+ * P2-24: each HookAction member uses `never`-typed excluders for the keys
+ * carried by sibling members. This makes the union discriminated by
+ * key-presence at compile time: an action carrying both `command` and
+ * `bash`, for example, fails type-checking. The runtime loader still
+ * validates the same thing, but the static check catches typos at the
+ * authoring site.
+ */
 export interface HookCommandAction {
   readonly command: string | HookCommandActionConfig
+  readonly tool?: never
+  readonly bash?: never
+  readonly notify?: never
+  readonly confirm?: never
+  readonly setStatus?: never
 }
 
 export interface HookToolAction {
   readonly tool: HookToolActionConfig
+  readonly command?: never
+  readonly bash?: never
+  readonly notify?: never
+  readonly confirm?: never
+  readonly setStatus?: never
 }
 
 export interface HookBashAction {
   readonly bash: string | HookBashActionConfig
+  readonly command?: never
+  readonly tool?: never
+  readonly notify?: never
+  readonly confirm?: never
+  readonly setStatus?: never
 }
 
 export type HookNotifyLevel = "info" | "success" | "warning" | "error"
@@ -103,6 +126,11 @@ export interface HookNotifyActionConfig {
 
 export interface HookNotifyAction {
   readonly notify: string | HookNotifyActionConfig
+  readonly command?: never
+  readonly tool?: never
+  readonly bash?: never
+  readonly confirm?: never
+  readonly setStatus?: never
 }
 
 export interface HookConfirmActionConfig {
@@ -112,6 +140,11 @@ export interface HookConfirmActionConfig {
 
 export interface HookConfirmAction {
   readonly confirm: HookConfirmActionConfig
+  readonly command?: never
+  readonly tool?: never
+  readonly bash?: never
+  readonly notify?: never
+  readonly setStatus?: never
 }
 
 export interface HookSetStatusActionConfig {
@@ -120,6 +153,11 @@ export interface HookSetStatusActionConfig {
 
 export interface HookSetStatusAction {
   readonly setStatus: string | HookSetStatusActionConfig
+  readonly command?: never
+  readonly tool?: never
+  readonly bash?: never
+  readonly notify?: never
+  readonly confirm?: never
 }
 
 export type HookAction =
@@ -129,6 +167,22 @@ export type HookAction =
   | HookNotifyAction
   | HookConfirmAction
   | HookSetStatusAction
+
+/**
+ * P2-25: closed union of skip reasons emitted by the runtime when a hook is
+ * evaluated. `matched` is included so a single decision shape can express
+ * both the "ran" and "did not run" outcomes. New skip causes must extend
+ * this union — the compile-time check forces every emit site to be
+ * accounted for here.
+ */
+export type HookSkipReason =
+  | "matched"
+  | "scope_mismatch"
+  | "matchesCodeFiles_failed"
+  | "matchesAnyPath_no_paths"
+  | "matchesAnyPath_failed"
+  | "matchesAllPaths_no_paths"
+  | "matchesAllPaths_failed"
 
 export interface HookConfigSource {
   readonly filePath: string
