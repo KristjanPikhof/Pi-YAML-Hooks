@@ -107,11 +107,6 @@ interface DispatchRequest {
   readonly recursionGuardStore?: Set<string>
 }
 
-interface AsyncQueueState {
-  activeCount: number
-  pending: Array<() => Promise<void>>
-}
-
 type ExecuteBashHook = (request: BashExecutionRequest) => Promise<BashHookResult>
 
 export interface HooksRuntime {
