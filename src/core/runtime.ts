@@ -1026,7 +1026,7 @@ async function shouldRunHook(
   projectDir: string,
   sessionID: string,
   context: RuntimeActionContext,
-  globMatcher: GlobMatcher = defaultGlobMatcher,
+  globMatcher: GlobMatcher,
 ): Promise<HookMatchDecision> {
   const pathMatchContext = context.pathMatchContext ?? buildPathMatchContext(projectDir, context)
   const changedPaths = pathMatchContext.changedPaths
@@ -1040,70 +1040,12 @@ async function shouldRunHook(
     }
   }
 
-  for (const condition of hook.conditions ?? []) {
-    if (condition === "matchesCodeFiles") {
-      if (!pathMatchContext.hasCodeFiles) {
-        return {
-          matched: false,
-          reason: "matchesCodeFiles_failed",
-          changedPaths,
-          details: { files: context.files ?? [] },
-        }
-      }
-
-      continue
-    }
-
-    if ("matchesAnyPath" in condition) {
-      if (changedPaths.length === 0) {
-        return {
-          matched: false,
-          reason: "matchesAnyPath_no_paths",
-          changedPaths,
-          details: { patterns: condition.matchesAnyPath },
-        }
-      }
-
-      if (!changedPaths.some((filePath) => condition.matchesAnyPath.some((pattern) => globMatcher(filePath, pattern)))) {
-        return {
-          matched: false,
-          reason: "matchesAnyPath_failed",
-          changedPaths,
-          details: { patterns: condition.matchesAnyPath },
-        }
-      }
-
-      continue
-    }
-
-    if (changedPaths.length === 0) {
-      return {
-        matched: false,
-        reason: "matchesAllPaths_no_paths",
-        changedPaths,
-        details: { patterns: condition.matchesAllPaths },
-      }
-    }
-
-    if (!changedPaths.every((filePath) => condition.matchesAllPaths.some((pattern) => globMatcher(filePath, pattern)))) {
-      return {
-        matched: false,
-        reason: "matchesAllPaths_failed",
-        changedPaths,
-        details: { patterns: condition.matchesAllPaths },
-      }
-    }
+  const conditionFailure = evaluatePathConditions(hook, context, pathMatchContext, globMatcher)
+  if (conditionFailure) {
+    return conditionFailure
   }
 
   return { matched: true, reason: "matched", changedPaths }
-}
-
-export function buildPathMatchContext(projectDir: string, context: RuntimeActionContext): PathMatchContext {
-  const changedPaths = getFinalChangedPaths(projectDir, context)
-  return {
-    changedPaths,
-    hasCodeFiles: changedPaths.some(hasCodeExtension),
-  }
 }
 
 function prepareRuntimeActionContext(projectDir: string, context: RuntimeActionContext): RuntimeActionContext {
@@ -1115,32 +1057,6 @@ function prepareRuntimeActionContext(projectDir: string, context: RuntimeActionC
     ...context,
     pathMatchContext: buildPathMatchContext(projectDir, context),
   }
-}
-
-function getFinalChangedPaths(projectDir: string, context: RuntimeActionContext): readonly string[] {
-  if (context.changes && context.changes.length > 0) {
-    return context.changes.map((change) => normalizeConditionPath(projectDir, change.operation === "rename" ? change.toPath : change.path))
-  }
-
-  return (context.files ?? []).map((filePath) => normalizeConditionPath(projectDir, filePath))
-}
-
-function normalizeConditionPath(projectDir: string, filePath: string): string {
-  const normalizedPath = normalizeGlobCandidate(filePath)
-  if (!isAbsolute(filePath)) {
-    return normalizedPath
-  }
-
-  const projectRelativePath = normalizeGlobCandidate(relative(projectDir, filePath))
-  if (projectRelativePath !== "" && projectRelativePath !== "." && !projectRelativePath.startsWith("../")) {
-    return projectRelativePath
-  }
-
-  return normalizedPath
-}
-
-function normalizeGlobCandidate(filePath: string): string {
-  return filePath.replaceAll("\\", "/").replace(/^\.\//, "")
 }
 
 async function executeAction(
