@@ -42,7 +42,13 @@ CURRENT_DATE="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 TESTER="${USER:-${LOGNAME:-unknown}}"
 CODING_AGENT_VERSION="$(cd "$ROOT_DIR" && sdk_version "@earendil-works/pi-coding-agent")"
 TUI_VERSION="$(cd "$ROOT_DIR" && sdk_version "@earendil-works/pi-tui")"
-PI_VERSION="$(command -v pi >/dev/null 2>&1 && pi --version 2>/dev/null || echo 'TODO: capture pi --version')"
+if command -v pi >/dev/null 2>&1; then
+  # Some PI builds emit --version on stderr, so merge both streams.
+  PI_VERSION="$(pi --version 2>&1 | head -n 1)"
+  PI_VERSION="${PI_VERSION:-TODO: capture pi --version}"
+else
+  PI_VERSION="TODO: install pi or capture --version manually"
+fi
 
 cat > "$EVIDENCE_DIR/evidence.md" <<EOF
 # pi-yaml-hooks runtime smoke evidence
