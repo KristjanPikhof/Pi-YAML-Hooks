@@ -83,6 +83,14 @@ while [[ $# -gt 0 ]]; do
       RAW_OUTPUT=1
       shift
       ;;
+    --no-wait)
+      WAIT_FOR_CREATION=0
+      shift
+      ;;
+    --wait-timeout)
+      WAIT_TIMEOUT_SECONDS="$2"
+      shift 2
+      ;;
     -h|--help)
       usage
       exit 0
@@ -96,9 +104,29 @@ while [[ $# -gt 0 ]]; do
 done
 
 if [[ ! -f "$LOG_FILE" ]]; then
-  echo "pi-yaml-hooks log file not found yet: $LOG_FILE" >&2
-  echo "Start PI with PI_YAML_HOOKS_DEBUG=1 and trigger a hook first." >&2
-  exit 1
+  if [[ "$WAIT_FOR_CREATION" -eq 0 ]]; then
+    echo "pi-yaml-hooks log file not found yet: $LOG_FILE" >&2
+    echo "Start PI with PI_YAML_HOOKS_DEBUG=1 and trigger a hook first." >&2
+    exit 1
+  fi
+  echo "Waiting for log file to be created: $LOG_FILE" >&2
+  if [[ "$WAIT_TIMEOUT_SECONDS" -gt 0 ]]; then
+    echo "(timeout: ${WAIT_TIMEOUT_SECONDS}s; pass --no-wait to fail fast instead)" >&2
+  else
+    echo "(no timeout; pass --wait-timeout N or --no-wait to bound the wait)" >&2
+  fi
+  waited=0
+  while [[ ! -f "$LOG_FILE" ]]; do
+    sleep "$WAIT_POLL_SECONDS"
+    if [[ "$WAIT_TIMEOUT_SECONDS" -gt 0 ]]; then
+      waited=$((waited + WAIT_POLL_SECONDS))
+      if [[ "$waited" -ge "$WAIT_TIMEOUT_SECONDS" ]]; then
+        echo "Timed out waiting for log file: $LOG_FILE" >&2
+        exit 1
+      fi
+    fi
+  done
+  echo "Log file appeared; tailing." >&2
 fi
 
 if ! command -v jq >/dev/null 2>&1; then
