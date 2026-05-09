@@ -68,7 +68,9 @@ fi
 TMP_DIRS=()
 cleanup_all() {
   local dir
-  for dir in "${TMP_DIRS[@]}"; do
+  # ${TMP_DIRS[@]+"${TMP_DIRS[@]}"} expands to nothing when the array is empty,
+  # which keeps `set -u` happy on bash 4.x where ${empty[@]} would error.
+  for dir in ${TMP_DIRS[@]+"${TMP_DIRS[@]}"}; do
     if [[ -n "$dir" && -d "$dir" ]]; then
       rm -rf "$dir"
     fi
