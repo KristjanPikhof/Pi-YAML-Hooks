@@ -18,21 +18,45 @@ for (const file of process.argv.slice(2)) {
 }
 NODE
 
+# Pre-fill SDK versions from the local node_modules so testers don't have to
+# look them up by hand. Each lookup falls back to `unknown` when the package
+# is missing (e.g., a fresh checkout that has not run `npm install`).
+sdk_version() {
+  local pkg="$1"
+  node --input-type=module --eval "
+    import { createRequire } from 'node:module';
+    const require = createRequire(process.cwd() + '/');
+    try {
+      console.log(require('${pkg}/package.json').version);
+    } catch {
+      console.log('unknown');
+    }
+  " 2>/dev/null || echo "unknown"
+}
+
+CURRENT_DATE="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+TESTER="${USER:-${LOGNAME:-unknown}}"
+CODING_AGENT_VERSION="$(cd "$ROOT_DIR" && sdk_version "@earendil-works/pi-coding-agent")"
+TUI_VERSION="$(cd "$ROOT_DIR" && sdk_version "@earendil-works/pi-tui")"
+PI_VERSION="$(command -v pi >/dev/null 2>&1 && pi --version 2>/dev/null || echo 'TODO: capture pi --version')"
+
 cat > "$EVIDENCE_DIR/evidence.md" <<EOF
 # pi-yaml-hooks runtime smoke evidence
 
-- Date:
-- Tester:
+- Date: $CURRENT_DATE
+- Tester: $TESTER (replace if running on behalf of someone else)
 - pi-yaml-hooks checkout: $ROOT_DIR
 - Smoke project: $SMOKE_DIR
-- PI version: 
-- @earendil-works/pi-coding-agent version:
-- @earendil-works/pi-tui version:
+- PI version: $PI_VERSION
+- @earendil-works/pi-coding-agent version: $CODING_AGENT_VERSION
+- @earendil-works/pi-tui version: $TUI_VERSION
 - Node version: $(node --version)
 - OS: $(uname -a)
 - Extension entry: $ROOT_DIR/extensions/index.ts
 - Hook config: $HOOK_DIR/hooks.yaml
 - Log file: $LOG_FILE
+
+> Reminder: review pre-filled values before sharing. The Results table below is the human-required section — fill each row.
 
 ## Automated prep
 
