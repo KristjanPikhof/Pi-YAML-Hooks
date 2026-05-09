@@ -60,8 +60,10 @@ import { registerUserBashInterception } from "./user-bash.js";
  * - `session_shutdown` / `session_before_switch`
  *                  → Phase 1 worker flush + runtime `session.deleted`
  *                    (lossy compat shim: PI emits these on /new, /resume,
- *                    /fork too — we can't distinguish, so we fire
- *                    session.deleted for all of them)
+ *                    /fork too — we cannot distinguish them by source event,
+ *                    but PI tags each with a `reason` field which we
+ *                    forward verbatim on the envelope so hook authors can
+ *                    tell graceful shutdowns from session-replacement)
  */
 export function registerAdapter(pi: ExtensionAPI): void {
   const logger = getPiHooksLogger();
