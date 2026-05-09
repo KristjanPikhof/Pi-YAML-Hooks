@@ -500,12 +500,34 @@ function validateAsyncQueueConfigs(hooks: HookMap): HookValidationError[] {
 function expandSnapshotImports(
   snapshot: DiscoveredHooksFileSnapshot,
   loadedFiles: Set<string>,
+  envelopeCache: Map<string, ParsedHooksFileEnvelope>,
+  projectResolution: ProjectHookResolution | undefined,
 ): { snapshots: DiscoveredHooksFileSnapshot[]; errors: HookValidationError[] } {
   const ordered: DiscoveredHooksFileSnapshot[] = []
   const errors: HookValidationError[] = []
   const visiting = new Set<string>()
 
-  const visit = (current: DiscoveredHooksFileSnapshot): void => {
+  const visit = (current: DiscoveredHooksFileSnapshot, depth: number): void => {
+    // P2 #1 fix: cap recursion depth on the realpath fallback path. When a
+    // symlink-induced cycle escapes `realpathSync` (because the target is
+    // missing or a permission error trips the system call), the canonical
+    // form falls back to `path.resolve` which never collapses symlink loops.
+    // The visiting-set check above stops single-cycle recursion through the
+    // same canonical path, but a chain of differently-named symlinks pointing
+    // at one another can still slip past it. The depth cap is the belt-and-
+    // suspenders that bounds total recursion regardless of how the canonical
+    // path resolves.
+    if (depth > MAX_IMPORT_DEPTH) {
+      errors.push(
+        createError(
+          current.filePath,
+          "invalid_imports",
+          `Import depth limit reached at ${current.filePath} (>${MAX_IMPORT_DEPTH}); refusing to recurse further.`,
+          "imports",
+        ),
+      )
+      return
+    }
     const canonicalPath = canonicalizeHookPath(current.filePath)
     if (loadedFiles.has(canonicalPath)) {
       return
@@ -516,9 +538,9 @@ function expandSnapshotImports(
     }
 
     visiting.add(canonicalPath)
-    const imports = readSnapshotImports(current, errors)
+    const imports = readSnapshotImports(current, errors, envelopeCache, projectResolution)
     for (const imported of imports) {
-      visit(imported)
+      visit(imported, depth + 1)
     }
     visiting.delete(canonicalPath)
 
@@ -528,16 +550,31 @@ function expandSnapshotImports(
     }
   }
 
-  visit(snapshot)
+  visit(snapshot, 0)
   return { snapshots: ordered, errors }
 }
 
-function readSnapshotImports(snapshot: DiscoveredHooksFileSnapshot, errors: HookValidationError[]): DiscoveredHooksFileSnapshot[] {
+// P2 #1 fix: cap import recursion depth. 32 is well above any legitimate
+// hook layering — the deepest realistic chain is global → project → shared
+// dir → packaged → leaf, an order of magnitude below the cap.
+const MAX_IMPORT_DEPTH = 32
+
+function readSnapshotImports(
+  snapshot: DiscoveredHooksFileSnapshot,
+  errors: HookValidationError[],
+  envelopeCache: Map<string, ParsedHooksFileEnvelope>,
+  projectResolution: ProjectHookResolution | undefined,
+): DiscoveredHooksFileSnapshot[] {
   if (!("content" in snapshot)) {
     return []
   }
 
-  const envelope = parseHooksFileEnvelope(snapshot.filePath, snapshot.content)
+  const envelope = getOrParseEnvelope(snapshot.filePath, snapshot.content, envelopeCache)
+  // Only surface envelope errors the first time we cache them — duplicate
+  // imports referring to the same canonical file would otherwise emit the
+  // same error twice. The dedupe pass at the end of `loadDiscoveredHooksFromSnapshots`
+  // collapses the duplicates, but reporting once at source keeps the
+  // intermediate buffer cleaner for callers that read `errors` directly.
   errors.push(...envelope.errors)
   if (envelope.errors.length > 0) {
     return []
@@ -551,6 +588,22 @@ function readSnapshotImports(snapshot: DiscoveredHooksFileSnapshot, errors: Hook
       continue
     }
     for (const filePath of resolved.filePaths) {
+      // P1 #2 fix: imports declared in a *project* hook file may not escape
+      // the project's trust anchor. Without this guard a trusted project
+      // could `imports: - ../../etc/passwd`-style step out of its own tree
+      // and pull arbitrary YAML/bash from anywhere on disk. The check
+      // canonicalises both anchor and target (so symlink games are followed
+      // before comparison) and applies to both file and bare-specifier
+      // resolutions. Operators who legitimately need to import outside the
+      // anchor (multi-repo monorepos, shared system-wide hook packs) can
+      // opt out via PI_YAML_HOOKS_ALLOW_PROJECT_IMPORTS_OUTSIDE_TRUST_ANCHOR=1.
+      if (snapshot.scope === "project") {
+        const containment = checkProjectImportContainment(snapshot.filePath, filePath, projectResolution, specifier)
+        if (containment) {
+          errors.push(containment)
+          continue
+        }
+      }
       try {
         // Pre-read size guard: refuse to load imported files that exceed the
         // YAML cap. parseHooksFileEnvelope re-checks after read, but stating
@@ -579,6 +632,64 @@ function readSnapshotImports(snapshot: DiscoveredHooksFileSnapshot, errors: Hook
   }
 
   return imports
+}
+
+function getOrParseEnvelope(
+  filePath: string,
+  content: string,
+  envelopeCache: Map<string, ParsedHooksFileEnvelope>,
+): ParsedHooksFileEnvelope {
+  const canonicalKey = canonicalizeHookPath(filePath)
+  const cached = envelopeCache.get(canonicalKey)
+  if (cached) {
+    return cached
+  }
+  const envelope = parseHooksFileEnvelope(filePath, content)
+  envelopeCache.set(canonicalKey, envelope)
+  return envelope
+}
+
+// Trust-anchor containment helper. Returns a HookValidationError if the
+// resolved import target falls outside the project trust anchor (and the
+// override env is not set); returns undefined if the import is allowed.
+function checkProjectImportContainment(
+  importerPath: string,
+  resolvedTargetPath: string,
+  projectResolution: ProjectHookResolution | undefined,
+  specifier: string,
+): HookValidationError | undefined {
+  if (process.env.PI_YAML_HOOKS_ALLOW_PROJECT_IMPORTS_OUTSIDE_TRUST_ANCHOR === "1") {
+    return undefined
+  }
+  const anchor = projectResolution?.canonicalAnchorDir
+  if (!anchor) {
+    return undefined
+  }
+  // Resolve the canonical realpath of the import target. If `realpathSync`
+  // fails (target missing, permission error) we still need to compare against
+  // the *intended* path so a stale or guarded link cannot bypass the check.
+  const canonicalTarget = canonicalizeHookPath(resolvedTargetPath)
+  if (isPathInsideAnchor(canonicalTarget, anchor)) {
+    return undefined
+  }
+  return createError(
+    importerPath,
+    "invalid_imports",
+    `[PIYAMLHOOKS] Refusing to resolve project import ${JSON.stringify(specifier)} → ${canonicalTarget}: target escapes the trust anchor ${anchor}. Move the file inside the project, or set PI_YAML_HOOKS_ALLOW_PROJECT_IMPORTS_OUTSIDE_TRUST_ANCHOR=1 to opt in.`,
+    "imports",
+  )
+}
+
+function isPathInsideAnchor(target: string, anchor: string): boolean {
+  // path.relative returns "" when target === anchor, "../foo" when target is
+  // outside, and a relative descent otherwise. The platform separator check
+  // is needed so we do not accept "/anchor-extra" as inside "/anchor".
+  if (target === anchor) return true
+  const rel = path.relative(anchor, target)
+  if (rel === "" || rel === ".") return true
+  if (rel.startsWith("..")) return false
+  if (path.isAbsolute(rel)) return false
+  return true
 }
 
 // Trust gate: imports declared inside the global hooks.yaml are refused by
