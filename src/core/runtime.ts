@@ -474,21 +474,7 @@ export function createHooksRuntime(host: HostAdapter, options: CreateHooksRuntim
         state.beginIdleDispatch(sessionID, changes)
 
         try {
-          await dispatchHooks(
-            activeHooks,
-            state,
-            host,
-            projectDir,
-            runBashHook,
-            "session.idle",
-            sessionID,
-            { files, changes },
-            {},
-            dispatchStates,
-            actionRecursionGuards,
-            asyncQueues,
-            boundGlobMatcher,
-          )
+          await invokeDispatchHooks(activeHooks, "session.idle", sessionID, { files, changes })
           state.consumeFileChanges(sessionID, changes)
           logger.debug("idle_changes_consumed", "Consumed idle changes after dispatch.", {
             cwd: projectDir,
