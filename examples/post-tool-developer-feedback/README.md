@@ -1,5 +1,7 @@
 # Post-tool developer feedback
 
+This is an opt-in example pack, not a built-in `pi-yaml-hooks` feature. Copy or adapt the snippets below into your own `hooks.yaml`.
+
 Use this pack when you want lightweight feedback after tools mutate code or project metadata.
 
 ## Good use cases
