@@ -293,7 +293,8 @@ export function loadHooksFile(filePath: string, readFile: (filePath: string) => 
 
 export function loadDiscoveredHooks(options: HookLoadOptions = {}): HookDiscoveryResult {
   const entries = discoverHookConfigEntries(options)
-  return loadDiscoveredHooksFromFiles(entries, options)
+  const projectResolution = resolveProjectHookResolution(options)
+  return loadDiscoveredHooksFromFiles(entries, options, projectResolution)
 }
 
 // P1 #10 fix: cache the last parsed snapshot keyed on a cheap stat-based
