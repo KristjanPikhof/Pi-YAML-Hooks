@@ -453,21 +453,7 @@ export function createHooksRuntime(host: HostAdapter, options: CreateHooksRuntim
           sessionId: sessionID,
           ...(deletedReason ? { details: { reason: deletedReason } } : {}),
         })
-        await dispatchHooks(
-          activeHooks,
-          state,
-          host,
-          projectDir,
-          runBashHook,
-          "session.deleted",
-          sessionID,
-          {},
-          {},
-          dispatchStates,
-          actionRecursionGuards,
-          asyncQueues,
-          boundGlobMatcher,
-        )
+        await invokeDispatchHooks(activeHooks, "session.deleted", sessionID, {})
         return
       }
 
