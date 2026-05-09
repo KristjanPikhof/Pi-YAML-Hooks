@@ -41,6 +41,7 @@ const cases: Case[] = [
   {
     name: "returns input id when sessionManager is undefined",
     run: async () => {
+      resetSessionLineageCacheForTests()
       const result = getRootSessionId("session-123", undefined)
       return result === "session-123" ? { ok: true } : { ok: false, detail: result }
     },
