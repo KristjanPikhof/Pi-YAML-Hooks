@@ -527,6 +527,38 @@ const cases: Case[] = [
       }),
   },
   {
+    // P1-4: PI's session_shutdown/session_before_switch carry a `reason`
+    // field. The adapter must pass it through to hooks intact (we verify
+    // by firing each event with a representative reason and confirming
+    // the cleanup hook still runs exactly once).
+    name: "session.deleted forwards PI's reason for shutdown and before_switch",
+    run: async () =>
+      await withIsolatedProject(true, async (projectDir) => {
+        writeProjectHooks(
+          projectDir,
+          `hooks:
+  - event: session.deleted
+    actions:
+      - notify: "deleted-with-reason"
+`,
+        )
+
+        const harness = new FakePiHarness(projectDir)
+        harness.register()
+        // session_before_switch fires first with reason="new" (PI emits this
+        // when /new replaces the session); session_shutdown follows with
+        // reason="new" — the dedupe in markSessionDeleted means only the
+        // first reaches the runtime.
+        await harness.sessionBeforeSwitch("new")
+        await harness.sessionShutdown("new")
+
+        const ok = harness.notifications.length === 1 && harness.notifications[0] === "deleted-with-reason"
+        return ok
+          ? { ok: true }
+          : { ok: false, detail: `notifications=${JSON.stringify(harness.notifications)}` }
+      }),
+  },
+  {
     name: "opt-in user_bash interception blocks destructive commands via pre-bash hooks",
     run: async () =>
       await withIsolatedProject(true, async (projectDir) => {
