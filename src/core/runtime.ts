@@ -24,6 +24,7 @@ import { SessionStateStore } from "./session-state.js"
 import { getChangedPaths, getToolFileChanges } from "./tool-paths.js"
 import type {
   FileChange,
+  HookEvent,
   HookMap,
   HookValidationError,
   HostAdapter,
