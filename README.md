@@ -153,7 +153,7 @@ These are the PI-specific constraints that matter most:
 - `session.deleted` is intentionally lossy
 - `user_bash` interception is opt-in with `PI_YAML_HOOKS_ENABLE_USER_BASH=1`
 
-If you are authoring hooks, keep those rules in mind first. They explain most surprising behavior.
+Keep those rules in mind when authoring hooks. They explain most surprising behavior.
 
 ### What trust grants when user_bash is enabled
 
