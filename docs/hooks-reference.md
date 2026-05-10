@@ -476,6 +476,19 @@ Example shape for a `file.changed` hook:
 
 Fields are omitted when unavailable.
 
+`tool_args` is shallow-cloned with sensitive keys (`password`, `token`, `api_key`, `secret`, `authorization`, `auth`, `private_key`, `bearer`) redacted before serialization, and the JSON encoding is capped at 64 KiB. When the cap is exceeded, `tool_args` collapses to a placeholder of the form:
+
+```json
+{
+  "_pi_hooks_tool_args_truncated": true,
+  "_pi_hooks_tool_args_original_byte_length": 123456,
+  "_pi_hooks_tool_args_max_byte_length": 65536,
+  "note": "<truncated>"
+}
+```
+
+If the entire stdin payload still exceeds `PI_YAML_HOOKS_BASH_STDIN_MAX_BYTES` (default 256 KiB), large fields are dropped or replaced and a `_pi_hooks_truncated: true` marker is added at the top level.
+
 Change objects use one of these shapes:
 
 ```json
