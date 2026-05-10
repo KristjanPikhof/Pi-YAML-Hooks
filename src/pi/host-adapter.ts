@@ -46,16 +46,16 @@ export function createHostAdapter(
     // PI only exposes abort on the current ExtensionContext; we do not have
     // a cross-session abort channel. When the runtime asks us to abort a
     // session that isn't the currently-active one, the call is a no-op.
-    // The runtime's `stop` behaviour triggers this from inside a handler,
+    // The runtime's `action: stop` handling triggers this from inside a handler,
     // at which point the current ctx IS the right session, so the common
     // case works.
     abort: (sessionId: string) => {
-      // P2 #20: surface a debug line so operators relying on `behavior: stop`
+      // P2 #20: surface a debug line so operators relying on `action: stop`
       // for tool.after.* / session.idle hooks can see why the session
       // wasn't aborted (PI has no extension-side abort outside tool_call).
       debugLog(
         `abort requested for session ${sessionId}: handled via tool_call block result for pre-tool hooks; ` +
-          `behavior:stop on tool.after.* or session.idle is a no-op on PI.`,
+          `action: stop on tool.after.* or session.idle is a no-op on PI.`,
       );
     },
     getRootSessionId: (sessionId: string): string => getRootSessionId(sessionId, getSessionManager()),
