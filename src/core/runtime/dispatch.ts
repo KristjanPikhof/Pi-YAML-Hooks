@@ -414,7 +414,7 @@ async function executeHook(
     // (lane: core-loader); we surface a one-shot warning here so operators
     // notice the silent no-op without spamming on every dispatch.
     if (hook.action === "stop") {
-      warnAsyncStopOnce(logger, hook, projectDir)
+      warnAsyncStopOnce(logger, hook, projectDir, warnedAsyncStopSources)
     }
     const asyncConfig = resolveAsyncExecutionConfig(hook, sessionID)
     enqueueAsyncHook(
