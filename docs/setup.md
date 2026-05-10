@@ -233,7 +233,7 @@ Once the extension is loaded, PI exposes these helper commands:
 - `/hooks-validate`: validate active hooks and explain whether the project file is valid but untrusted
 - `/hooks-trust`: trust the current project without manually editing `trusted-projects.json`
 - `/hooks-reload`: reload extensions and command surfaces on demand
-- `/hooks-tail-log`: show the log file path and a ready-made tail command
+- `/hooks-tail-log`: show the log file path and a ready-made tail command; pass `--follow` to spawn the bundled tail script as a detached live tail, or `--path` to print only the log file path
 
 ## Environment variables
 

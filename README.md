@@ -136,11 +136,11 @@ When an event matches, `pi-yaml-hooks` evaluates conditions and runs the configu
 | `/hooks-validate` | Validation results for active hooks and skipped untrusted project hooks |
 | `/hooks-trust` | Adds the current repo/worktree anchor to `~/.pi/agent/trusted-projects.json` |
 | `/hooks-reload` | Reloads the extension and command surface |
-| `/hooks-tail-log` | Log path plus a ready-to-run `tail -F` command |
+| `/hooks-tail-log` | Log path plus a ready-to-run `tail -F` command; `--follow` spawns the bundled tail script detached, and `--path` prints only the path |
 
 `/hooks-status`, `/hooks-validate`, and hook-load validation errors also emit structured in-session diagnostics when PI supports custom messages.
 
-PI exposes `ctx.ui.addAutocompleteProvider` on the supported `^0.74.0` line, so `pi-yaml-hooks` layers guarded `/hooks` autocomplete into the editor. Suggestions include the command names plus contextual hook IDs, event names, config paths, and log-tail options where useful.
+PI exposes `ctx.ui.addAutocompleteProvider` on the supported `^0.74.0` line, so `pi-yaml-hooks` layers guarded `/hooks` autocomplete into the editor. Suggestions include the command names plus contextual hook IDs, event names, config paths, and log-tail options where useful. Hook IDs are loaded lazily and memoized by hook-snapshot signature, not fixed at extension registration time.
 
 ## Important limitations
 
