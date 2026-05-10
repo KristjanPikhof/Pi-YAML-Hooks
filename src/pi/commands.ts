@@ -8,6 +8,7 @@ import {
   readFileSync,
   realpathSync,
   renameSync,
+  rmSync,
   unlinkSync,
   writeFileSync,
   writeSync,
@@ -159,28 +160,15 @@ export function registerCommands(pi: ExtensionAPI): void {
       }
 
       const trustFile = getTrustedProjectsFilePath()
-      const current = readTrustedProjects(trustFile)
-      if (!current.ok) {
+      const trustAnchor = project.canonicalAnchorDir
+      const updated = updateTrustedProjectsWithLock(trustFile, trustAnchor)
+      if (!updated.ok) {
         notifyCommand(
           ctx,
           `Cannot update ${trustFile} because it is not valid JSON. Fix or remove that file, then run /hooks-trust again.`,
           "error",
         )
         return
-      }
-
-      const trustAnchor = project.canonicalAnchorDir
-      const normalizedCurrent = new Set(current.entries.map(canonicalizeForTrust))
-      if (!normalizedCurrent.has(trustAnchor)) {
-        // P1-12: write atomically. Two PI processes (or two retries) calling
-        // hooks-trust at the same moment used to race on a non-atomic
-        // writeFileSync that could leave the trust file truncated or interleave
-        // entries. We now write to <file>.tmp.<pid>.<rand>, fsync the bytes,
-        // and rename into place — POSIX rename is atomic on the same fs, so a
-        // crash mid-write either leaves the old contents intact or atomically
-        // swaps in the fully-written replacement.
-        const nextContent = JSON.stringify([...current.entries, trustAnchor], null, 2) + "\n"
-        atomicallyWriteFile(trustFile, nextContent, 0o600)
       }
 
       notifyCommand(
@@ -324,15 +312,19 @@ function validateHooks(ctx: ExtensionCommandContext): {
   }
 } {
   const status = getHooksStatus(ctx)
-  const activeProjectPaths = new Set(
-    status.active.sources.filter((source) => source.scope === "project").map((source) => source.filePath),
+  const activeProjectRootPaths = new Set(
+    status.active.sources
+      .filter((source) => source.scope === "project" && source.filePath === status.paths.project)
+      .map((source) => source.filePath),
   )
-  const activeGlobalPaths = new Set(
-    status.active.sources.filter((source) => source.scope === "global").map((source) => source.filePath),
+  const activeGlobalRootPaths = new Set(
+    status.active.sources
+      .filter((source) => source.scope === "global" && source.filePath === status.paths.global)
+      .map((source) => source.filePath),
   )
   const projectPath = status.paths.project
   const projectExists = Boolean(projectPath && existsSync(projectPath))
-  const trusted = Boolean(projectPath && activeProjectPaths.has(projectPath))
+  const trusted = Boolean(projectPath && activeProjectRootPaths.has(projectPath))
   const projectErrors = projectExists && projectPath ? loadHooksFile(projectPath).errors : []
 
   // P2-13: bucket every error from the active discovery result by source
@@ -346,9 +338,9 @@ function validateHooks(ctx: ExtensionCommandContext): {
     imported: [],
   }
   for (const error of status.active.errors) {
-    if (activeGlobalPaths.has(error.filePath)) {
+    if (activeGlobalRootPaths.has(error.filePath)) {
       byScope.global.push(error)
-    } else if (activeProjectPaths.has(error.filePath)) {
+    } else if (activeProjectRootPaths.has(error.filePath)) {
       byScope.project.push(error)
     } else {
       byScope.imported.push(error)
@@ -359,8 +351,7 @@ function validateHooks(ctx: ExtensionCommandContext): {
   // skips a global file with hard parse errors when an alternate scope
   // succeeds, so a broken global config could otherwise be invisible here.
   const globalPath = status.paths.global
-  if (globalPath && existsSync(globalPath) && !activeGlobalPaths.has(globalPath)) {
-    const directGlobal = loadHooksFile(globalPath).errors
+  if (globalPath && existsSync(globalPath) && !activeGlobalRootPaths.has(globalPath)) {    const directGlobal = loadHooksFile(globalPath).errors
     if (directGlobal.length > 0) {
       // Avoid duplicate reporting if the same error is already in the bucket
       // (defensive — discovery and direct load should not double-emit).
@@ -379,8 +370,7 @@ function validateHooks(ctx: ExtensionCommandContext): {
   // scope: child advisory) through the validate command so users see them
   // alongside hard errors.
   const advisories: string[] = []
-  for (const filePath of new Set([...activeGlobalPaths, ...activeProjectPaths])) {
-    const loaded = loadHooksFile(filePath)
+  for (const filePath of new Set([...activeGlobalRootPaths, ...activeProjectRootPaths])) {    const loaded = loadHooksFile(filePath)
     if (loaded.advisories) {
       advisories.push(...loaded.advisories)
     }
@@ -432,6 +422,52 @@ function readTrustedProjects(filePath: string):
   } catch {
     return { ok: false }
   }
+}
+
+function updateTrustedProjectsWithLock(filePath: string, trustAnchor: string): { readonly ok: true } | { readonly ok: false } {
+  return withTrustedProjectsLock(filePath, () => {
+    const current = readTrustedProjects(filePath)
+    if (!current.ok) {
+      return { ok: false }
+    }
+
+    const normalizedCurrent = new Set(current.entries.map(canonicalizeForTrust))
+    if (!normalizedCurrent.has(trustAnchor)) {
+      const nextContent = JSON.stringify([...current.entries, trustAnchor], null, 2) + "\n"
+      atomicallyWriteFile(filePath, nextContent, 0o600)
+    }
+    return { ok: true }
+  })
+}
+
+function withTrustedProjectsLock<T>(filePath: string, run: () => T): T {
+  const dir = path.dirname(filePath)
+  mkdirSync(dir, { recursive: true })
+  const lockDir = path.join(dir, `${path.basename(filePath)}.lock`)
+  const deadline = Date.now() + 5_000
+  while (true) {
+    try {
+      mkdirSync(lockDir, 0o700)
+      break
+    } catch (error) {
+      const code = typeof error === "object" && error && "code" in error ? String((error as { code?: unknown }).code) : ""
+      if (code !== "EEXIST" || Date.now() >= deadline) {
+        throw error
+      }
+      sleepSync(25)
+    }
+  }
+
+  try {
+    return run()
+  } finally {
+    rmSync(lockDir, { recursive: true, force: true })
+  }
+}
+
+function sleepSync(ms: number): void {
+  const view = new Int32Array(new SharedArrayBuffer(4))
+  Atomics.wait(view, 0, 0, ms)
 }
 
 function formatValidationError(error: { filePath: string; path?: string; message: string }): string {

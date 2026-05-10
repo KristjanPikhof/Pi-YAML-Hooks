@@ -369,6 +369,33 @@ const cases: Case[] = [
       }),
   },
   {
+    name: "hooks-trust serializes concurrent updates for different project anchors",
+    run: async () =>
+      await withSandbox({ trusted: false }, async (projectDir) => {
+        const secondProjectDir = mkdtempSync(path.join(os.tmpdir(), "pi-yaml-hooks-cmds-second-"))
+        try {
+          writeProjectHooks(projectDir, `hooks:\n  - event: session.idle\n    actions:\n      - notify: one\n`)
+          writeProjectHooks(secondProjectDir, `hooks:\n  - event: session.idle\n    actions:\n      - notify: two\n`)
+          const pi = createFakePi()
+          registerCommands(pi as never)
+          const handler = pi.commands.get("hooks-trust")!
+
+          await Promise.all([
+            handler("", createCtx({ cwd: projectDir, hasUI: true }) as never),
+            handler("", createCtx({ cwd: secondProjectDir, hasUI: true }) as never),
+          ])
+
+          const list = JSON.parse(readFileSync(trustedFilePath(), "utf8")) as string[]
+          const expectedOne = realpathSync.native(projectDir)
+          const expectedTwo = realpathSync.native(secondProjectDir)
+          const ok = list.includes(expectedOne) && list.includes(expectedTwo)
+          return ok ? { ok: true } : { ok: false, detail: JSON.stringify({ list, expectedOne, expectedTwo }) }
+        } finally {
+          rmSync(secondProjectDir, { recursive: true, force: true })
+        }
+      }),
+  },
+  {
     // P2-13: hooks-validate should bucket errors per scope. Inject an
     // intentionally invalid project hook file and assert the diagnostic
     // labels include the scope grouping.
@@ -387,6 +414,25 @@ const cases: Case[] = [
         const ok =
           content.includes("Project hook errors:") ||
           content.includes("Project validation errors")
+        return ok ? { ok: true } : { ok: false, detail: content }
+      }),
+  },
+  {
+    name: "hooks-validate buckets imported project errors separately from project root errors",
+    run: async () =>
+      await withSandbox({ trusted: true }, async (projectDir) => {
+        const importedPath = path.join(projectDir, "shared", "bad.yaml")
+        mkdirSync(path.dirname(importedPath), { recursive: true })
+        writeFileSync(importedPath, `hooks:\n  - event: session.idle\n    actions:\n      - notify:\n`, "utf8")
+        writeProjectHooks(projectDir, `imports:\n  - ../../shared/bad.yaml\nhooks: []\n`)
+        const pi = createFakePi()
+        registerCommands(pi as never)
+        const ctx = createCtx({ cwd: projectDir, hasUI: true })
+        await pi.commands.get("hooks-validate")!("", ctx as never)
+
+        const diag = pi.messages.find((m) => m.customType === PI_YAML_HOOKS_DIAGNOSTICS_MESSAGE_TYPE)
+        const content = String(diag?.content ?? "")
+        const ok = content.includes("Imported file errors:") && !content.includes("Project hook errors:")
         return ok ? { ok: true } : { ok: false, detail: content }
       }),
   },
