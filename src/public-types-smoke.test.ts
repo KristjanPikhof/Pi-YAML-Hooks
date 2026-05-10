@@ -34,7 +34,7 @@ test("public root and ./types exports compile for a consumer-style type import",
     )
     writeFileSync(
       path.join(sandbox, "index.ts"),
-      `import PiHooks, { type HookConfig, type HookEvent } from "pi-yaml-hooks";\nimport type { BashHookContext, SessionDeletedReason } from "pi-yaml-hooks/types";\n\nconst event: HookEvent = "session.deleted";\nconst reason: SessionDeletedReason = "shutdown";\nconst hook: HookConfig = {\n  event,\n  actions: [{ bash: "printf '%s\\n' \\\"$PI_SESSION_ID\\\"" }],\n  scope: "all",
+      `import PiHooks, { type HookConfig, type HookEvent } from "pi-yaml-hooks";\nimport type { BashHookContext, SessionDeletedReason } from "pi-yaml-hooks/types";\n\nconst event: HookEvent = "session.deleted";\nconst reason: SessionDeletedReason = "quit";\nconst hook: HookConfig = {\n  event,\n  actions: [{ bash: "printf '%s\\n' \\\"$PI_SESSION_ID\\\"" }],\n  scope: "all",
   runIn: "current",
   source: { filePath: "consumer/hooks.yaml", index: 0 },\n};\nconst context = {} as BashHookContext;\nvoid PiHooks;\nvoid hook;\nvoid reason;\nvoid context;\n`,
       "utf8",
