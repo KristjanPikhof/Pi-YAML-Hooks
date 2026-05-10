@@ -773,6 +773,37 @@ const cases: Case[] = [
     },
   },
   {
+    name: "snapshotCache busts when content changes but stat tuple is restored",
+    run: () => {
+      const sandbox = createSandbox("fingerprint-content-hash")
+      try {
+        __resetSnapshotCacheForTests()
+        const homeDir = path.join(sandbox, "home")
+        const projectRoot = path.join(sandbox, "project")
+        const original = `hooks:\n  - id: leaf\n    event: session.created\n    actions:\n      - notify: original\n`
+        const edited = original.replace("original", "edited  ")
+        const hookPath = writeYaml(path.join(projectRoot, ".pi", "hook", "hooks.yaml"), original)
+        writeYaml(path.join(homeDir, ".pi", "agent", "trusted-projects.json"), JSON.stringify([projectRoot]))
+        const stamp = new Date(Date.now() - 60_000)
+        utimesSync(hookPath, stamp, stamp)
+
+        const first = loadDiscoveredHooksSnapshot({ homeDir, projectDir: projectRoot })
+        writeFileSync(hookPath, edited, "utf8")
+        utimesSync(hookPath, stamp, stamp)
+
+        const second = loadDiscoveredHooksSnapshot({ homeDir, projectDir: projectRoot })
+        const secondNotify = second.hooks.get("session.created")?.[0]?.actions[0]
+        const reflectedEdit = secondNotify && "notify" in secondNotify && secondNotify.notify === "edited"
+        return first.signature !== second.signature && reflectedEdit
+          ? { ok: true }
+          : { ok: false, detail: JSON.stringify({ first: first.signature, second: second.signature, secondNotify }) }
+      } finally {
+        __resetSnapshotCacheForTests()
+        cleanup(sandbox)
+      }
+    },
+  },
+  {
     name: "P2-3: duplicate hook id across files surfaces duplicate_hook_id error",
     run: () => {
       const sandbox = createSandbox("duplicate-id-across-files")

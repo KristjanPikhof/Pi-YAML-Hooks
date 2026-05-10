@@ -1,4 +1,5 @@
-import { statSync } from "node:fs"
+import { createHash } from "node:crypto"
+import { readFileSync, statSync } from "node:fs"
 
 import {
   type HookConfig,
@@ -130,24 +131,39 @@ export function loadDiscoveredHooksSnapshot(options: HookLoadOptions = {}): Hook
   return { ...result, signature: fingerprintSignature }
 }
 
-// P2 #2 fix: include `ino` and `mode` in the fingerprint and stat-before-read
-// to harden against TOCTOU. mtime+size alone collide on:
-//   - rapid edits within the same filesystem mtime tick
-//   - replace-by-rename where the new inode happens to be the same byte count
-//   - chmod that changes execution semantics but not content
-// Stating up-front (rather than after a separate read pass) means a file
-// swapped underneath us still presents a consistent stat→content pair.
 function computeFingerprintSignature(files: readonly string[]): string {
   const parts: string[] = []
   for (const filePath of files) {
-    try {
-      const stat = statSync(filePath)
-      parts.push(`${filePath}|${stat.mtimeMs}|${stat.size}|${stat.ino}|${stat.mode}`)
-    } catch {
-      parts.push(`${filePath}|missing`)
-    }
+    parts.push(`${filePath}|${computeConsistentFileFingerprint(filePath)}`)
   }
   return parts.join("\n")
+}
+
+function computeConsistentFileFingerprint(filePath: string): string {
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    try {
+      const before = statSync(filePath)
+      const content = readFileSync(filePath)
+      const after = statSync(filePath)
+      if (sameStatFingerprint(before, after)) {
+        const hash = createHash("sha256").update(content).digest("hex")
+        return `${after.mtimeMs}|${after.size}|${after.ino}|${after.mode}|${hash}`
+      }
+    } catch {
+      return "missing"
+    }
+  }
+
+  try {
+    const stat = statSync(filePath)
+    return `${stat.mtimeMs}|${stat.size}|${stat.ino}|${stat.mode}|unstable`
+  } catch {
+    return "missing"
+  }
+}
+
+function sameStatFingerprint(a: ReturnType<typeof statSync>, b: ReturnType<typeof statSync>): boolean {
+  return a.mtimeMs === b.mtimeMs && a.size === b.size && a.ino === b.ino && a.mode === b.mode
 }
 
 function loadDiscoveredHooksFromFiles(

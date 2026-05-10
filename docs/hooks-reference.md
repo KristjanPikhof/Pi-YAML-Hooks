@@ -28,7 +28,7 @@ Each action entry must define exactly one action key.
 
 On PI versions that expose `ctx.ui.addAutocompleteProvider`, `pi-yaml-hooks` registers a guarded autocomplete provider for the built-in `/hooks-*` commands. The provider is capability-detected at runtime, so older supported PI versions continue to load without this UI feature.
 
-Autocomplete suggestions are deterministic and intentionally lightweight: command names are static; event names use the supported event list; config paths and the current log path are resolved once when the provider registers; hook ID suggestions come from the loaded global/project snapshot at registration time.
+Autocomplete suggestions are deterministic and intentionally lightweight: command names are static; event names use the supported event list; config paths and the current log path are resolved when the provider builds suggestions. Hook ID suggestions are loaded lazily from the current global/project snapshot and memoized by snapshot signature, so edits to root or imported hook files refresh suggestions after the next snapshot change.
 
 Useful completions include:
 
