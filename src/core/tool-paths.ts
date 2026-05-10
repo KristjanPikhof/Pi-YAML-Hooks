@@ -234,12 +234,11 @@ function parseBashChanges(command: string): FileChange[] {
       continue
     }
 
-    // mkdir intentionally produces no FileChange entries: a directory is not
-    // a file, and reporting it as `create` confused downstream consumers
-    // that expect `path` to refer to a regular file (e.g. file-existence
-    // checks, content reads). Operators who care about directories can hook
-    // `bash` directly. (Decision: drop, not add `kind: "directory"`.)
     if (cmd === "mkdir") {
+      const paths = extractPathArgs(tokens, 1)
+      for (const p of paths) {
+        changes.push({ operation: "create", path: p })
+      }
       continue
     }
   }

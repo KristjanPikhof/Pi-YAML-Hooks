@@ -284,10 +284,12 @@ const cases: Case[] = [
     },
   },
   {
-    name: "P1-17 + mkdir-kind: mkdir -p does not produce a FileChange (directories not reported)",
+    name: "mkdir -p produces create FileChange entries per public file.changed contract",
     run: () => {
-      const changes = getToolFileChanges("bash", { command: "mkdir -p deep/nested/dir" })
-      return changes.length === 0 ? { ok: true } : { ok: false, detail: JSON.stringify(changes) }
+      const changes = getToolFileChanges("bash", { command: "mkdir -p deep/nested/dir other-dir" })
+      const paths = changes.map((c) => (c.operation === "create" ? c.path : ""))
+      const ok = paths.length === 2 && paths.includes("deep/nested/dir") && paths.includes("other-dir")
+      return ok ? { ok: true } : { ok: false, detail: JSON.stringify(changes) }
     },
   },
   {
