@@ -32,6 +32,8 @@ Override it with:
 PI_YAML_HOOKS_LOG_FILE=/tmp/pi-yaml-hooks.ndjson PI_YAML_HOOKS_DEBUG=1 pi
 ```
 
+The log file rotates automatically once it exceeds `PI_YAML_HOOKS_LOG_MAX_BYTES` (default 10 MiB). On rotation the live file is renamed to `<path>.1`, replacing any prior `.1`. Only one rotated copy is kept, so plumb the file into your own log shipper if you need more history.
+
 ## Tail the log
 
 Raw tail:
