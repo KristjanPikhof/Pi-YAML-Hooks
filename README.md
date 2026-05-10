@@ -150,7 +150,7 @@ These are the PI-specific constraints that matter most:
 - `tool:` is prompt injection, not imperative tool execution
 - `action: stop` only has real effect on `tool.before.*`
 - `runIn: main` is unsupported for non-`bash` actions
-- `session.deleted` is best-effort and intentionally lossy: PI can fire it for shutdown and for session switches, and `pi-yaml-hooks` forwards PI's reason when the host provides one
+- `session.deleted` is best-effort and intentionally lossy: PI fires it for shutdown and for session switches like `/new`, `/resume`, and `/fork`, and `pi-yaml-hooks` forwards PI's `reason` (`quit`, `reload`, `new`, `resume`, or `fork`) on the envelope so hooks can disambiguate
 - `user_bash` interception is opt-in with `PI_YAML_HOOKS_ENABLE_USER_BASH=1`
 
 Keep those rules in mind when authoring hooks. They explain most surprising behavior.
