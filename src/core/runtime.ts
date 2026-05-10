@@ -153,6 +153,9 @@ export function createHooksRuntime(host: HostAdapter, options: CreateHooksRuntim
   const dispatchStates = new Map<string, DispatchState>()
   const asyncQueues = new Map<string, AsyncQueueState>()
   const actionRecursionGuards = new AsyncLocalStorage<Set<string>>()
+  // Per-runtime dedup set for the async + action: stop one-shot warning so
+  // the warning does not leak across runtime instances or in-process tests.
+  const warnedAsyncStopSources = new Set<string>()
   // P2-5 fix: per-runtime glob matcher cache. Rebuilt on hooks reload so a
   // changed pattern set does not retain stale match closures or stale
   // (path → boolean) entries.
