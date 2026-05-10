@@ -39,6 +39,7 @@ These are the details that matter most when authoring hooks:
 - `confirm:` blocks only on `tool.before.*` hooks.
 - `session.deleted` is best-effort and intentionally lossy: PI fires it for shutdown and for session switches like `/new`, `/resume`, and `/fork`; `pi-yaml-hooks` forwards PI's `reason` (`quit`, `reload`, `new`, `resume`, or `fork`) on the envelope so hooks can disambiguate.
 - `file.changed` is synthesized from recognized mutation tools. On stock PI that means `write`, `edit`, and some `bash` commands such as `cp`, `mv`, `rm`, `touch`, and `mkdir`.
+- Type-only consumers can `import type { HookConfig, HookEvent, BashHookContext, SessionDeletedReason } from "pi-yaml-hooks/types"`. The subpath ships only types; runtime imports go through `pi-yaml-hooks`.
 
 ## Recommended reading order
 
