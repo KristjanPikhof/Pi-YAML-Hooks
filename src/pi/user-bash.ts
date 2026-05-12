@@ -23,6 +23,7 @@ function generateCallId(): string {
 
 // One-time warning tracking: warn once per process when user_bash is enabled.
 let _userBashWarningEmitted = false
+const _userBashUiWarningCwds = new Set<string>()
 
 function emitUserBashWarningOnce(): void {
   if (_userBashWarningEmitted) return
@@ -90,6 +91,7 @@ export function registerUserBashInterception(
     // fire" reports with the cause.
     const logger = getPiHooksLogger()
     try {
+      emitUserBashUiWarningOnce(ctx)
       try {
         options.rememberContext(ctx.cwd, ctx)
       } catch (error) {
@@ -175,6 +177,15 @@ export function registerUserBashInterception(
   })
 }
 
+function emitUserBashUiWarningOnce(ctx: ExtensionContext): void {
+  if (!ctx.hasUI || _userBashUiWarningCwds.has(ctx.cwd)) return
+  _userBashUiWarningCwds.add(ctx.cwd)
+  ctx.ui.notify(
+    "PI_YAML_HOOKS_ENABLE_USER_BASH=1 is routing typed shell commands through trusted project hooks for this session.",
+    "warning",
+  )
+}
+
 function cancelledInternalErrorResult(message: string): UserBashEventResult {
   return {
     result: {
@@ -190,4 +201,5 @@ function cancelledInternalErrorResult(message: string): UserBashEventResult {
 export { generateCallId, emitUserBashWarningOnce as _emitUserBashWarningOnce, _monotonicCounter }
 export function _resetUserBashWarningForTests(): void {
   _userBashWarningEmitted = false
+  _userBashUiWarningCwds.clear()
 }
