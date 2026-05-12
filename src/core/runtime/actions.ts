@@ -15,6 +15,7 @@
 
 import type { AsyncLocalStorage } from "node:async_hooks"
 
+import { redactSensitiveContent } from "../bash-executor.js"
 import { getPiHooksLogger } from "../logger.js"
 import type {
   HookExecutionResult,
@@ -465,13 +466,13 @@ const handleBash: ActionHandler = async ({
       exitCode: result.exitCode,
       blocking: result.blocking,
       durationMs: result.durationMs,
-      stdout: result.stdout,
-      stderr: result.stderr,
+      stdout: redactSensitiveContent(result.stdout),
+      stderr: redactSensitiveContent(result.stderr),
     },
   })
 
   if (result.blocking) {
-    return { blocked: true, blockReason: result.stderr.trim() || "Blocked by hook" }
+    return { blocked: true, blockReason: redactSensitiveContent(result.stderr.trim()) || "Blocked by hook" }
   }
 
   return { blocked: false }
