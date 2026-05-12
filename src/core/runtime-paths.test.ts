@@ -114,6 +114,53 @@ const cases: Case[] = [
     },
   },
   {
+    name: "matchesAllPaths passes when every changed file matches at least one allowlist pattern",
+    run: async () => {
+      const records: string[] = []
+      const runtime = createHooksRuntime(createFakeHost(records), {
+        directory: "/repo",
+        hooks: buildHookMap([{ notify: "all-match" }], "session.idle", [{ matchesAllPaths: ["src/**", "docs/**"] }]),
+      })
+      await runtime["tool.execute.after"]({ tool: "write", sessionID: "s1", callID: "c1", args: { path: "/repo/src/a.ts", content: "x" } })
+      await runtime["tool.execute.after"]({ tool: "write", sessionID: "s1", callID: "c2", args: { path: "/repo/docs/a.md", content: "x" } })
+      await runtime.event({ event: { type: "session.idle", properties: { sessionID: "s1" } } })
+      return JSON.stringify(records) === JSON.stringify(["all-match"])
+        ? { ok: true }
+        : { ok: false, detail: `records=${JSON.stringify(records)}` }
+    },
+  },
+  {
+    name: "matchesAllPaths fails when any changed file is outside the allowlist patterns",
+    run: async () => {
+      const records: string[] = []
+      const runtime = createHooksRuntime(createFakeHost(records), {
+        directory: "/repo",
+        hooks: buildHookMap([{ notify: "all-match" }], "session.idle", [{ matchesAllPaths: ["src/**"] }]),
+      })
+      await runtime["tool.execute.after"]({ tool: "write", sessionID: "s1", callID: "c1", args: { path: "/repo/src/a.ts", content: "x" } })
+      await runtime["tool.execute.after"]({ tool: "write", sessionID: "s1", callID: "c2", args: { path: "/repo/docs/a.md", content: "x" } })
+      await runtime.event({ event: { type: "session.idle", properties: { sessionID: "s1" } } })
+      return records.length === 0
+        ? { ok: true }
+        : { ok: false, detail: `records=${JSON.stringify(records)}` }
+    },
+  },
+  {
+    name: "split matchesAllPaths conditions express intersection semantics",
+    run: async () => {
+      const records: string[] = []
+      const runtime = createHooksRuntime(createFakeHost(records), {
+        directory: "/repo",
+        hooks: buildHookMap([{ notify: "intersection" }], "tool.after.write", [{ matchesAllPaths: ["src/**"] }, { matchesAllPaths: ["**/*.ts"] }]),
+      })
+      await runtime["tool.execute.after"]({ tool: "write", sessionID: "s1", callID: "c1", args: { path: "/repo/src/a.md", content: "x" } })
+      await runtime["tool.execute.after"]({ tool: "write", sessionID: "s1", callID: "c2", args: { path: "/repo/src/a.ts", content: "x" } })
+      return JSON.stringify(records) === JSON.stringify(["intersection"])
+        ? { ok: true }
+        : { ok: false, detail: `records=${JSON.stringify(records)}` }
+    },
+  },
+  {
     name: "precomputed path context preserves matchesCodeFiles behavior for multi-file changes",
     run: async () => {
       const records: string[] = []
