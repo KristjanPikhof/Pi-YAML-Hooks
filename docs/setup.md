@@ -249,7 +249,7 @@ This is the canonical environment-variable reference for `pi-yaml-hooks`. Other 
 | `PI_YAML_HOOKS_MAX_STDIN_BYTES` | Stdin payload cap to bash hooks. Default `262144` (256 KiB). |
 | `PI_YAML_HOOKS_ENV_ALLOWLIST` | Optional comma-separated inherited-env allowlist for bash hooks. When set, only listed inherited variables (for example `PATH,HOME,NPM_TOKEN`) are passed, plus required PI/OPENCODE context variables. |
 | `PI_YAML_HOOKS_ASYNC_MAX_PENDING` | Per-lane async hook pending cap. Default `1000`; extra queued runs are dropped with a warning. |
-| `PI_YAML_HOOKS_ASYNC_WATCHDOG_MS` | Optional per-run async hook watchdog. When set to a positive integer, a never-settling run releases its lane after this many milliseconds and logs a warning. |
+| `PI_YAML_HOOKS_ASYNC_WATCHDOG_MS` | Optional per-run async hook watchdog. When set to a positive integer, a still-running async hook logs a `watchdog_timeout` warning after this many milliseconds; it is not canceled and its lane remains occupied until it settles. |
 | `PI_YAML_HOOKS_CONFIRM_AUTO_APPROVE` | `=1` auto-accepts `confirm:` instead of denying in headless mode (testing only) |
 | `PI_YAML_HOOKS_ALLOW_GLOBAL_IMPORTS` | `=1` allows top-level `imports:` in the global root config |
 | `PI_YAML_HOOKS_ALLOW_PACKAGE_IMPORTS` | `=1` allows bare-specifier imports resolved through `node_modules` |

@@ -527,7 +527,7 @@ The process working directory is the current project directory.
 
 By default, bash hooks inherit the full PI process environment for backwards compatibility. Set `PI_YAML_HOOKS_ENV_ALLOWLIST` to a comma-separated list to opt into filtered inheritance. In allowlist mode, only named inherited variables are passed; `PATH` and `HOME` are not special and must be listed explicitly if a hook needs them. The PI/OPENCODE context variables above are always injected.
 
-Async hook lanes are bounded: each lane keeps at most `PI_YAML_HOOKS_ASYNC_MAX_PENDING` pending runs (default `1000`) and drops additional queued runs with a warning. Set `PI_YAML_HOOKS_ASYNC_WATCHDOG_MS` to a positive millisecond value to log a `watchdog_timeout` warning for a still-running async hook; it does not cancel the hook or release its lane.
+Async hook lanes are bounded: each lane keeps at most `PI_YAML_HOOKS_ASYNC_MAX_PENDING` pending runs (default `1000`) and drops additional queued runs with a warning. Set `PI_YAML_HOOKS_ASYNC_WATCHDOG_MS` to a positive millisecond value to log a `watchdog_timeout` warning for a still-running async hook; it does not cancel the hook, and the lane remains occupied until it settles.
 
 ## PI compatibility smoke-check checklist
 
