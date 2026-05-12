@@ -86,6 +86,9 @@ The package exposes:
 - `.` to `./dist/index.js` (default export: the PI extension, plus public type re-exports)
 - `./types` to the public type surface for type-only imports such as `HookConfig`, `HookEvent`, `SessionDeletedReason`, and `BashHookContext`
 - `./extensions` to `./dist/extensions/index.js` (named re-export for the extensions entry-point)
+- `./extensions/pi-yaml-hooks` to `./dist/extensions/pi-yaml-hooks/index.js` (equivalent subpath)
+
+The published `pi.extensions` entry points at `./extensions/index.ts`. PI loads it via [jiti](https://github.com/unjs/jiti), so the TypeScript source loads without compilation. The tarball ships both the compiled `dist/` tree (for `import` consumers) and the `extensions/` and `src/` TypeScript sources (for PI's jiti-backed load). Test files (`*.test.ts`) are excluded.
 
 `npm install pi-yaml-hooks` requires Node.js `>= 22.0.0` and the PI SDK peer dependencies in the consuming project.
 
@@ -144,7 +147,7 @@ Checked in this order:
 
 Within each scope, the first existing path wins.
 
-Each discovered root file may also declare top-level imports:
+A root file may declare top-level imports when the relevant gate allows it:
 
 ```yaml
 imports:
@@ -159,9 +162,13 @@ hooks:
 
 Import rules:
 
+- project-root imports require the repo or worktree trust anchor to be trusted
+- global-root imports require `PI_YAML_HOOKS_ALLOW_GLOBAL_IMPORTS=1`
+- package imports require `PI_YAML_HOOKS_ALLOW_PACKAGE_IMPORTS=1`
+- project imports outside the trust anchor require `PI_YAML_HOOKS_ALLOW_PROJECT_IMPORTS_OUTSIDE_TRUST_ANCHOR=1`
 - imports load before the importing file's own hooks
 - relative imports resolve from the importing file
-- non-relative imports resolve through Node module resolution
+- non-relative imports resolve through Node module resolution when package imports are enabled
 - directory imports expand files in stable lexical order
 - repeated imports are deduped by canonical path
 - import cycles and missing imports are load errors
@@ -202,12 +209,15 @@ For nested packages, monorepos, and linked worktrees, `pi-yaml-hooks` resolves t
 
 The load order is:
 
-1. global root file imports, then global root hooks
+1. enabled global root file imports, then global root hooks
 2. trusted project root file imports, then project root hooks
 
 That means:
 
-- both roots and their imports can contribute active hooks
+- roots and enabled imports can contribute active hooks
+- global-root imports are refused with a validation error unless `PI_YAML_HOOKS_ALLOW_GLOBAL_IMPORTS=1` is set
+- package imports are refused with a validation error unless `PI_YAML_HOOKS_ALLOW_PACKAGE_IMPORTS=1` is set
+- project imports outside the trust anchor are refused with a validation error unless `PI_YAML_HOOKS_ALLOW_PROJECT_IMPORTS_OUTSIDE_TRUST_ANCHOR=1` is set
 - the project root does not automatically replace the global root
 - replacement only happens when the later file uses `override:` against a hook `id`
 
@@ -232,8 +242,8 @@ Once the extension is loaded, PI exposes these helper commands:
 - `/hooks-status`: inspect the active hook summary, paths, trust state, and log file
 - `/hooks-validate`: validate active hooks and explain whether the project file is valid but untrusted
 - `/hooks-trust`: trust the current project without manually editing `trusted-projects.json`
-- `/hooks-reload`: reload extensions and command surfaces on demand
-- `/hooks-tail-log`: show the log file path and a ready-made tail command; pass `--follow` to spawn the bundled tail script as a detached live tail, or `--path` to print only the log file path
+- `/hooks-reload`: asks PI to reload extensions; edited hooks also refresh lazily on the next relevant event, while in-flight hooks finish under the previous config
+- `/hooks-tail-log`: show the log file path and a ready-made tail command; pass `--follow` to start a detached live tail, or `--path` to print only the log file path
 
 ## Environment variables
 
@@ -247,6 +257,9 @@ This is the canonical environment-variable reference for `pi-yaml-hooks`. Other 
 | `PI_YAML_HOOKS_BASH_EXECUTABLE` | Override the bash executable path |
 | `PI_YAML_HOOKS_MAX_OUTPUT_BYTES` | Per-stream stdout/stderr capture cap. Default `1048576` (1 MiB). |
 | `PI_YAML_HOOKS_MAX_STDIN_BYTES` | Stdin payload cap to bash hooks. Default `262144` (256 KiB). |
+| `PI_YAML_HOOKS_ENV_ALLOWLIST` | Optional comma-separated inherited-env allowlist for bash hooks. When set, only listed inherited variables (for example `PATH,HOME,NPM_TOKEN`) are passed, plus required PI/OPENCODE context variables. |
+| `PI_YAML_HOOKS_ASYNC_MAX_PENDING` | Per-lane async hook pending cap. Default `1000`; extra queued runs are dropped with a warning. |
+| `PI_YAML_HOOKS_ASYNC_WATCHDOG_MS` | Optional per-run async hook watchdog. When set to a positive integer, a still-running async hook logs a `watchdog_timeout` warning after this many milliseconds; it is not canceled and its lane remains occupied until it settles. |
 | `PI_YAML_HOOKS_CONFIRM_AUTO_APPROVE` | `=1` auto-accepts `confirm:` instead of denying in headless mode (testing only) |
 | `PI_YAML_HOOKS_ALLOW_GLOBAL_IMPORTS` | `=1` allows top-level `imports:` in the global root config |
 | `PI_YAML_HOOKS_ALLOW_PACKAGE_IMPORTS` | `=1` allows bare-specifier imports resolved through `node_modules` |

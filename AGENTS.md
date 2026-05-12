@@ -16,7 +16,7 @@ Contract for agents editing `pi-yaml-hooks`. Facts only; tutorials in `docs/`.
 | `src/core/hooks/` | `yaml-envelope`, `schema`, `composition`, `imports`, `snapshot-cache` |
 | `src/core/runtime/` | `dispatch`, `actions`, `async-queue`, `recursion-guard`, `path-filter` |
 | `src/pi/` | `adapter` (compat barrel), `host-adapter`, `register-adapter`, `session-lifecycle`, `runtime-registry`, `event-mappers`, `commands`, `autocomplete`, `diagnostics`, `prompt-support`, `user-bash`, `session-lineage`, `unsupported` |
-| `extensions/index.ts` | Symlink target for local-dev installs |
+| `extensions/index.ts` | Published `pi.extensions` entrypoint; PI loads via jiti. Re-exports `extensions/pi-yaml-hooks/index.ts` → `src/index.ts`. Also the symlink target for local-dev installs |
 | `examples/` | Copyable patterns; not product |
 | `scripts/run-tests.mjs` | Walks `dist/**/*.test.js`; spawns each sequentially under `node --test` |
 | `scripts/check-sdk-matrix.sh` | SDK compat runner |
@@ -55,9 +55,11 @@ Examples-only (not product): `examples/atomic-commit-snapshot-worker/`, `/snapsh
 
 ## Config + trust
 
-- One global root + one project root; each may `imports:` more
+- One global root + one project root
 - Project discovery repo/worktree-aware, not exact-cwd
-- Trust against repo/worktree anchor; project hooks ignored until trusted
+- Trust against repo/worktree anchor; project hooks and project-root imports ignored until trusted
+- Global-root imports require `PI_YAML_HOOKS_ALLOW_GLOBAL_IMPORTS=1`
+- Package imports require `PI_YAML_HOOKS_ALLOW_PACKAGE_IMPORTS=1`
 - Project imports must canonicalize inside anchor; bypass via `PI_YAML_HOOKS_ALLOW_PROJECT_IMPORTS_OUTSIDE_TRUST_ANCHOR=1`
 - Shortcuts: `/hooks-trust` or `PI_YAML_HOOKS_TRUST_PROJECT=1`
 

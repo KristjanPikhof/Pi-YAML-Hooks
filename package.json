@@ -1,6 +1,6 @@
 {
   "name": "pi-yaml-hooks",
-  "version": "2026.5.10",
+  "version": "2026.5.12",
   "description": "YAML hook automation for the PI coding agent: tool guards, session hooks, prompts, notifications, and bash actions.",
   "author": "Kristjan Pikhof <kristjan.pikhof@gmail.com> (https://github.com/KristjanPikhof)",
   "type": "module",
@@ -17,11 +17,12 @@
       "types": "./dist/index.d.ts"
     },
     "./extensions": "./dist/extensions/index.js",
+    "./extensions/pi-yaml-hooks": "./dist/extensions/pi-yaml-hooks/index.js",
     "./package.json": "./package.json"
   },
   "pi": {
     "extensions": [
-      "./dist/extensions/index.js"
+      "./extensions/index.ts"
     ]
   },
   "keywords": [
@@ -45,17 +46,23 @@
   ],
   "files": [
     "dist",
+    "src",
+    "extensions",
     "docs",
     "examples/post-tool-developer-feedback",
     "examples/pre-tool-developer-guards",
     "examples/README.md",
     "scripts/tail-hook-log.sh",
-    "README.md"
+    "README.md",
+    "!**/*.test.ts",
+    "!**/*.test.js",
+    "!**/*.test.d.ts",
+    "!**/*.tsbuildinfo"
   ],
   "scripts": {
     "typecheck": "tsc --noEmit",
-    "build": "tsc && mkdir -p dist/extensions && printf 'export { default } from \"../index.js\";\n' > dist/extensions/index.js",
-    "build:publish": "rm -rf dist && tsc -p tsconfig.publish.json && mkdir -p dist/extensions && printf 'export { default } from \"../index.js\";\n' > dist/extensions/index.js",
+    "build": "tsc && mkdir -p dist/extensions/pi-yaml-hooks && printf 'export { default } from \"./pi-yaml-hooks/index.js\";\n' > dist/extensions/index.js && printf 'export { default } from \"../../index.js\";\n' > dist/extensions/pi-yaml-hooks/index.js",
+    "build:publish": "rm -rf dist && tsc -p tsconfig.publish.json && mkdir -p dist/extensions/pi-yaml-hooks && printf 'export { default } from \"./pi-yaml-hooks/index.js\";\n' > dist/extensions/index.js && printf 'export { default } from \"../../index.js\";\n' > dist/extensions/pi-yaml-hooks/index.js",
     "prepack": "npm run build:publish",
     "test": "echo \"no consumer tests\" && exit 0",
     "test:internal": "npm run build && node scripts/run-tests.mjs",

@@ -214,12 +214,12 @@ const cases: Case[] = [
         theme,
       )
 
-      const dimUsed = colorCalls.some((call) => call.startsWith("dim:"))
-      return dimUsed ? { ok: false, detail: "section label rendered while collapsed" } : { ok: true }
+      const sectionRendered = colorCalls.some((call) => call === "dim:should-not-appear")
+      return sectionRendered ? { ok: false, detail: "section label rendered while collapsed" } : { ok: true }
     },
   },
   {
-    name: "renderer uses success badge color for info level",
+    name: "renderer uses neutral badge color for info level",
     run: () => {
       const pi = createFakePi()
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -245,7 +245,7 @@ const cases: Case[] = [
         theme,
       )
 
-      return colorCalls.some((call) => call.startsWith("success:[INFO]"))
+      return colorCalls.some((call) => call.startsWith("dim:[INFO]"))
         ? { ok: true }
         : { ok: false, detail: JSON.stringify(colorCalls) }
     },

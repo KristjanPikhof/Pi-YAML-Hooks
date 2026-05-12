@@ -118,28 +118,28 @@ export function registerCommands(pi: ExtensionAPI): void {
         title: "Hook validation",
         level,
         content: lines.join("\n"),
-        sections: [
+        sections: compactDiagnosticSections([
           {
             label: "Global validation errors",
-            lines: validation.byScope.global.length > 0 ? validation.byScope.global.map(formatValidationError) : ["None"],
+            lines: validation.byScope.global.map(formatValidationError),
           },
           {
             label: "Project validation errors",
-            lines: validation.byScope.project.length > 0 ? validation.byScope.project.map(formatValidationError) : ["None"],
+            lines: validation.byScope.project.map(formatValidationError),
           },
           {
             label: "Imported file validation errors",
-            lines: validation.byScope.imported.length > 0 ? validation.byScope.imported.map(formatValidationError) : ["None"],
+            lines: validation.byScope.imported.map(formatValidationError),
           },
           {
             label: "Untrusted project file errors",
-            lines: validation.project.errors.length > 0 ? validation.project.errors.map(formatValidationError) : ["None"],
+            lines: validation.project.errors.map(formatValidationError),
           },
           {
             label: "Loader advisories",
-            lines: validation.advisories.length > 0 ? validation.advisories.map((message) => `- ${message}`) : ["None"],
+            lines: validation.advisories.map((message) => `- ${message}`),
           },
-        ],
+        ]),
       })
       notifyCommand(ctx, lines.join("\n"), level, false)
     },
@@ -202,7 +202,7 @@ export function registerCommands(pi: ExtensionAPI): void {
   })
 
   pi.registerCommand("hooks-tail-log", {
-    description: "Tail the pi-yaml-hooks log via scripts/tail-hook-log.sh (or print the path with --path)",
+    description: "Show the hook log path, or start a live log tail with --follow",
     handler: async (args, ctx) => {
       const logFilePath = getPiHooksLogFilePath()
       const argv = parseTailLogArgs(args)
@@ -239,7 +239,7 @@ export function registerCommands(pi: ExtensionAPI): void {
             const detail = error instanceof Error ? error.message : String(error)
             notifyCommand(
               ctx,
-              `Could not spawn ${scriptPath} (${detail}). Falling back to copy-pasteable tail command. Hook log: ${logFilePath}\nTail it with: tail -F ${JSON.stringify(logFilePath)}`,
+              `Could not start a live log tail (${detail}). Falling back to a copy-pasteable command. Hook log: ${logFilePath}\nTail it with: tail -F ${JSON.stringify(logFilePath)}`,
               "warning",
             )
             return
@@ -247,7 +247,7 @@ export function registerCommands(pi: ExtensionAPI): void {
         }
         notifyCommand(
           ctx,
-          `tail-hook-log.sh script not found near this install. Hook log: ${logFilePath}\nTail it with: tail -F ${JSON.stringify(logFilePath)}`,
+          `Could not start a live log tail from this install. Hook log: ${logFilePath}\nTail it with: tail -F ${JSON.stringify(logFilePath)}`,
           "warning",
         )
         return
@@ -255,7 +255,7 @@ export function registerCommands(pi: ExtensionAPI): void {
 
       notifyCommand(
         ctx,
-        `Hook log: ${logFilePath}\nTail it with: tail -F ${JSON.stringify(logFilePath)}\n(Pass --follow to spawn scripts/tail-hook-log.sh, or --path to print only the path.)`,
+        `Hook log: ${logFilePath}\nTail it with: tail -F ${JSON.stringify(logFilePath)}\n(Pass --follow to start a live tail, or --path to print only the path.)`,
         "info",
       )
     },
@@ -536,6 +536,10 @@ function atomicallyWriteFile(filePath: string, content: string, mode: number): v
     }
     throw error
   }
+}
+
+function compactDiagnosticSections<T extends { readonly lines: readonly string[] }>(sections: T[]): T[] {
+  return sections.filter((section) => section.lines.length > 0)
 }
 
 interface TailLogArgs {

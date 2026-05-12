@@ -9,7 +9,7 @@ This repo is the PI port of [OpenCode-Hooks](https://github.com/KristjanPikhof/O
 - Run hooks on `tool.before.*`, `tool.after.*`, `file.changed`, `session.created`, `session.idle`, and `session.deleted`
 - Use `bash`, `tool`, `notify`, `confirm`, and `setStatus` actions
 - Filter hooks with `matchesCodeFiles`, `matchesAnyPath`, and `matchesAllPaths`
-- Load one global root config and one trusted project root config, each with top-level `imports:`
+- Load one global root config and one trusted project root config; imports are gated by trust and opt-in env vars
 - Show built-in diagnostics with `/hooks-status`, `/hooks-validate`, `/hooks-trust`, `/hooks-reload`, and `/hooks-tail-log`
 - Emit structured in-session diagnostics when PI supports custom messages
 - Inject a short hook-awareness note before agent start (disable with `PI_YAML_HOOKS_PROMPT_AWARENESS=0`)
@@ -101,7 +101,7 @@ Do not widen support until both the future matrix and the runtime smoke pass, in
 
 ## How it works
 
-`pi-yaml-hooks` discovers at most one global root config and one project root config. Each root file can import more hook files with top-level `imports:`. The project root is repo/worktree-aware, not exact-cwd-only, and project hooks load only when that repo or worktree anchor is trusted.
+`pi-yaml-hooks` discovers at most one global root config and one project root config. Project hooks and project-root imports load only when the repo or worktree anchor is trusted. Global-root imports require `PI_YAML_HOOKS_ALLOW_GLOBAL_IMPORTS=1`, package imports require `PI_YAML_HOOKS_ALLOW_PACKAGE_IMPORTS=1`, and project imports outside the trust anchor require `PI_YAML_HOOKS_ALLOW_PROJECT_IMPORTS_OUTSIDE_TRUST_ANCHOR=1`. The project root is repo/worktree-aware, not exact-cwd-only.
 
 When an event matches, `pi-yaml-hooks` evaluates conditions and runs the configured actions. `bash` actions receive hook context JSON on stdin plus injected `PI_*` environment variables such as `PI_PROJECT_DIR`, `PI_WORKTREE_DIR`, `PI_SESSION_ID`, and `PI_GIT_COMMON_DIR`. At agent start, the extension also appends a short hook-awareness note to the system prompt so PI has the current hook and trust context while it works.
 
@@ -135,8 +135,8 @@ When an event matches, `pi-yaml-hooks` evaluates conditions and runs the configu
 | `/hooks-status` | Active hooks, config paths, trust state, and log path |
 | `/hooks-validate` | Validation results for active hooks and skipped untrusted project hooks |
 | `/hooks-trust` | Adds the current repo/worktree anchor to `~/.pi/agent/trusted-projects.json` |
-| `/hooks-reload` | Reloads the extension and command surface |
-| `/hooks-tail-log` | Log path plus a ready-to-run `tail -F` command; `--follow` spawns the bundled tail script detached, and `--path` prints only the path |
+| `/hooks-reload` | Asks PI to reload extensions; edited hooks also refresh lazily on the next relevant event |
+| `/hooks-tail-log` | Log path plus a ready-to-run `tail -F` command; `--follow` starts a detached live tail, and `--path` prints only the path |
 
 `/hooks-status`, `/hooks-validate`, and hook-load validation errors also emit structured in-session diagnostics when PI supports custom messages.
 
@@ -163,7 +163,7 @@ When `PI_YAML_HOOKS_ENABLE_USER_BASH=1` is set, every human `!` / `!!` shell com
 - **Blocking**: a `tool.before.bash` hook that exits with code `2` will prevent the command from running. A misconfigured or malicious hook can silently block commands.
 - **Exfiltration risk**: the same bash hook can forward `tool_args.command` to an external service. Only enable `PI_YAML_HOOKS_ENABLE_USER_BASH=1` if you trust every hook in every trusted project.
 
-`pi-yaml-hooks` emits a one-time stderr warning on startup listing which trusted projects will have access when this env var is set. The warning fires once per process and names the projects currently in `~/.pi/agent/trusted-projects.json`.
+`pi-yaml-hooks` emits a one-time stderr warning on startup listing which trusted projects will have access when this env var is set, and shows a PI UI warning on the first intercepted command when a UI is available. The warning fires once per process and names the projects currently in `~/.pi/agent/trusted-projects.json`.
 
 This mode is disabled by default. Agent-generated `bash` tool calls are always intercepted regardless of this setting.
 
@@ -179,7 +179,7 @@ Project root config paths:
 1. `<project>/.pi/hook/hooks.yaml`
 2. `<project>/.pi/hooks.yaml`
 
-Project hooks are gated by trust because they can run arbitrary `bash` with your user permissions. Trust is evaluated against the repo or worktree anchor, not an arbitrary nested directory string.
+Project hooks are gated by trust because they can run arbitrary `bash` with your user permissions. Trust is evaluated against the repo or worktree anchor, not an arbitrary nested directory string. `trusted-projects.json` entries must be absolute paths; relative entries such as `.` are ignored.
 
 Two ways to trust a project:
 
