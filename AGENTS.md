@@ -16,7 +16,7 @@ Contract for agents editing `pi-yaml-hooks`. Facts only; tutorials in `docs/`.
 | `src/core/hooks/` | `yaml-envelope`, `schema`, `composition`, `imports`, `snapshot-cache` |
 | `src/core/runtime/` | `dispatch`, `actions`, `async-queue`, `recursion-guard`, `path-filter` |
 | `src/pi/` | `adapter` (compat barrel), `host-adapter`, `register-adapter`, `session-lifecycle`, `runtime-registry`, `event-mappers`, `commands`, `autocomplete`, `diagnostics`, `prompt-support`, `user-bash`, `session-lineage`, `unsupported` |
-| `extensions/index.ts` | Symlink target for local-dev installs |
+| `extensions/index.ts` | Published `pi.extensions` entrypoint; PI loads via jiti. Re-exports `extensions/pi-yaml-hooks/index.ts` → `src/index.ts`. Also the symlink target for local-dev installs |
 | `examples/` | Copyable patterns; not product |
 | `scripts/run-tests.mjs` | Walks `dist/**/*.test.js`; spawns each sequentially under `node --test` |
 | `scripts/check-sdk-matrix.sh` | SDK compat runner |
