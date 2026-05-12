@@ -449,6 +449,18 @@ async function executeHook(
         })
         logHookFailure(hook.event, hook.source.filePath, error)
       },
+      {
+        onWarning: (warning) => {
+          logger.warn("hook_async", "Async hook queue warning.", {
+            cwd: projectDir,
+            event: hook.event,
+            sessionId: sessionID,
+            hookId,
+            hookSource: formatHookSource(hook),
+            details: { ...warning },
+          })
+        },
+      },
     )
     logger.debug("hook_async", "Queued hook for asynchronous execution.", {
       cwd: projectDir,
@@ -456,7 +468,12 @@ async function executeHook(
       sessionId: sessionID,
       hookId,
       hookSource: formatHookSource(hook),
-      details: { queueKey: asyncConfig.queueKey, concurrency: asyncConfig.concurrency },
+      details: {
+        queueKey: asyncConfig.queueKey,
+        concurrency: asyncConfig.concurrency,
+        maxPending: process.env.PI_YAML_HOOKS_ASYNC_MAX_PENDING ?? "1000",
+        watchdogMs: process.env.PI_YAML_HOOKS_ASYNC_WATCHDOG_MS ?? "disabled",
+      },
     })
     return { blocked: false }
   }

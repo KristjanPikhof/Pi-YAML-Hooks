@@ -15,6 +15,21 @@ export interface AsyncQueueState {
   pending: Array<() => Promise<void>>
 }
 
+export interface AsyncQueueWarning {
+  readonly reason: "pending_limit" | "watchdog_timeout"
+  readonly queueKey: string
+  readonly pendingCount: number
+  readonly activeCount: number
+  readonly limit?: number
+  readonly timeoutMs?: number
+}
+
+export interface AsyncQueueOptions {
+  readonly maxPending?: number
+  readonly watchdogMs?: number
+  readonly onWarning?: (warning: AsyncQueueWarning) => void
+}
+
 export function resolveAsyncExecutionConfig(
   hook: HookConfig,
   sessionID: string,
@@ -35,9 +50,23 @@ export function enqueueAsyncHook(
   config: { queueKey: string; concurrency: number },
   run: () => Promise<void>,
   onError: (error: unknown) => void,
+  options: AsyncQueueOptions = {},
 ): void {
   const state = asyncQueues.get(config.queueKey) ?? { activeCount: 0, pending: [] }
   asyncQueues.set(config.queueKey, state)
+  const maxPending = options.maxPending ?? parsePositiveInt(process.env.PI_YAML_HOOKS_ASYNC_MAX_PENDING) ?? 1_000
+  const watchdogMs = options.watchdogMs ?? parsePositiveInt(process.env.PI_YAML_HOOKS_ASYNC_WATCHDOG_MS)
+
+  if (state.pending.length >= maxPending) {
+    options.onWarning?.({
+      reason: "pending_limit",
+      queueKey: config.queueKey,
+      pendingCount: state.pending.length,
+      activeCount: state.activeCount,
+      limit: maxPending,
+    })
+    return
+  }
 
   const startNext = (): void => {
     while (state.activeCount < config.concurrency && state.pending.length > 0) {
@@ -56,10 +85,29 @@ export function enqueueAsyncHook(
       // previous `(async () => next())()` IIFE — both convert sync
       // throws to rejections; the `.then` form skips the implicit
       // async-function wrapper promise.
-      void Promise.resolve()
-        .then(next)
+      let watchdog: NodeJS.Timeout | undefined
+      const runWithWatchdog = watchdogMs
+        ? Promise.race([
+            Promise.resolve().then(next),
+            new Promise<void>((resolve) => {
+              watchdog = setTimeout(() => {
+                options.onWarning?.({
+                  reason: "watchdog_timeout",
+                  queueKey: config.queueKey,
+                  pendingCount: state.pending.length,
+                  activeCount: state.activeCount,
+                  timeoutMs: watchdogMs,
+                })
+                resolve()
+              }, watchdogMs)
+            }),
+          ])
+        : Promise.resolve().then(next)
+
+      void runWithWatchdog
         .catch(onError)
         .finally(() => {
+          if (watchdog) clearTimeout(watchdog)
           state.activeCount -= 1
           if (state.activeCount === 0 && state.pending.length === 0) {
             asyncQueues.delete(config.queueKey)
@@ -72,4 +120,10 @@ export function enqueueAsyncHook(
 
   state.pending.push(run)
   startNext()
+}
+
+function parsePositiveInt(raw: string | undefined): number | undefined {
+  if (!raw) return undefined
+  const value = Number.parseInt(raw, 10)
+  return Number.isFinite(value) && value > 0 ? value : undefined
 }
