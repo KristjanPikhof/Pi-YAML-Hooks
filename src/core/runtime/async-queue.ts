@@ -86,25 +86,19 @@ export function enqueueAsyncHook(
       // throws to rejections; the `.then` form skips the implicit
       // async-function wrapper promise.
       let watchdog: NodeJS.Timeout | undefined
-      const runWithWatchdog = watchdogMs
-        ? Promise.race([
-            Promise.resolve().then(next),
-            new Promise<void>((resolve) => {
-              watchdog = setTimeout(() => {
-                options.onWarning?.({
-                  reason: "watchdog_timeout",
-                  queueKey: config.queueKey,
-                  pendingCount: state.pending.length,
-                  activeCount: state.activeCount,
-                  timeoutMs: watchdogMs,
-                })
-                resolve()
-              }, watchdogMs)
-            }),
-          ])
-        : Promise.resolve().then(next)
+      if (watchdogMs) {
+        watchdog = setTimeout(() => {
+          options.onWarning?.({
+            reason: "watchdog_timeout",
+            queueKey: config.queueKey,
+            pendingCount: state.pending.length,
+            activeCount: state.activeCount,
+            timeoutMs: watchdogMs,
+          })
+        }, watchdogMs)
+      }
 
-      void runWithWatchdog
+      void Promise.resolve().then(next)
         .catch(onError)
         .finally(() => {
           if (watchdog) clearTimeout(watchdog)

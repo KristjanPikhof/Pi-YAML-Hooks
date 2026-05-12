@@ -450,14 +450,15 @@ const cases: Case[] = [
     },
   },
   {
-    name: "async queue watchdog frees a lane after a never-settling run",
+    name: "async queue watchdog warns without freeing a slow lane",
     run: async () => {
       const queues = new Map<string, AsyncQueueState>()
       const order: string[] = []
       const warnings: string[] = []
       enqueueAsyncHook(queues, { queueKey: "q", concurrency: 1 }, async () => {
-        order.push("stuck")
-        await new Promise<void>(() => {})
+        order.push("slow:start")
+        await sleep(30)
+        order.push("slow:end")
       }, () => {}, {
         watchdogMs: 10,
         onWarning: (warning) => warnings.push(warning.reason),
@@ -468,10 +469,31 @@ const cases: Case[] = [
         watchdogMs: 10,
         onWarning: (warning) => warnings.push(warning.reason),
       })
+      await sleep(20)
+      const beforeSettled = order.join(",")
       await sleep(40)
-      return order.join(",") === "stuck,next" && warnings.includes("watchdog_timeout")
+      return beforeSettled === "slow:start" && order.join(",") === "slow:start,slow:end,next" && warnings.includes("watchdog_timeout")
         ? { ok: true }
-        : { ok: false, detail: `order=${JSON.stringify(order)} warnings=${JSON.stringify(warnings)}` }
+        : { ok: false, detail: `beforeSettled=${beforeSettled} order=${JSON.stringify(order)} warnings=${JSON.stringify(warnings)}` }
+    },
+  },
+  {
+    name: "async queue reports hook failures after watchdog warning",
+    run: async () => {
+      const queues = new Map<string, AsyncQueueState>()
+      const warnings: string[] = []
+      const errors: string[] = []
+      enqueueAsyncHook(queues, { queueKey: "q", concurrency: 1 }, async () => {
+        await sleep(30)
+        throw new Error("late failure")
+      }, (error) => errors.push(error instanceof Error ? error.message : String(error)), {
+        watchdogMs: 10,
+        onWarning: (warning) => warnings.push(warning.reason),
+      })
+      await sleep(50)
+      return warnings.includes("watchdog_timeout") && errors.includes("late failure")
+        ? { ok: true }
+        : { ok: false, detail: `warnings=${JSON.stringify(warnings)} errors=${JSON.stringify(errors)}` }
     },
   },
   {
