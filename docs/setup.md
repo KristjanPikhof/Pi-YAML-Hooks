@@ -5,9 +5,9 @@ This guide gets `pi-yaml-hooks` installed and gives you a safe place to put `hoo
 ## Requirements
 
 - macOS or Linux
-- Node.js `>= 22.0.0`
+- Node.js `>= 22.19.0`
 - `bash` on `PATH`
-- `@earendil-works/pi-coding-agent ^0.74.0`
+- `@earendil-works/pi-coding-agent 0.79.x`
 
 Windows is unsupported because the hook runner expects a POSIX `bash`.
 
@@ -90,7 +90,7 @@ The package exposes:
 
 The published `pi.extensions` entry points at `./extensions/index.ts`. PI loads it via [jiti](https://github.com/unjs/jiti), so the TypeScript source loads without compilation. The tarball ships both the compiled `dist/` tree (for `import` consumers) and the `extensions/` and `src/` TypeScript sources (for PI's jiti-backed load). Test files (`*.test.ts`) are excluded.
 
-`npm install pi-yaml-hooks` requires Node.js `>= 22.0.0` and the PI SDK peer dependencies in the consuming project.
+`npm install pi-yaml-hooks` requires Node.js `>= 22.19.0` and the PI SDK peer dependencies in the consuming project.
 
 ## Create your first hook file
 

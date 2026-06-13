@@ -56,7 +56,7 @@ Useful completions include:
 
 At agent start, `pi-yaml-hooks` appends a short hook-awareness note to the system prompt. It summarizes the loaded hook count, current project trust state, and the main PI-specific limitations that matter while authoring or debugging hooks.
 
-This prompt injection is part of the current compatibility surface for the documented peer range `^0.74.0` on the `@earendil-works` scope.
+This prompt injection is part of the current compatibility surface for the documented peer metadata `*` on the `@earendil-works` scope.
 
 Set `PI_YAML_HOOKS_PROMPT_AWARENESS=0` to disable this prompt injection.
 

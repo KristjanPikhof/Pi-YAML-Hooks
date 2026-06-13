@@ -29,7 +29,7 @@ Hook bash, follow-up prompts, and PI UI actions onto tool calls and session even
 
 These are the details that matter most when authoring hooks:
 
-- The documented support range is `@earendil-works/pi-coding-agent ^0.74.0`.
+- The documented support range is `@earendil-works/pi-coding-agent 0.79.x`.
 - Only one global root config and one project root config are discovered.
 - Project-root imports require project trust. Global-root imports require `PI_YAML_HOOKS_ALLOW_GLOBAL_IMPORTS=1`; package imports require `PI_YAML_HOOKS_ALLOW_PACKAGE_IMPORTS=1`; project imports outside the trust anchor require `PI_YAML_HOOKS_ALLOW_PROJECT_IMPORTS_OUTSIDE_TRUST_ANCHOR=1`.
 - Later files stay compatible with the same explicit `override:` / `disable:` behavior by `id`.

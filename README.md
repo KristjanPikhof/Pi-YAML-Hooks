@@ -47,9 +47,9 @@ If a trusted project also has project hooks, the summary includes both scopes:
 ## Requirements
 
 - macOS or Linux
-- Node.js `>=22.0.0`
+- Node.js `>=22.19.0`
 - `bash` on `$PATH` (override with `PI_YAML_HOOKS_BASH_EXECUTABLE`)
-- `@earendil-works/pi-coding-agent ^0.74.0`
+- `@earendil-works/pi-coding-agent 0.79.x`
 
 Windows is unsupported.
 
@@ -140,7 +140,7 @@ When an event matches, `pi-yaml-hooks` evaluates conditions and runs the configu
 
 `/hooks-status`, `/hooks-validate`, and hook-load validation errors also emit structured in-session diagnostics when PI supports custom messages.
 
-PI exposes `ctx.ui.addAutocompleteProvider` on the supported `^0.74.0` line, so `pi-yaml-hooks` layers guarded `/hooks` autocomplete into the editor. Suggestions include the command names plus contextual hook IDs, event names, config paths, and log-tail options where useful. Hook IDs are loaded lazily and memoized by hook-snapshot signature, not fixed at extension registration time.
+PI exposes `ctx.ui.addAutocompleteProvider` on the supported Pi UI line, so `pi-yaml-hooks` layers guarded `/hooks` autocomplete into the editor. Suggestions include the command names plus contextual hook IDs, event names, config paths, and log-tail options where useful. Hook IDs are loaded lazily and memoized by hook-snapshot signature, not fixed at extension registration time.
 
 ## Important limitations
 
