@@ -36,8 +36,9 @@ export function createHostAdapter(
   const logger = getPiHooksLogger();
   // Once-per-missing-capability warning flags. We log a single warning per
   // process lifetime instead of spamming on every hook invocation when the
-  // host's UI surface is absent (e.g. print/RPC mode where ctx.hasUI is
-  // false, or ctx not yet captured before the first event).
+  // host's UI surface is absent (ctx.hasUI is false) or ctx has not yet been
+  // captured before the first event. RPC mode can expose UI in Pi >=0.79, so
+  // UI actions are capability-gated by ctx.hasUI/ctx.ui methods, not mode.
   let warnedNoNotify = false;
   let warnedNoConfirm = false;
   let warnedNoSetStatus = false;
@@ -130,7 +131,7 @@ export function createHostAdapter(
         if (!warnedNoNotify) {
           // eslint-disable-next-line no-console
           console.warn(
-            "[pi-yaml-hooks] notify action skipped: PI UI surface unavailable (likely print/RPC mode).",
+            "[pi-yaml-hooks] notify action skipped: PI UI surface unavailable for this context.",
           );
           logger.warn("host_notify", "notify action skipped because PI UI surface is unavailable.", {
             cwd: projectDir,
@@ -174,7 +175,7 @@ export function createHostAdapter(
         if (!warnedNoConfirm) {
           // eslint-disable-next-line no-console
           console.warn(
-            "[pi-yaml-hooks] confirm action denied: PI UI surface unavailable (likely print/RPC mode). " +
+            "[pi-yaml-hooks] confirm action denied: PI UI surface unavailable for this context. " +
               "confirm: hooks fail closed in headless mode so destructive operations are not silently auto-approved. " +
               "Set PI_YAML_HOOKS_CONFIRM_AUTO_APPROVE=1 to override.",
           );
@@ -217,7 +218,7 @@ export function createHostAdapter(
         if (!warnedNoSetStatus) {
           // eslint-disable-next-line no-console
           console.warn(
-            "[pi-yaml-hooks] setStatus action skipped: PI UI surface unavailable (likely print/RPC mode).",
+            "[pi-yaml-hooks] setStatus action skipped: PI UI surface unavailable for this context.",
           );
           logger.warn("host_set_status", "setStatus action skipped because PI UI surface is unavailable.", {
             cwd: projectDir,
