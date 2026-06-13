@@ -1,6 +1,6 @@
 # AGENTS.md
 
-Agent contract for `pi-yaml-hooks`: factual, compact, implementation-oriented. Tutorials live in `docs/`.
+Agent contract for `pi-yaml-hooks`. Facts only; tutorials in `docs/`.
 
 ## Facts
 
@@ -8,22 +8,22 @@ Agent contract for `pi-yaml-hooks`: factual, compact, implementation-oriented. T
 - Node `>=22.19.0`; macOS/Linux only (`src/pi/register-adapter.ts` guards win32).
 - Pi host peers: `@earendil-works/pi-coding-agent` + `@earendil-works/pi-tui` as `*`; dev-tested at `0.79.3`; matrix still covers `0.74.0`.
 - No direct `@mariozechner/*` host deps. Transitive `@mariozechner/clipboard` may appear under Pi SDK packages in `package-lock.json`.
-- `package-lock.json` is canonical; no `bun.lock`.
+- `package-lock.json` is canonical; no bun.lock.
 
 ## Structure
 
 - `src/index.ts`: PI entry; registers policy, adapter, commands, autocomplete, diagnostics, prompt support.
 - `src/core/`: host-agnostic. `runtime.ts` owns state; `load-hooks.ts` is a barrel; hook loading is in `core/hooks/*`; dispatch/actions/path/async are in `core/runtime/*`. Never import `src/pi/*` or PI SDK types from core.
-- `src/pi/`: PI adapter/register/lifecycle/registry, event mappers, commands, autocomplete, diagnostics, prompt, `user_bash`, session lineage, unsupported policy. `adapter.ts` is a barrel.
+- `src/pi/`: PI adapter/register/lifecycle/registry, event mappers, commands, autocomplete, diagnostics, prompt, `user_bash`, session lineage, unsupported policy; `adapter.ts` is a barrel.
 - `extensions/`: TS entrypoints loaded by PI/jiti; `extensions/index.ts` -> `extensions/pi-yaml-hooks/index.ts` -> `src/index.ts`.
 - `examples/`: shipped: `pre-tool-developer-guards`, `post-tool-developer-feedback`, `README.md`. Repo-only: `atomic-commit-snapshot-worker`, snapshot helpers; not built-ins.
-- `scripts/`: test runner, SDK matrix, tail-log helper, manual PI smoke helpers.
+- `scripts/`: test runner, SDK matrix, tail-log, smoke helpers.
 - `dist/`: generated; do not edit. `build`/`build:publish` regenerate extension stubs.
 
 ## Runtime contracts
 
 - Built-ins: events `tool.before.*`, `tool.after.*`, `file.changed`, `session.{created,idle,deleted}`; actions `bash`, `tool`, `notify`, `confirm`, `setStatus`; commands `/hooks-{status,validate,trust,reload,tail-log}`.
-- Diagnostics use PI custom messages when available; hook-awareness prompt injection runs at agent start.
+- Diagnostics use PI custom messages when available; prompt awareness runs at agent start.
 - `command:` actions rejected. `tool:` injects a follow-up prompt into the current PI session; it does not execute tools or target other sessions.
 - `runIn: main` rejected for non-`bash`; for bash it does not change process/session context. Prefer `scope` for main-vs-child routing.
 - `action: stop` only affects `tool.before.*`; `async: true` + `action: stop` rejected at parse time and runtime warns once per source/runtime.
@@ -40,7 +40,7 @@ Agent contract for `pi-yaml-hooks`: factual, compact, implementation-oriented. T
 - One global root config + one project root config; project discovery is repo/worktree-aware, not exact-cwd-only.
 - Hook trust is separate from Pi package/project trust. Persistent trust: `~/.pi/agent/trusted-projects.json`; entries must be absolute canonical repo/worktree anchors. Shortcuts: `/hooks-trust`, `PI_YAML_HOOKS_TRUST_PROJECT=1`.
 - Imports: global-root needs `PI_YAML_HOOKS_ALLOW_GLOBAL_IMPORTS=1`; package needs `PI_YAML_HOOKS_ALLOW_PACKAGE_IMPORTS=1`; project imports must stay inside trusted anchor unless `PI_YAML_HOOKS_ALLOW_PROJECT_IMPORTS_OUTSIDE_TRUST_ANCHOR=1`.
-- `HookPolicy` (`src/core/types.ts`) plugs host diagnostics into loader; core ships `NOOP_POLICY`; `src/pi/unsupported.ts` registers PI policy via `setActiveHookPolicy`.
+- `HookPolicy` (`src/core/types.ts`) plugs host diagnostics into loader; core ships `NOOP_POLICY`; `src/pi/unsupported.ts` sets PI policy.
 
 ## Commands
 
@@ -55,7 +55,7 @@ Agent contract for `pi-yaml-hooks`: factual, compact, implementation-oriented. T
 
 ## Limits, publish, docs
 
-- Key caps: YAML 1 MiB; import/canonicalize depth 32; snapshot LRU 16; runtime registry per-cwd LRU 8; recursion depth 32; per-pattern glob LRU 256; pending tool calls 1000 / 5 min TTL/FIFO; `tool_args` 64 KiB; session lineage cache 64 / depth 64 / header 64 KiB. Check constants/docs before changing limits.
+- Key caps: YAML 1 MiB; import/canonicalize depth 32; snapshot LRU 16; runtime registry LRU 8; recursion depth 32; glob LRU 256; pending tool calls 1000 / 5 min TTL/FIFO; `tool_args` 64 KiB; session lineage 64 / depth 64 / header 64 KiB. Check constants/docs before changing limits.
 - `prepack` runs clean `build:publish` via `tsconfig.publish.json`. Package contents follow `package.json#files`; update it when adding shipped examples/scripts. `scripts/tail-hook-log.sh` backs `/hooks-tail-log` and is packaged.
 - Env vars canonical source: [`docs/setup.md#environment-variables`](docs/setup.md#environment-variables); do not duplicate env tables here.
 - Doc rules: built-ins ≠ examples; say `action: stop`, not `behavior: stop`; mark opt-in features; name trust anchors (cwd/project root/repo-worktree anchor); `tool:` docs must say PI receives a follow-up prompt.
