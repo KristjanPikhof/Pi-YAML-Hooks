@@ -73,9 +73,9 @@ Before widening PI peer support or merging SDK-sensitive changes, run the repeat
 npm run compat:sdk-matrix
 ```
 
-The matrix checks the supported SDK pair (`@earendil-works/pi-coding-agent` and `@earendil-works/pi-tui` `0.74.0`). It creates a temporary copy of the repository, installs each SDK pair in that copy only, then runs `npm run typecheck` and the consumer-facing `npm test` script (which is the documented public-surface check; it does not exercise the internal dev suite). The working checkout's `package.json`, `package-lock.json`, and normal `node_modules` are not mutated.
+The matrix checks both the legacy 0.74.0 SDK floor and the current Pi 0.79.3 SDK pair (`@earendil-works/pi-coding-agent` and `@earendil-works/pi-tui`). It creates a temporary copy of the repository, installs each SDK pair in that copy only, then runs `npm run typecheck` and `npm run test:internal` so tool/lifecycle/runtime behavior is exercised. The working checkout's `package.json`, `package-lock.json`, and normal `node_modules` are not mutated.
 
-For the full internal test suite, run `npm run test:internal` directly in the working checkout.
+`npm test` remains a consumer-facing no-op; use `npm run test:internal` directly in the working checkout for full validation.
 
 To preview the matrix workflow without installing anything:
 
@@ -91,17 +91,17 @@ scripts/smoke/pi-runtime-smoke.sh
 
 Maintainer-facing details, including the smoke checklist, evidence template, and gating rules, live in [`docs/maintaining.md`](./docs/maintaining.md). Keep the generated evidence file with release notes or SDK-widening PRs.
 
-Future SDK lines (`0.75.x` and later) are gated, not part of the current peer range. Try them explicitly with:
+Future SDK lines (`0.80.x` and later) are gated. Try them explicitly with:
 
 ```bash
 npm run compat:sdk-matrix:future
 ```
 
-Do not widen support until both the future matrix and the runtime smoke pass, including the no-builtin-tools gate.
+Do not change compatibility claims until both the future matrix and the runtime smoke pass, including the no-builtin-tools gate.
 
 ## How it works
 
-`pi-yaml-hooks` discovers at most one global root config and one project root config. Project hooks and project-root imports load only when the repo or worktree anchor is trusted. Global-root imports require `PI_YAML_HOOKS_ALLOW_GLOBAL_IMPORTS=1`, package imports require `PI_YAML_HOOKS_ALLOW_PACKAGE_IMPORTS=1`, and project imports outside the trust anchor require `PI_YAML_HOOKS_ALLOW_PROJECT_IMPORTS_OUTSIDE_TRUST_ANCHOR=1`. The project root is repo/worktree-aware, not exact-cwd-only.
+`pi-yaml-hooks` discovers at most one global root config and one project root config. Project hooks and project-root imports load only when the repo or worktree anchor is trusted by pi-yaml-hooks (`/hooks-trust`, `trusted-projects.json`, or `PI_YAML_HOOKS_TRUST_PROJECT=1`). This hook trust is separate from Pi's project package trust and is not activated by Pi project trust alone. Global-root imports require `PI_YAML_HOOKS_ALLOW_GLOBAL_IMPORTS=1`, package imports require `PI_YAML_HOOKS_ALLOW_PACKAGE_IMPORTS=1`, and project imports outside the trust anchor require `PI_YAML_HOOKS_ALLOW_PROJECT_IMPORTS_OUTSIDE_TRUST_ANCHOR=1`. The project root is repo/worktree-aware, not exact-cwd-only.
 
 When an event matches, `pi-yaml-hooks` evaluates conditions and runs the configured actions. `bash` actions receive hook context JSON on stdin plus injected `PI_*` environment variables such as `PI_PROJECT_DIR`, `PI_WORKTREE_DIR`, `PI_SESSION_ID`, and `PI_GIT_COMMON_DIR`. At agent start, the extension also appends a short hook-awareness note to the system prompt so PI has the current hook and trust context while it works.
 
@@ -124,9 +124,9 @@ When an event matches, `pi-yaml-hooks` evaluates conditions and runs the configu
 |---|---|
 | `bash` | Runs a shell command with injected context |
 | `tool` | Sends a follow-up prompt into the current PI session |
-| `notify` | Shows a PI notification when a UI surface exists |
-| `confirm` | Shows a confirmation dialog before a tool runs |
-| `setStatus` | Sets a PI status-bar entry keyed to the hook |
+| `notify` | Shows a PI notification when `ctx.hasUI` and the UI method exist, including RPC UI contexts in Pi 0.79+ |
+| `confirm` | Shows a confirmation dialog before a tool runs when UI exists; headless/no-UI contexts fail closed |
+| `setStatus` | Sets a PI status-bar/status entry keyed to the hook when the UI method exists |
 
 ### Slash commands
 
@@ -140,7 +140,7 @@ When an event matches, `pi-yaml-hooks` evaluates conditions and runs the configu
 
 `/hooks-status`, `/hooks-validate`, and hook-load validation errors also emit structured in-session diagnostics when PI supports custom messages.
 
-PI exposes `ctx.ui.addAutocompleteProvider` on the supported Pi UI line, so `pi-yaml-hooks` layers guarded `/hooks` autocomplete into the editor. Suggestions include the command names plus contextual hook IDs, event names, config paths, and log-tail options where useful. Hook IDs are loaded lazily and memoized by hook-snapshot signature, not fixed at extension registration time.
+PI exposes `ctx.ui.addAutocompleteProvider` in the TUI editor, so `pi-yaml-hooks` layers guarded `/hooks` autocomplete only when `ctx.mode` is `"tui"` (or absent on older SDKs) and the method exists. Suggestions include the command names plus contextual hook IDs, event names, config paths, and log-tail options where useful. Hook IDs are loaded lazily and memoized by hook-snapshot signature, not fixed at extension registration time.
 
 ## Important limitations
 
