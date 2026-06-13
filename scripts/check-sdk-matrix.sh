@@ -113,7 +113,7 @@ For each SDK spec, the script will:
   5. run npm run test:internal
   6. delete the temporary copy
 
-Future gate: pass --include-future to try 0.80.x without changing the package peer metadata.
+Future gate: pass --include-future to try 0.80.x without changing compatibility claims or package metadata.
 
 P2-9 note: the matrix tests include src/pi/adapter.test.ts, which pins known
 SDK-emitted "stale session-bound" error messages against
