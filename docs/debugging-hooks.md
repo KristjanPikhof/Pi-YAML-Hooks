@@ -16,7 +16,7 @@ Even without debug logging, hook execution failures and adapter dispatch failure
 - `/hooks-validate`
 - hook-load validation problems detected while loading a config
 
-These appear inline in the session when PI supports custom messages. In print/RPC or other non-rendered contexts, the same message content still degrades to plain text plus the existing logs.
+These appear inline in the session when PI supports custom messages. In no-UI or other non-rendered contexts, the same message content still degrades to plain text plus the existing logs; RPC mode in Pi 0.79+ may still expose UI depending on the host.
 
 ## Log file
 
