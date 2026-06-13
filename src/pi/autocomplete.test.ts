@@ -143,6 +143,17 @@ const cases: Case[] = [
       }),
   },
   {
+    name: "skips TUI-only autocomplete registration in RPC mode even when UI exists",
+    run: async () =>
+      await withSandbox(async (projectDir) => {
+        const ctx = makeContext({ projectDir, hasUI: true, expose: true, mode: "rpc" })
+        registerHookAutocomplete(ctx as never)
+        return ctx.factories.length === 0
+          ? { ok: true }
+          : { ok: false, detail: `factories=${ctx.factories.length}` }
+      }),
+  },
+  {
     name: "registers exactly one factory and is idempotent",
     run: async () =>
       await withSandbox(async (projectDir) => {
