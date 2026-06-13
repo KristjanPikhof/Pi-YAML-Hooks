@@ -1,110 +1,101 @@
 # AGENTS.md
 
-Contract for agents editing `pi-yaml-hooks`. Facts only; tutorials in `docs/`.
+Agent contract for `pi-yaml-hooks`. Facts only; tutorials live in `docs/`. Keep this file compact and implementation-oriented.
 
-## SDK peer
+## Facts
 
-- `@earendil-works/pi-coding-agent` + `@earendil-works/pi-tui` are Pi host peers (`*`) and dev-tested at `0.79.3`; compatibility matrix still covers legacy `0.74.0`. Never add direct `@mariozechner/*` host dependencies; transitive `@mariozechner/clipboard` entries may appear under Pi SDK packages in `package-lock.json`.
-- Node `>=22.19.0`; macOS/Linux only (win32 guarded in `src/pi/register-adapter.ts`).
+- Runtime: `pi-yaml-hooks` PI extension. Type-only: `pi-yaml-hooks/types` re-exports `HookConfig`, `HookEvent`, `BashHookContext`, `SessionDeletedReason`; smoke: `src/public-types-smoke.test.ts`.
+- Node `>=22.19.0`; macOS/Linux only (`src/pi/register-adapter.ts` guards win32).
+- Pi host peers: `@earendil-works/pi-coding-agent` + `@earendil-works/pi-tui` as `*`; dev-tested at `0.79.3`; matrix still covers `0.74.0`.
+- Never add direct `@mariozechner/*` host deps; transitive `@mariozechner/clipboard` may appear under Pi SDK packages in `package-lock.json`.
+- `package-lock.json` is canonical; do not add `bun.lock`.
 
 ## Layout
 
-| Path | Purpose |
+| Path | Notes |
 |---|---|
-| `src/index.ts` | PI default export; wires adapter + commands + autocomplete + diagnostics + prompt |
-| `src/core/` | Host-agnostic. `runtime.ts`/`load-hooks.ts` hold state; impl in subdirs |
-| `src/core/hooks/` | `yaml-envelope`, `schema`, `composition`, `imports`, `snapshot-cache` |
-| `src/core/runtime/` | `dispatch`, `actions`, `async-queue`, `recursion-guard`, `path-filter` |
-| `src/pi/` | `adapter` (compat barrel), `host-adapter`, `register-adapter`, `session-lifecycle`, `runtime-registry`, `event-mappers`, `commands`, `autocomplete`, `diagnostics`, `prompt-support`, `user-bash`, `session-lineage`, `unsupported` |
-| `extensions/index.ts` | Published `pi.extensions` entrypoint; PI loads via jiti. Re-exports `extensions/pi-yaml-hooks/index.ts` → `src/index.ts`. Also the symlink target for local-dev installs |
-| `examples/` | Copyable patterns; not product |
-| `scripts/run-tests.mjs` | Walks `dist/**/*.test.js`; spawns each sequentially under `node --test` |
-| `scripts/check-sdk-matrix.sh` | SDK compat runner |
-| `scripts/smoke/pi-runtime-smoke.sh` | Manual runtime smoke |
-| `dist/` | Build output |
+| `src/index.ts` | PI extension entry; registers PI policy, adapter, commands, autocomplete, diagnostics, prompt support. |
+| `src/core/` | Host-agnostic. `runtime.ts` owns per-runtime state; `load-hooks.ts` is a barrel; hook loading is in `core/hooks/*`; dispatch/actions/path/async are in `core/runtime/*`. Never import `src/pi/*` or PI SDK types from core. |
+| `src/pi/` | PI adapter, register/lifecycle/registry, event mappers, commands, autocomplete, diagnostics, prompt, `user_bash`, session lineage, unsupported policy. `adapter.ts` is a barrel. |
+| `extensions/` | TS entrypoints loaded by PI/jiti; `extensions/index.ts` -> `extensions/pi-yaml-hooks/index.ts` -> `src/index.ts`; local-dev symlink target. |
+| `examples/` | Shipped: `pre-tool-developer-guards`, `post-tool-developer-feedback`, `README.md`. Repo-only: `atomic-commit-snapshot-worker`, snapshot helpers; do not call them built-ins. |
+| `scripts/` | Test runner, SDK matrix, tail-log helper, manual PI smoke helpers. |
+| `dist/` | Generated; do not edit. `build`/`build:publish` regenerate extension stubs. |
 
-## Public surface
+## Runtime contracts
 
-- Runtime: `pi-yaml-hooks` (default = PI extension).
-- Type-only: `pi-yaml-hooks/types` re-exports `HookConfig`, `HookEvent`, `BashHookContext`, `SessionDeletedReason`. No runtime resolver. Smoke at `src/public-types-smoke.test.ts`.
+- Events: `tool.before.*`, `tool.after.*`, `file.changed`, `session.{created,idle,deleted}`.
+- Actions: `bash`, `tool`, `notify`, `confirm`, `setStatus`.
+- Commands: `/hooks-{status,validate,trust,reload,tail-log}`.
+- Diagnostics use PI custom messages when available; hook-awareness prompt injection runs at agent start.
+- `command:` actions are rejected at load.
+- `tool:` injects a follow-up prompt into the current PI session; it does not imperatively execute tools or target other sessions.
+- `runIn: main` is rejected for non-`bash`; for bash it does not change process/session context. Prefer `scope` for main-vs-child routing.
+- `action: stop` only affects `tool.before.*`; `async: true` + `action: stop` is rejected at parse time and runtime warns once per source/runtime.
+- `session.deleted.reason` is an optional opaque string; known PI values include `quit|reload|new|resume|fork`.
+- UI actions (`notify`, `confirm`, `setStatus`) gate on `ctx.hasUI` + the UI method. RPC may expose UI in Pi 0.79+; no-UI/headless degrades and `confirm` fails closed.
+- `/hooks` autocomplete is TUI-only: register only when `ctx.mode === "tui"` or older SDKs omit `mode`, and `ctx.ui.addAutocompleteProvider` exists.
+- `user_bash` opt-in: `PI_YAML_HOOKS_ENABLE_USER_BASH=1`.
+- `tool_args` are redacted by `sanitizeToolArgsForSerialization` before bash stdin (`src/core/runtime/actions.ts`).
 
-## Built-ins
+## Paths and conditions
 
-- Events: `tool.before.*`, `tool.after.*`, `file.changed`, `session.{created,idle,deleted}`
-- Actions: `bash`, `tool`, `notify`, `confirm`, `setStatus`
-- Commands: `/hooks-{status,validate,trust,reload,tail-log}`
-- Structured diagnostics via PI custom messages; hook-awareness prompt injection at agent start; opt-in `user_bash` via `tool.before.bash`
+- `matchesCodeFiles`: legacy single-file events.
+- `matchesAnyPath` / `matchesAllPaths`: only on `file.changed`, `session.idle`, and `tool.after.*` when paths exist.
+- Path filters never match pathless/non-mutating tool events.
+- Mutation paths come from `src/core/tool-paths.ts`: `write|edit|multiedit|patch|apply_patch|bash`; treat unknown tools as pathless.
 
-Path conditions (`src/core/types.ts`):
-- `matchesCodeFiles` — legacy, single-file events
-- `matchesAnyPath` / `matchesAllPaths` — only on `file.changed`, `session.idle`, `tool.after.*`
-- Non-mutating tool events have no paths → path filters never match
+## Config, trust, imports
 
-Examples-only (not product): `examples/atomic-commit-snapshot-worker/`, `/snapshot-*`, `examples/post-tool-developer-feedback/`, `examples/pre-tool-developer-guards/`.
-
-## PI limits
-
-- `command:` actions rejected at load
-- `tool:` injects a follow-up prompt, not imperative execution
-- `runIn: main` rejected for non-`bash`; doesn't change bash process/session context
-- Prefer `scope` for main-vs-child routing
-- `action: stop` only effective on `tool.before.*`. `async: true` + `action: stop` rejected at parse time; runtime warns once per source per runtime instance as safety net
-- `session.deleted` envelope carries `reason` ∈ `quit|reload|new|resume|fork`
-- UI actions (`notify`, `confirm`, `setStatus`) are capability-gated by `ctx.hasUI` + the UI method; RPC may expose UI in Pi 0.79+, while no-UI/headless degrades and `confirm` fails closed
-- `/hooks` autocomplete is TUI-only: register only when `ctx.mode === "tui"` or older SDKs omit `mode`, and `ctx.ui.addAutocompleteProvider` exists
-- `user_bash` opt-in via `PI_YAML_HOOKS_ENABLE_USER_BASH=1`
-- `tool_args` redacted via `sanitizeToolArgsForSerialization` before bash stdin (`src/core/runtime/actions.ts`)
-
-## Config + trust
-
-- One global root + one project root
-- Project discovery repo/worktree-aware, not exact-cwd
-- Trust against repo/worktree anchor; project hooks and project-root imports ignored until trusted
-- Global-root imports require `PI_YAML_HOOKS_ALLOW_GLOBAL_IMPORTS=1`
-- Package imports require `PI_YAML_HOOKS_ALLOW_PACKAGE_IMPORTS=1`
-- Project imports must canonicalize inside anchor; bypass via `PI_YAML_HOOKS_ALLOW_PROJECT_IMPORTS_OUTSIDE_TRUST_ANCHOR=1`
-- Shortcuts: `/hooks-trust` or `PI_YAML_HOOKS_TRUST_PROJECT=1`
+- At most one global root config + one project root config.
+- Project discovery is repo/worktree-aware, not exact-cwd-only.
+- Hook trust is separate from Pi package/project trust; project hooks/imports are ignored until the repo/worktree anchor is trusted by pi-yaml-hooks.
+- Persistent trust: `~/.pi/agent/trusted-projects.json`; entries must be absolute canonical repo/worktree anchors.
+- Shortcuts: `/hooks-trust` or `PI_YAML_HOOKS_TRUST_PROJECT=1`.
+- Global-root imports need `PI_YAML_HOOKS_ALLOW_GLOBAL_IMPORTS=1`; package imports need `PI_YAML_HOOKS_ALLOW_PACKAGE_IMPORTS=1`.
+- Project imports must canonicalize inside the trusted anchor; bypass with `PI_YAML_HOOKS_ALLOW_PROJECT_IMPORTS_OUTSIDE_TRUST_ANCHOR=1`.
+- `HookPolicy` (`src/core/types.ts`) plugs host diagnostics into the loader; core ships `NOOP_POLICY`; `src/pi/unsupported.ts` registers the PI policy via `setActiveHookPolicy`.
 
 ## Caps
 
-YAML 1 MiB · import/canonicalize depth 32 · snapshot LRU 16 · runtime registry per-cwd LRU 8 · recursion-guard depth 32 · per-pattern glob LRU 256 · pending tool-calls 1000 (TTL 5 min, FIFO) · `tool_args` 64 KiB · session lineage cache 64 / depth 64 / header 64 KB
+Key caps: YAML 1 MiB; import/canonicalize depth 32; snapshot LRU 16; runtime registry per-cwd LRU 8; recursion depth 32; per-pattern glob LRU 256; pending tool calls 1000 with 5 min TTL/FIFO; `tool_args` 64 KiB; session lineage cache 64 / depth 64 / header 64 KiB. Check constants/docs when changing limits.
 
-## Host abstraction
-
-`HookPolicy` (`src/core/types.ts`) plugs host-specific diagnostics into the loader. Core ships `NOOP_POLICY`; `src/pi/unsupported.ts` registers the PI policy via `setActiveHookPolicy`. Never import `src/pi/*` from `src/core/*`.
-
-## Env vars
-
-Canonical: [`docs/setup.md#environment-variables`](docs/setup.md#environment-variables). Do not duplicate.
-
-## Doc rules
-
-- Built-ins ≠ examples; never blur
-- `action: stop`, not `behavior: stop`
-- Mark opt-in features explicitly
-- Name the trust anchor (cwd / project root / repo-worktree anchor)
-- `tool:` doc must say PI receives a follow-up prompt
-
-## Lockfile
-
-`package-lock.json` canonical; no `bun.lock`. `npm install` to update.
-
-## Verification
+## Commands
 
 | Command | Use |
 |---|---|
-| `npm run typecheck` | After any TS change |
-| `npm run build` | Before running `dist/**/*.test.js` |
-| `npm run test:internal` | Builds, then `node scripts/run-tests.mjs`. Known flake: `timed out bash hooks kill descendant background processes on POSIX` |
-| `npm run compat:sdk-matrix[:dry-run]` | SDK compatibility matrix in temp clone; runs typecheck + internal tests |
-| `npm run compat:sdk-matrix:future` | Advisory next-minor probe; doesn't change compatibility claims |
-| `scripts/smoke/pi-runtime-smoke.sh` | Runtime smoke; keep evidence on SDK-widening PRs |
+| `npm install` | Install/update deps. |
+| `npm run typecheck` | After TS changes. |
+| `npm run build` | Compile and generate `dist/extensions/*`; run before direct `dist/**/*.test.js`. |
+| `npm run test:internal` | Full internal suite: build + `node scripts/run-tests.mjs`. Known flake: `timed out bash hooks kill descendant background processes on POSIX`. |
+| `npm test` | Consumer no-op; not validation. |
+| `npm run compat:sdk-matrix` | Temp-copy matrix for SDK `0.74.0` + `0.79.3`; runs typecheck + internal tests. |
+| `npm run compat:sdk-matrix:dry-run` | Print matrix workflow only. |
+| `npm run compat:sdk-matrix:future` | Advisory `0.80.x` probe; does not change claims. |
+| `bash scripts/check-sdk-matrix.sh --versions "0.74.0 0.79.3"` | Override SDK specs. |
+| `scripts/smoke/pi-runtime-smoke.sh` | Prepares temp smoke project/evidence and prints manual `pi -e <checkout>/extensions/index.ts`; interactive smoke is still manual. |
 
-`npm test` is a consumer no-op; use `test:internal`.
+No lint script exists; validate with typecheck/tests/matrix as needed.
 
-## Quirks
+## Generated output and publishing
 
-- Atomic-commit hook auto-commits per Edit/Write; one commit per edit
-- `prepack` runs `build:publish` (clean rebuild via `tsconfig.publish.json`)
-- `scripts/tail-hook-log.sh` backs `/hooks-tail-log`
-- `load-hooks.ts` + `pi/adapter.ts` are re-export barrels; impl in `core/hooks/` and `pi/{host-adapter,register-adapter,session-lifecycle,runtime-registry,event-mappers}.ts`. `runtime.ts` is factory + per-runtime state; dispatch lives in `core/runtime/`.
+- `dist/` is generated; never hand-edit.
+- `prepack` runs clean `build:publish` via `tsconfig.publish.json`.
+- Package contents follow `package.json#files`; update it when adding shipped examples/scripts.
+- `scripts/tail-hook-log.sh` backs `/hooks-tail-log` and is packaged.
+
+## Docs
+
+- Env vars canonical source: [`docs/setup.md#environment-variables`](docs/setup.md#environment-variables). Do not duplicate env tables here.
+- Built-ins ≠ examples.
+- Say `action: stop`, not `behavior: stop`.
+- Mark opt-in features explicitly.
+- Name trust anchors: cwd, project root, or repo/worktree anchor.
+- `tool:` docs must say PI receives a follow-up prompt.
+- Keep runtime smoke and SDK-widening evidence with release notes/SDK-widening PRs.
+
+## Pitfalls
+
+- Local atomic-commit hook may auto-commit per Edit/Write; expect one commit per edit in this environment.
+- Future SDK pass is advisory; widening support also needs runtime smoke evidence for slash commands, custom messages, RPC/TUI UI actions, TUI autocomplete, lifecycle hooks, and no-builtin-tools behavior.
+- Future matrix may fail on stale session-bound regex wording; inspect `scripts/check-sdk-matrix.sh` before broadening claims.
