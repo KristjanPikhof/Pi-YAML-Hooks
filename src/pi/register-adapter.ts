@@ -74,14 +74,14 @@ export function registerAdapter(pi: ExtensionAPI): void {
   }
 
   // P1 #8 fix: matchesAnyPath / matchesAllPaths conditions use node:path
-  // matchesGlob, which exists from Node 22.0.0. Older Node throws TypeError
+  // matchesGlob, and Pi >=0.79 requires Node >=22.19.0. Older Node throws TypeError
   // inside shouldRunHook's catch block, silently making path-conditioned
   // hooks never match. Fail loudly at startup instead.
   if (typeof (path as { matchesGlob?: unknown }).matchesGlob !== "function") {
     // eslint-disable-next-line no-console
     console.error(
       `[pi-yaml-hooks] node:path.matchesGlob is unavailable on this Node runtime (${process.version}). ` +
-        `pi-yaml-hooks requires Node >= 22.0.0 for path conditions to work. Extension is a no-op.`,
+        `pi-yaml-hooks requires Node >= 22.19.0 for current Pi compatibility and path conditions to work. Extension is a no-op.`,
     );
     logger.error("adapter_disabled", "node:path.matchesGlob is unavailable; extension registered as a no-op.", {
       details: { nodeVersion: process.version },
