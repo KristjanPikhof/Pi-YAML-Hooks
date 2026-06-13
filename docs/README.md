@@ -16,7 +16,7 @@ Hook bash, follow-up prompts, and PI UI actions onto tool calls and session even
 - Run `bash` before or after tool calls
 - Block pre-tool calls from `bash` hooks with exit code `2`
 - Ask for user confirmation before a tool runs
-- Show UI notifications and status-bar entries when PI has a UI surface
+- Show UI notifications and status entries when PI exposes UI (`ctx.hasUI`), including RPC UI in Pi 0.79+
 - Send follow-up prompts back into the current PI session with `tool:` actions
 - React to session lifecycle events: `session.created`, `session.idle`, and `session.deleted`
 - React to `file.changed`, which PI synthesizes after recognized file mutations, including `cp`/`git cp`, `mv`/`git mv`, `rm`/`git rm`, `touch`, and `mkdir`
@@ -31,9 +31,9 @@ These are the details that matter most when authoring hooks:
 
 - The documented support range is `@earendil-works/pi-coding-agent 0.79.x`.
 - Only one global root config and one project root config are discovered.
-- Project-root imports require project trust. Global-root imports require `PI_YAML_HOOKS_ALLOW_GLOBAL_IMPORTS=1`; package imports require `PI_YAML_HOOKS_ALLOW_PACKAGE_IMPORTS=1`; project imports outside the trust anchor require `PI_YAML_HOOKS_ALLOW_PROJECT_IMPORTS_OUTSIDE_TRUST_ANCHOR=1`.
+- Project-root imports require pi-yaml-hooks project-hook trust. Pi's own project/package trust is separate and does not activate project hooks here. Global-root imports require `PI_YAML_HOOKS_ALLOW_GLOBAL_IMPORTS=1`; package imports require `PI_YAML_HOOKS_ALLOW_PACKAGE_IMPORTS=1`; project imports outside the trust anchor require `PI_YAML_HOOKS_ALLOW_PROJECT_IMPORTS_OUTSIDE_TRUST_ANCHOR=1`.
 - Later files stay compatible with the same explicit `override:` / `disable:` behavior by `id`.
-- Project hook files are ignored until the repo or worktree trust anchor is trusted.
+- Project hook files are ignored until the repo or worktree trust anchor is trusted through `/hooks-trust`, `trusted-projects.json`, or `PI_YAML_HOOKS_TRUST_PROJECT=1`.
 - `command:` actions are rejected at load time on PI.
 - `tool:` does not imperatively invoke a tool; it sends a follow-up prompt to the current session.
 - `confirm:` blocks only on `tool.before.*` hooks.
