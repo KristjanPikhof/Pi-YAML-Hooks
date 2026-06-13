@@ -425,9 +425,9 @@ const runtimeCases: RuntimeCase[] = [
           setStatus: (hookId: string, text?: string) => calls.push(`setStatus:${hookId}:${text ?? ""}`),
         },
       } as never))
-      const notify = host.notify?.("hi", "warning")
+      const notify = await Promise.resolve(host.notify?.("hi", "warning"))
       const approved = await host.confirm?.({ title: "Approve", message: "continue?" })
-      const status = host.setStatus?.("hook#1", "busy")
+      const status = await Promise.resolve(host.setStatus?.("hook#1", "busy"))
       return notify && typeof notify === "object" && notify.status === "accepted" &&
           approved === true && status && typeof status === "object" && status.status === "accepted" &&
           calls.join("|") === "notify:hi|confirm:continue?|setStatus:hook#1:busy"
