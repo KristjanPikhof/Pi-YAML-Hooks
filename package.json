@@ -87,12 +87,12 @@
     "@earendil-works/pi-tui": "*"
   },
   "dependencies": {
-    "yaml": "^2.8.2"
+    "yaml": "^2.9.0"
   },
   "devDependencies": {
     "@earendil-works/pi-coding-agent": "^0.79.3",
     "@earendil-works/pi-tui": "^0.79.3",
-    "@types/node": "^24.0.0",
+    "@types/node": "^22.19.21",
     "typescript": "^5.9.3"
   }
 }
