@@ -21,7 +21,7 @@ Default matrix:
 Options:
   --dry-run         Print the matrix and commands without creating temp installs.
   --include-future Include the gated 0.80.x future target. This is advisory only and
-                   does not change package peer support.
+                   does not change compatibility claims or package metadata.
   --versions        Override SDK specs, for example: --versions "0.74.0 0.79.3".
   -h, --help        Show this help.
 USAGE

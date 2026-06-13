@@ -4,8 +4,8 @@ Contract for agents editing `pi-yaml-hooks`. Facts only; tutorials in `docs/`.
 
 ## SDK peer
 
-- `@earendil-works/pi-coding-agent` + `@earendil-works/pi-tui` `^0.74.0`. Never reintroduce `@mariozechner/*`.
-- Node `>=22.0.0`; macOS/Linux only (win32 guarded in `src/pi/register-adapter.ts`).
+- `@earendil-works/pi-coding-agent` + `@earendil-works/pi-tui` are Pi host peers (`*`) and dev-tested at `0.79.3`; compatibility matrix still covers legacy `0.74.0`. Never reintroduce `@mariozechner/*`.
+- Node `>=22.19.0`; macOS/Linux only (win32 guarded in `src/pi/register-adapter.ts`).
 
 ## Layout
 
@@ -94,8 +94,8 @@ Canonical: [`docs/setup.md#environment-variables`](docs/setup.md#environment-var
 | `npm run typecheck` | After any TS change |
 | `npm run build` | Before running `dist/**/*.test.js` |
 | `npm run test:internal` | Builds, then `node scripts/run-tests.mjs`. Known flake: `timed out bash hooks kill descendant background processes on POSIX` |
-| `npm run compat:sdk-matrix[:dry-run]` | Peer-range check in temp clone |
-| `npm run compat:sdk-matrix:future` | Advisory next-minor probe; doesn't widen peer |
+| `npm run compat:sdk-matrix[:dry-run]` | SDK compatibility matrix in temp clone; runs typecheck + internal tests |
+| `npm run compat:sdk-matrix:future` | Advisory next-minor probe; doesn't change compatibility claims |
 | `scripts/smoke/pi-runtime-smoke.sh` | Runtime smoke; keep evidence on SDK-widening PRs |
 
 `npm test` is a consumer no-op; use `test:internal`.
