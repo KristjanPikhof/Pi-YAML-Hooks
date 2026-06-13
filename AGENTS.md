@@ -4,7 +4,7 @@ Contract for agents editing `pi-yaml-hooks`. Facts only; tutorials in `docs/`.
 
 ## SDK peer
 
-- `@earendil-works/pi-coding-agent` + `@earendil-works/pi-tui` are Pi host peers (`*`) and dev-tested at `0.79.3`; compatibility matrix still covers legacy `0.74.0`. Never reintroduce `@mariozechner/*`.
+- `@earendil-works/pi-coding-agent` + `@earendil-works/pi-tui` are Pi host peers (`*`) and dev-tested at `0.79.3`; compatibility matrix still covers legacy `0.74.0`. Never add direct `@mariozechner/*` host dependencies; transitive `@mariozechner/clipboard` entries may appear under Pi SDK packages in `package-lock.json`.
 - Node `>=22.19.0`; macOS/Linux only (win32 guarded in `src/pi/register-adapter.ts`).
 
 ## Layout
@@ -50,6 +50,8 @@ Examples-only (not product): `examples/atomic-commit-snapshot-worker/`, `/snapsh
 - Prefer `scope` for main-vs-child routing
 - `action: stop` only effective on `tool.before.*`. `async: true` + `action: stop` rejected at parse time; runtime warns once per source per runtime instance as safety net
 - `session.deleted` envelope carries `reason` ∈ `quit|reload|new|resume|fork`
+- UI actions (`notify`, `confirm`, `setStatus`) are capability-gated by `ctx.hasUI` + the UI method; RPC may expose UI in Pi 0.79+, while no-UI/headless degrades and `confirm` fails closed
+- `/hooks` autocomplete is TUI-only: register only when `ctx.mode === "tui"` or older SDKs omit `mode`, and `ctx.ui.addAutocompleteProvider` exists
 - `user_bash` opt-in via `PI_YAML_HOOKS_ENABLE_USER_BASH=1`
 - `tool_args` redacted via `sanitizeToolArgsForSerialization` before bash stdin (`src/core/runtime/actions.ts`)
 
