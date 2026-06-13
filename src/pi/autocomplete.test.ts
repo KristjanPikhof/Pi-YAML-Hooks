@@ -58,15 +58,17 @@ function createInnerProviderWithItem(item: AutocompleteItem): AutocompleteProvid
 interface FakeContext {
   readonly cwd: string
   readonly hasUI: boolean
+  readonly mode?: string
   ui?: { addAutocompleteProvider?: (factory: Factory) => void }
   factories: Factory[]
 }
 
-function makeContext(opts: { projectDir: string; hasUI: boolean; expose: boolean }): FakeContext {
+function makeContext(opts: { projectDir: string; hasUI: boolean; expose: boolean; mode?: string }): FakeContext {
   const factories: Factory[] = []
   return {
     cwd: opts.projectDir,
     hasUI: opts.hasUI,
+    ...(opts.mode !== undefined ? { mode: opts.mode } : {}),
     factories,
     ui: opts.hasUI
       ? {

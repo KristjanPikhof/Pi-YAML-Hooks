@@ -69,7 +69,7 @@ type AutocompleteProviderFactory = (current: HookAutocompleteProvider) => HookAu
 let autocompleteRegistered = false
 
 export function registerHookAutocomplete(ctx: ExtensionContext): void {
-  if (autocompleteRegistered || !ctx.hasUI) {
+  if (autocompleteRegistered || !ctx.hasUI || !isTuiContext(ctx)) {
     return
   }
 
@@ -91,6 +91,11 @@ export function registerHookAutocomplete(ctx: ExtensionContext): void {
 export function resetHookAutocompleteForTests(): void {
   autocompleteRegistered = false
   cachedAutocompleteState = null
+}
+
+function isTuiContext(ctx: ExtensionContext): boolean {
+  const mode = (ctx as ExtensionContext & { mode?: unknown }).mode
+  return mode === undefined || mode === "tui"
 }
 
 function getAddAutocompleteProvider(ui: unknown): ((factory: AutocompleteProviderFactory) => void) | undefined {
