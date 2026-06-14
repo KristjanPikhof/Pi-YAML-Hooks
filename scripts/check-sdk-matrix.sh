@@ -4,7 +4,7 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 DRY_RUN=0
 INCLUDE_FUTURE=0
-SDK_SPECS=("0.74.0")
+SDK_SPECS=("0.74.0" "0.79.3")
 
 usage() {
   cat <<'USAGE'
@@ -16,12 +16,13 @@ node_modules are not modified; each SDK spec is installed in a throwaway copy.
 
 Default matrix:
   - @earendil-works/pi-coding-agent@0.74.0 and @earendil-works/pi-tui@0.74.0
+  - @earendil-works/pi-coding-agent@0.79.3 and @earendil-works/pi-tui@0.79.3
 
 Options:
   --dry-run         Print the matrix and commands without creating temp installs.
-  --include-future Include the gated 0.75.x future target. This is advisory only and
-                   does not change package peer support.
-  --versions        Override SDK specs, for example: --versions "0.74.0 0.75.x".
+  --include-future Include the gated 0.80.x future target. This is advisory only and
+                   does not change compatibility claims or package metadata.
+  --versions        Override SDK specs, for example: --versions "0.74.0 0.79.3".
   -h, --help        Show this help.
 USAGE
 }
@@ -60,7 +61,7 @@ while [[ $# -gt 0 ]]; do
 done
 
 if [[ "$INCLUDE_FUTURE" -eq 1 ]]; then
-  SDK_SPECS+=("0.75.x")
+  SDK_SPECS+=("0.80.x")
 fi
 
 # Track every temp dir so a single cleanup_all wipes them on EXIT/INT/TERM.
@@ -109,10 +110,10 @@ For each SDK spec, the script will:
   2. run npm install in that copy
   3. install @earendil-works/pi-coding-agent@<spec> and @earendil-works/pi-tui@<spec> in that copy only
   4. run npm run typecheck
-  5. run npm test
+  5. run npm run test:internal
   6. delete the temporary copy
 
-Future gate: pass --include-future to try 0.75.x without widening package peerDependencies.
+Future gate: pass --include-future to try 0.80.x without changing compatibility claims or package metadata.
 
 P2-9 note: the matrix tests include src/pi/adapter.test.ts, which pins known
 SDK-emitted "stale session-bound" error messages against
@@ -131,7 +132,7 @@ if [[ "$DRY_RUN" -eq 1 ]]; then
     echo "[dry-run] npm install --no-audit --no-fund"
     echo "[dry-run] npm install --no-audit --no-fund --no-save @earendil-works/pi-coding-agent@$spec @earendil-works/pi-tui@$spec"
     echo "[dry-run] npm run typecheck"
-    echo "[dry-run] npm test"
+    echo "[dry-run] npm run test:internal"
   done
   exit 0
 fi
@@ -151,7 +152,7 @@ for spec in "${SDK_SPECS[@]}"; do
       "@earendil-works/pi-coding-agent@$spec" \
       "@earendil-works/pi-tui@$spec"
     npm run typecheck
-    npm test
+    npm run test:internal
   )
 
   # Drop the just-finished dir from the array so cleanup_all does not revisit

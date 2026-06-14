@@ -5,7 +5,7 @@
   "author": "Kristjan Pikhof <kristjan.pikhof@gmail.com> (https://github.com/KristjanPikhof)",
   "type": "module",
   "engines": {
-    "node": ">=22.0.0"
+    "node": ">=22.19.0"
   },
   "main": "./dist/index.js",
   "exports": {
@@ -83,14 +83,16 @@
   },
   "license": "MIT",
   "peerDependencies": {
-    "@earendil-works/pi-coding-agent": "^0.74.0",
-    "@earendil-works/pi-tui": "^0.74.0"
+    "@earendil-works/pi-coding-agent": "*",
+    "@earendil-works/pi-tui": "*"
   },
   "dependencies": {
-    "yaml": "^2.8.2"
+    "yaml": "^2.9.0"
   },
   "devDependencies": {
-    "@types/node": "^24.0.0",
+    "@earendil-works/pi-coding-agent": "^0.79.3",
+    "@earendil-works/pi-tui": "^0.79.3",
+    "@types/node": "^22.19.21",
     "typescript": "^5.9.3"
   }
 }

@@ -58,15 +58,17 @@ function createInnerProviderWithItem(item: AutocompleteItem): AutocompleteProvid
 interface FakeContext {
   readonly cwd: string
   readonly hasUI: boolean
+  readonly mode?: string
   ui?: { addAutocompleteProvider?: (factory: Factory) => void }
   factories: Factory[]
 }
 
-function makeContext(opts: { projectDir: string; hasUI: boolean; expose: boolean }): FakeContext {
+function makeContext(opts: { projectDir: string; hasUI: boolean; expose: boolean; mode?: string }): FakeContext {
   const factories: Factory[] = []
   return {
     cwd: opts.projectDir,
     hasUI: opts.hasUI,
+    ...(opts.mode !== undefined ? { mode: opts.mode } : {}),
     factories,
     ui: opts.hasUI
       ? {
@@ -134,6 +136,17 @@ const cases: Case[] = [
     run: async () =>
       await withSandbox(async (projectDir) => {
         const ctx = makeContext({ projectDir, hasUI: true, expose: false })
+        registerHookAutocomplete(ctx as never)
+        return ctx.factories.length === 0
+          ? { ok: true }
+          : { ok: false, detail: `factories=${ctx.factories.length}` }
+      }),
+  },
+  {
+    name: "skips TUI-only autocomplete registration in RPC mode even when UI exists",
+    run: async () =>
+      await withSandbox(async (projectDir) => {
+        const ctx = makeContext({ projectDir, hasUI: true, expose: true, mode: "rpc" })
         registerHookAutocomplete(ctx as never)
         return ctx.factories.length === 0
           ? { ok: true }

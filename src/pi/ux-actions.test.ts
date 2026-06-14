@@ -409,6 +409,33 @@ const runtimeCases: RuntimeCase[] = [
     },
   },
   {
+    name: "adapter UI actions use RPC UI when ctx.hasUI and UI methods exist",
+    run: async () => {
+      const calls: string[] = []
+      const pi = { sendUserMessage: () => {} } as unknown as Parameters<typeof createHostAdapter>[0]
+      const host = createHostAdapter(pi, "/tmp", () => undefined, () => ({
+        mode: "rpc",
+        hasUI: true,
+        ui: {
+          notify: (text: string) => calls.push(`notify:${text}`),
+          confirm: async (_title: string, message: string) => {
+            calls.push(`confirm:${message}`)
+            return true
+          },
+          setStatus: (hookId: string, text?: string) => calls.push(`setStatus:${hookId}:${text ?? ""}`),
+        },
+      } as never))
+      const notify = await Promise.resolve(host.notify?.("hi", "warning"))
+      const approved = await host.confirm?.({ title: "Approve", message: "continue?" })
+      const status = await Promise.resolve(host.setStatus?.("hook#1", "busy"))
+      return notify && typeof notify === "object" && notify.status === "accepted" &&
+          approved === true && status && typeof status === "object" && status.status === "accepted" &&
+          calls.join("|") === "notify:hi|confirm:continue?|setStatus:hook#1:busy"
+        ? { ok: true }
+        : { ok: false, detail: `notify=${JSON.stringify(notify)}, approved=${String(approved)}, status=${JSON.stringify(status)}, calls=${JSON.stringify(calls)}` }
+    },
+  },
+  {
     // P2-8: sendPrompt now skips sendUserMessage entirely when the live PI
     // session doesn't match the requested target, so the only path that
     // reaches a sendUserMessage failure is when sessions match. Pin that

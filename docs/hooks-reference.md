@@ -40,7 +40,7 @@ Each action entry must define exactly one action key.
 
 ## `/hooks` command autocomplete
 
-On PI versions that expose `ctx.ui.addAutocompleteProvider`, `pi-yaml-hooks` registers a guarded autocomplete provider for the built-in `/hooks-*` commands. The provider is capability-detected at runtime, so older supported PI versions continue to load without this UI feature.
+On PI versions that expose `ctx.ui.addAutocompleteProvider`, `pi-yaml-hooks` registers a guarded autocomplete provider for the built-in `/hooks-*` commands in the TUI editor (`ctx.mode === "tui"`, or older SDKs with no `mode`). The provider is capability-detected at runtime, so RPC/headless contexts and older supported PI versions continue to load without this TUI-only feature.
 
 Autocomplete suggestions are deterministic and intentionally lightweight: command names are static; event names use the supported event list; config paths and the current log path are resolved when the provider builds suggestions. Hook ID suggestions are loaded lazily from the current global/project snapshot and memoized by snapshot signature, so edits to root or imported hook files refresh suggestions after the next snapshot change.
 
@@ -56,7 +56,7 @@ Useful completions include:
 
 At agent start, `pi-yaml-hooks` appends a short hook-awareness note to the system prompt. It summarizes the loaded hook count, current project trust state, and the main PI-specific limitations that matter while authoring or debugging hooks.
 
-This prompt injection is part of the current compatibility surface for the documented peer range `^0.74.0` on the `@earendil-works` scope.
+This prompt injection is part of the current compatibility surface for Pi 0.79 and the package's Pi host peer metadata (`*`) on the `@earendil-works` scope.
 
 Set `PI_YAML_HOOKS_PROMPT_AWARENESS=0` to disable this prompt injection.
 
@@ -313,7 +313,7 @@ Levels:
 - `warning`
 - `error`
 
-On PI, `success` is mapped to `info` because the UI API does not expose a separate success level.
+On PI, `success` is mapped to `info` because the UI API does not expose a separate success level. Notifications run whenever the current context reports `ctx.hasUI` and exposes `ctx.ui.notify`, including RPC UI contexts in Pi 0.79+; no-UI/headless contexts degrade without throwing.
 
 ### `confirm`
 
@@ -330,7 +330,8 @@ Exact behavior:
 - `title` is optional; PI uses `Confirm` when omitted
 - if the user rejects on a `tool.before.*` hook, the tool call is blocked
 - on non-blocking events, rejection does not abort the event and later actions can still run
-- in headless PI, confirm denies by default unless `PI_YAML_HOOKS_CONFIRM_AUTO_APPROVE=1`
+- confirm runs whenever the current context reports `ctx.hasUI` and exposes `ctx.ui.confirm`, including RPC UI contexts in Pi 0.79+
+- in no-UI/headless PI, confirm denies by default unless `PI_YAML_HOOKS_CONFIRM_AUTO_APPROVE=1`
 
 ### `setStatus`
 
@@ -351,7 +352,7 @@ actions:
 
 Exact behavior:
 
-- this updates a PI status-bar slot when a UI surface exists
+- this updates a PI status/status-bar slot when the current context reports `ctx.hasUI` and exposes `ctx.ui.setStatus`, including RPC UI contexts in Pi 0.79+
 - status entries are keyed per hook as `pi-yaml-hooks:<hook-id-or-fallback>@<source-file>`
 - when `id` is present, it contributes to a stable per-hook key without colliding with the same id reused in another file
 - when `id` is absent, pi-yaml-hooks falls back to a deterministic source-location key so hooks in the same file do not collide
@@ -533,10 +534,10 @@ Async hook lanes are bounded: each lane keeps at most `PI_YAML_HOOKS_ASYNC_MAX_P
 
 Use the repeatable runtime checklist in [`maintaining.md`](./maintaining.md) for real PI verification before widening SDK support or changing session, UI, prompt, command, or tool-event behavior. The local harness lives in [`scripts/smoke/`](../scripts/smoke/) and creates an evidence file for future release updates.
 
-For a real PI run in the documented peer range, verify these compatibility-sensitive surfaces:
+For a real PI 0.79-compatible run, verify these compatibility-sensitive surfaces:
 
 - `before_agent_start` appends the hook-awareness note when `PI_YAML_HOOKS_PROMPT_AWARENESS` is not `0`
-- headless mode still mentions degraded UI actions in that prompt note
+- no-UI/headless mode still mentions degraded UI actions in that prompt note, while RPC UI mode can deliver `notify`, `confirm`, and `setStatus` when `ctx.hasUI` is true
 - `/hooks-status`, `/hooks-validate`, and `/hooks-reload` work and emit structured diagnostics when PI supports custom messages
 - `tool.before.bash`, `tool.after.read`, `tool.after.write`, and synthesized `file.changed` events reach smoke hooks
 - `tool:` actions produce a follow-up prompt in the current PI session, not imperative tool execution
@@ -544,7 +545,7 @@ For a real PI run in the documented peer range, verify these compatibility-sensi
 - `/new` triggers lossy cleanup via `session.deleted` and a fresh `session.created`
 - `/resume` and `/fork` do not re-fire `session.created` for an existing session re-entry
 - `/new`, `/resume`, `/fork`, and `/quit` do not double-run `session.deleted` cleanup when PI emits both `session_before_switch` and `session_shutdown`
-- Future PI minor lines (e.g. `0.75.x`) remain gated until `npm run compat:sdk-matrix:future` and the runtime smoke both pass, including the no-builtin-tools check
+- Future PI minor lines (e.g. `0.80.x`) remain gated until `npm run compat:sdk-matrix:future` and the runtime smoke both pass, including the no-builtin-tools check
 
 ## Unsupported and advisory cases
 

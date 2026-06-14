@@ -5,13 +5,13 @@ This guide gets `pi-yaml-hooks` installed and gives you a safe place to put `hoo
 ## Requirements
 
 - macOS or Linux
-- Node.js `>= 22.0.0`
+- Node.js `>= 22.19.0`
 - `bash` on `PATH`
-- `@earendil-works/pi-coding-agent ^0.74.0`
+- `@earendil-works/pi-coding-agent 0.79.x`
 
 Windows is unsupported because the hook runner expects a POSIX `bash`.
 
-The peer support range is `^0.74.0` against the `@earendil-works` scope. Older 0.67 to 0.73 installs are no longer part of the documented contract, even if some behavior still happens to work.
+The package follows Pi package guidance by listing Pi host packages as peer dependencies with a `*` range and as dev dependencies for local typechecking only; they are not runtime dependencies. The documented compatibility target is Pi 0.79.x / SDK 0.79.x, with the SDK matrix retaining a legacy 0.74.0 check while it continues to pass.
 
 ## Install the extension
 
@@ -90,7 +90,7 @@ The package exposes:
 
 The published `pi.extensions` entry points at `./extensions/index.ts`. PI loads it via [jiti](https://github.com/unjs/jiti), so the TypeScript source loads without compilation. The tarball ships both the compiled `dist/` tree (for `import` consumers) and the `extensions/` and `src/` TypeScript sources (for PI's jiti-backed load). Test files (`*.test.ts`) are excluded.
 
-`npm install pi-yaml-hooks` requires Node.js `>= 22.0.0` and the PI SDK peer dependencies in the consuming project.
+`npm install pi-yaml-hooks` requires Node.js `>= 22.19.0`. When PI installs the package, PI provides the host SDK packages; standalone TypeScript consumers should install compatible `@earendil-works/pi-coding-agent` and `@earendil-works/pi-tui` packages for their build.
 
 ## Create your first hook file
 
@@ -201,9 +201,9 @@ Example:
 ]
 ```
 
-If a project hook file exists but the repo or worktree is not trusted, `pi-yaml-hooks` prints a warning once and skips that file.
+If a project hook file exists but the repo or worktree is not trusted by pi-yaml-hooks, `pi-yaml-hooks` prints a warning once and skips that file. Pi's own project/package trust is separate: trusting a project for Pi package loading does not activate project hooks here. Use `/hooks-trust`, `trusted-projects.json`, or `PI_YAML_HOOKS_TRUST_PROJECT=1` for hook trust.
 
-For nested packages, monorepos, and linked worktrees, `pi-yaml-hooks` resolves the nearest project hook root up to the current git worktree root and evaluates trust against that repo or worktree anchor, not just the current cwd string.
+For nested packages, monorepos, and linked worktrees, `pi-yaml-hooks` resolves the nearest project hook root up to the current git worktree root and evaluates hook trust against that repo or worktree anchor, not just the current cwd string.
 
 ## How loading works
 
