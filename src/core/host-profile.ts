@@ -66,9 +66,9 @@ export function createHookHostProfile(configuration: HookHostProfileConfiguratio
     throw new Error("OMP hook host configuration requires an active agentDir.")
   }
 
-  const agentDir = canonicalizeAgentDir(
-    configuredAgentDir ?? path.join(resolveHomeDir(), ".pi", "agent"),
-  )
+  const agentDir = configuredAgentDir
+    ? canonicalizeAgentDir(configuredAgentDir)
+    : path.resolve(process.env.HOME || process.env.USERPROFILE || os.homedir(), ".pi", "agent")
   return Object.freeze({ kind: configuration.kind, agentDir })
 }
 
@@ -85,6 +85,3 @@ function canonicalizeAgentDir(agentDir: string): string {
   }
 }
 
-function resolveHomeDir(): string {
-  return process.env.HOME || process.env.USERPROFILE || os.homedir()
-}

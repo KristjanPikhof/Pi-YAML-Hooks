@@ -394,11 +394,10 @@ export function resolveTrustedProjectsFilePath(
 function resolveDiscoveryProfile(
   options: Pick<HookConfigDiscoveryOptions, "profile">,
   homeDir: string,
-): HookHostProfile {
   return (
     options.profile ??
     getConfiguredHookHostProfile() ??
-    createHookHostProfile({ kind: "pi", agentDir: path.join(homeDir, ".pi", "agent") })
+    Object.freeze({ kind: "pi", agentDir: path.resolve(homeDir, ".pi", "agent") })
   )
 }
 
