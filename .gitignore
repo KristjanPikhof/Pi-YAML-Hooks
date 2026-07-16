@@ -13,6 +13,7 @@ __pycache__/
 
 # Tool caches
 /.superset/
+/.slim/deepwork/
 
 # Editor
 .DS_Store
