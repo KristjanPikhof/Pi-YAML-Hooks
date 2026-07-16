@@ -706,6 +706,7 @@ EOF
     TERM=xterm-256color
   )
 
+  local events_file="$evidence_dir/events.ndjson"
   local untrusted_rpc="$transcript_dir/untrusted-rpc.ndjson"
   local untrusted_err="$transcript_dir/untrusted-stderr.txt"
   env "${common_env[@]}" node "$rpc_driver" "$pi_bin" "$project_dir" "$untrusted_rpc" "$untrusted_err" untrusted "$sessions_dir/untrusted"
@@ -714,6 +715,11 @@ EOF
   assert_contains "$untrusted_rpc" "Project hooks exist but are not active"
   assert_contains "$untrusted_rpc" "Project hook file is valid but untrusted"
   assert_contains "$untrusted_rpc" "hooks-status"
+  assert_file "$events_file"
+  local untrusted_events="$transcript_dir/untrusted-events.ndjson"
+  cp "$events_file" "$untrusted_events"
+  assert_contains "$untrusted_events" '"event":"global.session.created"'
+  assert_not_contains "$untrusted_events" '"event":"session.created"'
   assert_file "$trust_file"
   local canonical_project
   canonical_project="$(cd "$project_dir" && pwd -P)"
@@ -732,6 +738,8 @@ EOF
   assert_contains "$trusted_rpc" '"method":"confirm"'
   assert_contains "$trusted_rpc" '"method":"notify"'
   assert_contains "$trusted_rpc" '"method":"setStatus"'
+  assert_contains "$trusted_rpc" '"command":"new_session"'
+  assert_contains "$trusted_rpc" '"cancelled":false'
   assert_file "$default_log"
   assert_file "$evidence_dir/rpc-bash.txt"
   assert_file "$evidence_dir/generated.txt"
@@ -740,11 +748,24 @@ EOF
   assert_contains "$mock_requests" "$global_config"
   assert_contains "$mock_requests" "$project_config"
 
-  local events_file="$evidence_dir/events.ndjson"
   assert_file "$events_file"
   for event_name in global.session.created session.created tool.before.bash tool.after.read tool.after.write file.changed session.idle session.deleted; do
     assert_contains "$events_file" "\"event\":\"$event_name\""
   done
+  local event_sequence
+  event_sequence="$(node --input-type=module - "$events_file" <<'NODE'
+import fs from "node:fs";
+const rows = fs.readFileSync(process.argv[2], "utf8").trim().split("\n").filter(Boolean).map((line) => JSON.parse(line));
+const sessions = (event) => rows.filter((row) => row.event === event).map((row) => row.session).filter(Boolean);
+const created = [...new Set(sessions("session.created"))];
+const idle = new Set(sessions("session.idle"));
+const deleted = new Set(sessions("session.deleted"));
+if (created.length < 2) throw new Error(`expected startup and new-session creation, got ${JSON.stringify(created)}`);
+if (!created.some((id) => idle.has(id))) throw new Error(`no created session reached idle: ${JSON.stringify({ created, idle: [...idle] })}`);
+for (const id of created) if (!deleted.has(id)) throw new Error(`created session was not deleted: ${id}`);
+process.stdout.write(`created=${created.join(",")};idle=${[...idle].join(",")};deleted=${[...deleted].join(",")}`);
+NODE
+)"
 
   cp "$INVALID_FIXTURE" "$project_config"
   local invalid_rpc="$transcript_dir/invalid-rpc.ndjson"
