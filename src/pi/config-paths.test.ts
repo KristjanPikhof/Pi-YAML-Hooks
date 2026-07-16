@@ -6,8 +6,18 @@ import { execFileSync } from "node:child_process"
 import {
   __resetTrustListCacheForTests,
   discoverHookConfigPaths,
+  discoverHookConfigEntries,
+  resolveHookConfigPaths,
+  resolveTrustedProjectsFilePath,
   resolveProjectHookResolution,
 } from "../core/config-paths.js"
+import {
+  __resetHookHostProfileForTests,
+  configureHookHostProfile,
+  createHookHostProfile,
+  getConfiguredHookHostProfile,
+  getHookHostProfile,
+} from "../core/host-profile.js"
 
 interface Case {
   readonly name: string
@@ -57,6 +67,18 @@ function writeFlatHooks(root: string, relativeDir = "."): string {
   writeFileSync(filePath, "hooks:\n  - event: session.created\n    actions:\n      - notify: test\n", "utf8")
   return filePath
 }
+function writeConfig(filePath: string): string {
+  mkdirSync(path.dirname(filePath), { recursive: true })
+  writeFileSync(filePath, "hooks:\n  - event: session.created\n    actions:\n      - notify: test\n", "utf8")
+  return filePath
+}
+function writeTrustFile(agentDir: string, entries: string[]): string {
+  const trustFile = path.join(agentDir, "trusted-projects.json")
+  mkdirSync(agentDir, { recursive: true })
+  writeFileSync(trustFile, JSON.stringify(entries, null, 2) + "\n", "utf8")
+  return trustFile
+}
+
 
 function writeTrustedProjects(homeDir: string, entries: string[]): void {
   const trustFile = path.join(homeDir, ".pi", "agent", "trusted-projects.json")
@@ -324,6 +346,217 @@ const cases: Case[] = [
           : { ok: false, detail: JSON.stringify({ resolution }) }
       } finally {
         __resetTrustListCacheForTests()
+        cleanup(sandbox)
+      }
+    },
+  },
+  {
+    name: "Pi defaults retain legacy global and project paths",
+    run: () => {
+      const sandbox = createSandbox("pi-defaults")
+      const homeDir = path.join(sandbox, "home")
+      const projectDir = path.join(sandbox, "project")
+      try {
+        mkdirSync(projectDir, { recursive: true })
+        const projectConfig = writePreferredHooks(projectDir)
+        const paths = resolveHookConfigPaths({ homeDir, projectDir })
+        const expectedGlobal = path.join(homeDir, ".pi", "agent", "hook", "hooks.yaml")
+        return paths.global === expectedGlobal && paths.project === projectConfig
+          ? { ok: true }
+          : { ok: false, detail: JSON.stringify({ paths, expectedGlobal, projectConfig }) }
+      } finally {
+        cleanup(sandbox)
+      }
+    },
+  },
+  {
+    name: "OMP active agent global candidates precede legacy Pi candidates",
+    run: () => {
+      const sandbox = createSandbox("omp-global")
+      const homeDir = path.join(sandbox, "home")
+      const agentDir = path.join(homeDir, ".omp", "agent")
+      const profile = createHookHostProfile({ kind: "omp", agentDir })
+      try {
+        const nativePreferred = writeConfig(path.join(profile.agentDir, "hook", "hooks.yaml"))
+        writeConfig(path.join(profile.agentDir, "hooks.yaml"))
+        writeConfig(path.join(homeDir, ".pi", "agent", "hook", "hooks.yaml"))
+        const entries = discoverHookConfigEntries({ homeDir, profile })
+        return entries.length === 1 && entries[0]?.scope === "global" && entries[0].filePath === nativePreferred
+          ? { ok: true }
+          : { ok: false, detail: JSON.stringify(entries) }
+      } finally {
+        cleanup(sandbox)
+      }
+    },
+  },
+  {
+    name: "OMP named agent falls back globally only after active-agent candidates",
+    run: () => {
+      const sandbox = createSandbox("omp-named-global")
+      const homeDir = path.join(sandbox, "home")
+      const profile = createHookHostProfile({ kind: "omp", agentDir: path.join(homeDir, ".omp", "agent", "profiles", "work") })
+      try {
+        const activeFlat = writeConfig(path.join(profile.agentDir, "hooks.yaml"))
+        const legacyPreferred = writeConfig(path.join(homeDir, ".pi", "agent", "hook", "hooks.yaml"))
+        const activeEntries = discoverHookConfigEntries({ homeDir, profile })
+        rmSync(activeFlat, { force: true })
+        const fallbackEntries = discoverHookConfigEntries({ homeDir, profile })
+        const ok =
+          activeEntries.length === 1 &&
+          activeEntries[0]?.filePath === activeFlat &&
+          fallbackEntries.length === 1 &&
+          fallbackEntries[0]?.filePath === legacyPreferred
+        return ok ? { ok: true } : { ok: false, detail: JSON.stringify({ activeEntries, fallbackEntries }) }
+      } finally {
+        cleanup(sandbox)
+      }
+    },
+  },
+  {
+    name: "OMP native project file wins over legacy file within one directory",
+    run: () => {
+      const sandbox = createSandbox("omp-native-project")
+      const homeDir = path.join(sandbox, "home")
+      const projectDir = path.join(sandbox, "project")
+      const profile = createHookHostProfile({ kind: "omp", agentDir: path.join(homeDir, ".omp", "agent") })
+      try {
+        mkdirSync(projectDir, { recursive: true })
+        const nativeFlat = writeConfig(path.join(projectDir, ".omp", "hooks.yaml"))
+        writePreferredHooks(projectDir)
+        writeTrustFile(profile.agentDir, [projectDir])
+        __resetTrustListCacheForTests()
+        const resolution = resolveProjectHookResolution({ homeDir, projectDir, profile })
+        return resolution?.projectConfigPath === nativeFlat && resolution.trusted
+          ? { ok: true }
+          : { ok: false, detail: JSON.stringify(resolution) }
+      } finally {
+        __resetTrustListCacheForTests()
+        cleanup(sandbox)
+      }
+    },
+  },
+  {
+    name: "OMP nearest directory wins before a parent native config",
+    run: () => {
+      const sandbox = createSandbox("omp-nearest")
+      const homeDir = path.join(sandbox, "home")
+      const projectDir = path.join(sandbox, "workspace")
+      const nestedDir = path.join(projectDir, "packages", "app")
+      const profile = createHookHostProfile({ kind: "omp", agentDir: path.join(homeDir, ".omp", "agent") })
+      try {
+        mkdirSync(nestedDir, { recursive: true })
+        writeConfig(path.join(projectDir, ".omp", "hook", "hooks.yaml"))
+        const nearestFallback = writeConfig(path.join(nestedDir, ".pi", "hooks.yaml"))
+        writeTrustFile(profile.agentDir, [nestedDir])
+        __resetTrustListCacheForTests()
+        const resolution = resolveProjectHookResolution({
+          homeDir,
+          projectDir: nestedDir,
+          profile,
+          resolveGitWorktreeRoot: () => undefined,
+        })
+        return resolution?.projectConfigPath === nearestFallback && resolution.trusted
+          ? { ok: true }
+          : { ok: false, detail: JSON.stringify(resolution) }
+      } finally {
+        __resetTrustListCacheForTests()
+        cleanup(sandbox)
+      }
+    },
+  },
+  {
+    name: "OMP discovery loads at most one global and one project file",
+    run: () => {
+      const sandbox = createSandbox("omp-one-per-scope")
+      const homeDir = path.join(sandbox, "home")
+      const projectDir = path.join(sandbox, "project")
+      const profile = createHookHostProfile({ kind: "omp", agentDir: path.join(homeDir, ".omp", "agent") })
+      try {
+        mkdirSync(projectDir, { recursive: true })
+        const globalWinner = writeConfig(path.join(profile.agentDir, "hook", "hooks.yaml"))
+        writeConfig(path.join(profile.agentDir, "hooks.yaml"))
+        writeConfig(path.join(homeDir, ".pi", "agent", "hook", "hooks.yaml"))
+        const projectWinner = writeConfig(path.join(projectDir, ".omp", "hook", "hooks.yaml"))
+        writeConfig(path.join(projectDir, ".omp", "hooks.yaml"))
+        writePreferredHooks(projectDir)
+        writeFlatHooks(projectDir)
+        writeTrustFile(profile.agentDir, [projectDir])
+        __resetTrustListCacheForTests()
+        const entries = discoverHookConfigEntries({ homeDir, projectDir, profile })
+        const expected = [
+          { scope: "global", filePath: globalWinner },
+          { scope: "project", filePath: projectWinner },
+        ]
+        return JSON.stringify(entries) === JSON.stringify(expected)
+          ? { ok: true }
+          : { ok: false, detail: JSON.stringify(entries) }
+      } finally {
+        __resetTrustListCacheForTests()
+        cleanup(sandbox)
+      }
+    },
+  },
+  {
+    name: "OMP legacy project fallback requires OMP trust rather than Pi trust",
+    run: () => {
+      const sandbox = createSandbox("omp-separate-trust")
+      const homeDir = path.join(sandbox, "home")
+      const repoDir = path.join(sandbox, "repo")
+      const nestedDir = path.join(repoDir, "src")
+      const profile = createHookHostProfile({ kind: "omp", agentDir: path.join(homeDir, ".omp", "agent") })
+      try {
+        mkdirSync(nestedDir, { recursive: true })
+        runGit(["init", repoDir], sandbox)
+        const fallback = writePreferredHooks(repoDir)
+        writeTrustedProjects(homeDir, [repoDir])
+        __resetTrustListCacheForTests()
+        const piTrustedOnly = resolveProjectHookResolution({ homeDir, projectDir: nestedDir, profile })
+        writeTrustFile(profile.agentDir, [repoDir])
+        __resetTrustListCacheForTests()
+        const ompTrusted = resolveProjectHookResolution({ homeDir, projectDir: nestedDir, profile })
+        const paths = discoverHookConfigPaths({ homeDir, projectDir: nestedDir, profile })
+        const expectedTrustFile = path.join(profile.agentDir, "trusted-projects.json")
+        const ok =
+          piTrustedOnly?.trusted === false &&
+          piTrustedOnly.trustFilePath === expectedTrustFile &&
+          ompTrusted?.trusted === true &&
+          ompTrusted.canonicalAnchorDir === realpathSync.native(repoDir) &&
+          JSON.stringify(paths) === JSON.stringify([fallback]) &&
+          resolveTrustedProjectsFilePath({ homeDir, profile }) === expectedTrustFile
+        return ok ? { ok: true } : { ok: false, detail: JSON.stringify({ piTrustedOnly, ompTrusted, paths }) }
+      } finally {
+        __resetTrustListCacheForTests()
+        cleanup(sandbox)
+      }
+    },
+  },
+  {
+    name: "host profile defaults without locking and rejects conflicting reload",
+    run: () => {
+      const sandbox = createSandbox("host-profile-state")
+      const agentDir = path.join(sandbox, "named-agent")
+      try {
+        __resetHookHostProfileForTests()
+        mkdirSync(agentDir, { recursive: true })
+        const unconfigured = withEnv("HOME", path.join(sandbox, "home"), () => getHookHostProfile())
+        const configured = configureHookHostProfile({ kind: "omp", agentDir })
+        const reloaded = configureHookHostProfile({ kind: "omp", agentDir: path.join(agentDir, ".") })
+        let conflictRejected = false
+        try {
+          configureHookHostProfile({ kind: "pi" })
+        } catch {
+          conflictRejected = true
+        }
+        const ok =
+          unconfigured.kind === "pi" &&
+          getConfiguredHookHostProfile() === configured &&
+          configured === reloaded &&
+          configured.agentDir === realpathSync.native(agentDir) &&
+          Object.isFrozen(configured) &&
+          conflictRejected
+        return ok ? { ok: true } : { ok: false, detail: JSON.stringify({ unconfigured, configured, conflictRejected }) }
+      } finally {
+        __resetHookHostProfileForTests()
         cleanup(sandbox)
       }
     },
