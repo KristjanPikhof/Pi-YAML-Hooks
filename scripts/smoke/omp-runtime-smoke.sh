@@ -384,8 +384,13 @@ while (Date.now() < deadline) {
 }
 throw new Error("timed out waiting for installed OMP adapter deferred idle dispatch");
 IDLE
+[[ -d "$ROOT_DIR/node_modules/@earendil-works/pi-tui" ]] || fail "local pi-tui dependency is unavailable for the deferred-idle harness"
+mkdir -p "$PLUGIN_DIR/node_modules/@earendil-works"
+ln -s "$ROOT_DIR/node_modules/@earendil-works/pi-tui" "$PLUGIN_DIR/node_modules/@earendil-works/pi-tui"
 bun "$SMOKE_ROOT/deferred-idle.mjs" \
   "$PLUGIN_DIR/dist/extensions/omp-yaml-hooks/index.js" "$AGENT_DIR" "$PROJECT_DIR" "$EVENT_FILE"
+rm "$PLUGIN_DIR/node_modules/@earendil-works/pi-tui"
+rmdir "$PLUGIN_DIR/node_modules/@earendil-works" "$PLUGIN_DIR/node_modules" 2>/dev/null || true
 
 cp "$VALID_FIXTURE" "$PROJECT_CONFIG"
 sed 's/omp-lazy-initial/omp-lazy-refreshed/' "$VALID_FIXTURE" > "$SMOKE_ROOT/refreshed-hooks.yaml"
@@ -463,14 +468,26 @@ send -- $cellSizeResponse
 expect -re "Welcome back"
 after 1000
 send_text "/hooks-st"
-drain 2
+after 500
+send -- "\t"
+after 500
+send -- "\r"
+drain 1
 send -- "\033\[117;5u"
 send_text "/hooks-status omp-lazy-i"
-drain 2
+after 500
+send -- "\t"
+after 500
+send -- "\r"
+drain 1
 exec cp $env(OMP_SMOKE_REFRESHED) $env(OMP_SMOKE_PROJECT)/.omp/hook/hooks.yaml
 send -- "\033\[117;5u"
 send_text "/hooks-status omp-lazy-r"
-drain 2
+after 500
+send -- "\t"
+after 500
+send -- "\r"
+drain 1
 close
 wait
 EXPECT
