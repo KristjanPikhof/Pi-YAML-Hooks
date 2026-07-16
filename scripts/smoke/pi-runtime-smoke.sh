@@ -559,15 +559,23 @@ YAML
   real_home_before="$(snapshot_pi_mutation_surfaces "$real_home")"
 
   local pack_json="$transcript_dir/npm-pack.json"
-  (cd "$ROOT_DIR" && npm pack --json --pack-destination "$artifact_dir") > "$pack_json"
+  (
+    cd "$ROOT_DIR"
+    HOME="$isolated_home" USERPROFILE="$isolated_home" npm_config_cache="$smoke_root/npm-cache" \
+      npm_config_userconfig="$smoke_root/npmrc" npm pack --json --pack-destination "$artifact_dir"
+  ) > "$pack_json"
+  local packed_name
+  local packed_version
   local tarball_name
-  tarball_name="$(node --input-type=module - "$pack_json" <<'NODE'
+  local packed_integrity
+  IFS=$'\t' read -r packed_name packed_version tarball_name packed_integrity < <(node --input-type=module - "$pack_json" <<'NODE'
 import fs from "node:fs";
 const parsed = JSON.parse(fs.readFileSync(process.argv[2], "utf8"));
-if (!Array.isArray(parsed) || !parsed[0]?.filename) process.exit(1);
-process.stdout.write(parsed[0].filename);
+const item = Array.isArray(parsed) ? parsed[0] : undefined;
+if (!item?.name || !item?.version || !item?.filename || !item?.integrity) process.exit(1);
+process.stdout.write([item.name, item.version, item.filename, item.integrity].join("\t") + "\n");
 NODE
-)"
+)
   local tarball="$artifact_dir/$tarball_name"
   assert_file "$tarball"
   local package_source="npm:pi-yaml-hooks@file:$tarball"
@@ -588,6 +596,28 @@ NODE
   local installed_package="$agent_dir/npm/node_modules/pi-yaml-hooks"
   assert_dir "$installed_package"
   assert_file "$installed_package/package.json"
+  local installed_name
+  local installed_version
+  read -r installed_name installed_version < <(node --input-type=module - "$installed_package/package.json" <<'NODE'
+import fs from "node:fs";
+const manifest = JSON.parse(fs.readFileSync(process.argv[2], "utf8"));
+if (!manifest.name || !manifest.version) process.exit(1);
+process.stdout.write(`${manifest.name} ${manifest.version}\n`);
+NODE
+)
+  [[ "$packed_name" == "pi-yaml-hooks" && "$installed_name" == "$packed_name" ]] || fail "packed/installed package name mismatch"
+  [[ "$installed_version" == "$packed_version" ]] || fail "packed/installed package version mismatch"
+  local root_version
+  root_version="$(node -p 'require(process.argv[1]).version' "$ROOT_DIR/package.json")"
+  [[ "$packed_version" == "$root_version" ]] || fail "packed version does not match checkout package.json"
+  local artifact_sha256
+  artifact_sha256="$(node --input-type=module - "$tarball" <<'NODE'
+import crypto from "node:crypto";
+import fs from "node:fs";
+process.stdout.write(crypto.createHash("sha256").update(fs.readFileSync(process.argv[2])).digest("hex"));
+NODE
+)"
+  [[ ${#artifact_sha256} -eq 64 ]] || fail "packed artifact SHA-256 is not exact"
   assert_file "$agent_dir/settings.json"
   assert_contains "$agent_dir/settings.json" "$package_source"
   if grep -R -E -- '(^|[[:space:]])-e([[:space:]]|$)|--extension' "$agent_dir/settings.json" "$transcript_dir/pi-install.txt" "$transcript_dir/pi-list.txt" >/dev/null 2>&1; then
