@@ -1,7 +1,7 @@
 {
   "name": "pi-yaml-hooks",
   "version": "2026.7.16",
-  "description": "YAML hook automation for the PI coding agent: tool guards, session hooks, prompts, notifications, and bash actions.",
+  "description": "YAML hook automation for the Pi and OMP coding agents: tool guards, session hooks, prompts, notifications, and bash actions.",
   "author": "Kristjan Pikhof <kristjan.pikhof@gmail.com> (https://github.com/KristjanPikhof)",
   "type": "module",
   "engines": {
@@ -18,11 +18,17 @@
     },
     "./extensions": "./dist/extensions/index.js",
     "./extensions/pi-yaml-hooks": "./dist/extensions/pi-yaml-hooks/index.js",
+    "./extensions/omp-yaml-hooks": "./dist/extensions/omp-yaml-hooks/index.js",
     "./package.json": "./package.json"
   },
   "pi": {
     "extensions": [
-      "./extensions/index.ts"
+      "./extensions/pi-yaml-hooks/index.ts"
+    ]
+  },
+  "omp": {
+    "extensions": [
+      "./extensions/omp-yaml-hooks/index.ts"
     ]
   },
   "keywords": [
@@ -32,6 +38,9 @@
     "automation",
     "ai",
     "pi",
+    "omp",
+    "oh-my-pi",
+    "omp-extension",
     "developer-tools",
     "agents",
     "agentic-ai",
@@ -61,8 +70,8 @@
   ],
   "scripts": {
     "typecheck": "tsc --noEmit",
-    "build": "tsc && mkdir -p dist/extensions/pi-yaml-hooks && printf 'export { default } from \"./pi-yaml-hooks/index.js\";\n' > dist/extensions/index.js && printf 'export { default } from \"../../index.js\";\n' > dist/extensions/pi-yaml-hooks/index.js",
-    "build:publish": "rm -rf dist && tsc -p tsconfig.publish.json && mkdir -p dist/extensions/pi-yaml-hooks && printf 'export { default } from \"./pi-yaml-hooks/index.js\";\n' > dist/extensions/index.js && printf 'export { default } from \"../../index.js\";\n' > dist/extensions/pi-yaml-hooks/index.js",
+    "build": "tsc && mkdir -p dist/extensions/pi-yaml-hooks dist/extensions/omp-yaml-hooks && printf 'export { default } from \"./pi-yaml-hooks/index.js\";\n' > dist/extensions/index.js && printf 'export { default } from \"../../index.js\";\n' > dist/extensions/pi-yaml-hooks/index.js && printf 'export { default } from \"../../omp/index.js\";\n' > dist/extensions/omp-yaml-hooks/index.js",
+    "build:publish": "rm -rf dist && tsc -p tsconfig.publish.json && mkdir -p dist/extensions/pi-yaml-hooks dist/extensions/omp-yaml-hooks && printf 'export { default } from \"./pi-yaml-hooks/index.js\";\n' > dist/extensions/index.js && printf 'export { default } from \"../../index.js\";\n' > dist/extensions/pi-yaml-hooks/index.js && printf 'export { default } from \"../../omp/index.js\";\n' > dist/extensions/omp-yaml-hooks/index.js",
     "prepack": "npm run build:publish",
     "test": "echo \"no consumer tests\" && exit 0",
     "test:internal": "npm run build && node scripts/run-tests.mjs",
@@ -84,7 +93,23 @@
   "license": "MIT",
   "peerDependencies": {
     "@earendil-works/pi-coding-agent": "*",
-    "@earendil-works/pi-tui": "*"
+    "@earendil-works/pi-tui": "*",
+    "@oh-my-pi/pi-coding-agent": "*",
+    "@oh-my-pi/pi-tui": "*"
+  },
+  "peerDependenciesMeta": {
+    "@earendil-works/pi-coding-agent": {
+      "optional": true
+    },
+    "@earendil-works/pi-tui": {
+      "optional": true
+    },
+    "@oh-my-pi/pi-coding-agent": {
+      "optional": true
+    },
+    "@oh-my-pi/pi-tui": {
+      "optional": true
+    }
   },
   "dependencies": {
     "yaml": "^2.9.0"
@@ -92,6 +117,8 @@
   "devDependencies": {
     "@earendil-works/pi-coding-agent": "^0.79.3",
     "@earendil-works/pi-tui": "^0.79.3",
+    "@oh-my-pi/pi-coding-agent": "^17.0.1",
+    "@oh-my-pi/pi-tui": "^17.0.1",
     "@types/node": "^22.19.21",
     "typescript": "^5.9.3"
   }

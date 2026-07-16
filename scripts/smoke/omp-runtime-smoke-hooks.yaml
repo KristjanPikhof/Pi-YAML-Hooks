@@ -1,0 +1,42 @@
+hooks:
+  - id: omp-lazy-initial
+    event: session.created
+    actions:
+      - setStatus: "omp smoke session created"
+      - notify:
+          text: "omp smoke session created"
+          level: info
+      - bash: |
+          mkdir -p .omp/hooks-smoke
+          printf '{"event":"session.created","session":"%s"}\n' "$PI_SESSION_ID" >> .omp/hooks-smoke/events.ndjson
+
+  - id: omp-smoke-before-bash
+    event: tool.before.bash
+    actions:
+      - confirm:
+          title: "omp smoke approval"
+          message: "Allow this typed bash command?"
+      - bash: |
+          mkdir -p .omp/hooks-smoke
+          printf '{"event":"tool.before.bash","session":"%s"}\n' "$PI_SESSION_ID" >> .omp/hooks-smoke/events.ndjson
+
+  - id: omp-smoke-idle
+    event: session.idle
+    actions:
+      - setStatus: "omp smoke deferred idle"
+      - notify:
+          text: "omp smoke deferred idle"
+          level: info
+      - bash: |
+          mkdir -p .omp/hooks-smoke
+          printf '{"event":"session.idle","session":"%s"}\n' "$PI_SESSION_ID" >> .omp/hooks-smoke/events.ndjson
+
+  - id: omp-smoke-deleted
+    event: session.deleted
+    actions:
+      - notify:
+          text: "omp smoke session deleted"
+          level: info
+      - bash: |
+          mkdir -p .omp/hooks-smoke
+          printf '{"event":"session.deleted","session":"%s"}\n' "$PI_SESSION_ID" >> .omp/hooks-smoke/events.ndjson

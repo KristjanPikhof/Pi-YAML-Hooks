@@ -80,6 +80,11 @@ let cachedLogFdPath: string | undefined
 let drainCount = 0
 
 export function getPiHooksLogger(): PiHooksLogger {
+  if (cachedLogger?.enabled && cachedLogger.filePath !== resolveLogFilePath()) {
+    closeCachedLogFile()
+    cachedLogger = undefined
+    warnedAboutLoggerFailure = false
+  }
   cachedLogger ??= createPiHooksLogger()
   return cachedLogger
 }
@@ -91,17 +96,21 @@ export function getPiHooksLogFilePath(): string {
 export function resetPiHooksLoggerForTests(): void {
   cachedLogger = undefined
   warnedAboutLoggerFailure = false
+  closeCachedLogFile()
+  drainCount = 0
+}
+function closeCachedLogFile(): void {
   if (cachedLogFd !== undefined) {
     try {
       closeSync(cachedLogFd)
     } catch {
-      // ignore — best effort close on reset
+      // ignore — best effort close during reset or host-profile changes
     }
   }
   cachedLogFd = undefined
   cachedLogFdPath = undefined
-  drainCount = 0
 }
+
 
 /**
  * Test helper. Currently a no-op because writes are synchronous, but kept

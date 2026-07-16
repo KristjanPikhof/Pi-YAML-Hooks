@@ -58,17 +58,18 @@ export function createHookHostProfile(configuration: HookHostProfileConfiguratio
     throw new Error(`Unsupported hook host kind: ${String(configuration.kind)}`)
   }
 
-  const configuredAgentDir = configuration.agentDir?.trim()
-  if (configuration.agentDir !== undefined && !configuredAgentDir) {
+  const configuredAgentDir = configuration.agentDir
+  if (configuredAgentDir !== undefined && configuredAgentDir.trim().length === 0) {
     throw new Error("Hook host agentDir must not be empty.")
   }
-  if (configuration.kind === "omp" && !configuredAgentDir) {
+  if (configuration.kind === "omp" && configuredAgentDir === undefined) {
     throw new Error("OMP hook host configuration requires an active agentDir.")
   }
 
-  const agentDir = configuredAgentDir
-    ? canonicalizeAgentDir(configuredAgentDir)
-    : path.resolve(process.env.HOME || process.env.USERPROFILE || os.homedir(), ".pi", "agent")
+  const agentDir =
+    configuredAgentDir !== undefined
+      ? canonicalizeAgentDir(configuredAgentDir)
+      : path.resolve(process.env.HOME || process.env.USERPROFILE || os.homedir(), ".pi", "agent")
   return Object.freeze({ kind: configuration.kind, agentDir })
 }
 
@@ -78,10 +79,18 @@ export function __resetHookHostProfileForTests(): void {
 
 function canonicalizeAgentDir(agentDir: string): string {
   const resolved = path.resolve(agentDir)
-  try {
-    return path.resolve(realpathSync.native(resolved))
-  } catch {
-    return resolved
+  const missingSegments: string[] = []
+  let candidate = resolved
+
+  while (true) {
+    try {
+      return path.resolve(realpathSync.native(candidate), ...missingSegments)
+    } catch {
+      const parent = path.dirname(candidate)
+      if (parent === candidate) return resolved
+      missingSegments.unshift(path.basename(candidate))
+      candidate = parent
+    }
   }
 }
 
