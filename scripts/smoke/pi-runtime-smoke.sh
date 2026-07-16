@@ -473,19 +473,25 @@ os.write(fd, b"\x04")
 collect(2.0)
 waited = 0
 status = 0
+driver_terminated = False
 try:
     waited, status = os.waitpid(pid, os.WNOHANG)
     if waited == 0:
+        driver_terminated = True
         os.kill(pid, signal.SIGTERM)
-        os.waitpid(pid, 0)
-        print("Pi TUI did not exit after Ctrl-D on an empty editor", file=sys.stderr)
-        sys.exit(1)
+        waited, status = os.waitpid(pid, 0)
 except ChildProcessError:
     waited = pid
-if waited and os.WIFSIGNALED(status):
-    print(f"Pi TUI exited from signal {os.WTERMSIG(status)}", file=sys.stderr)
+if driver_terminated:
+    clean_exit = os.WIFEXITED(status) and os.WEXITSTATUS(status) == 0
+    expected_signal = os.WIFSIGNALED(status) and os.WTERMSIG(status) == signal.SIGTERM
+    if not clean_exit and not expected_signal:
+        print(f"Pi TUI cleanup had unexpected wait status {status}", file=sys.stderr)
+        sys.exit(1)
+elif os.WIFSIGNALED(status):
+    print(f"Pi TUI crashed from signal {os.WTERMSIG(status)}", file=sys.stderr)
     sys.exit(1)
-if waited and os.WIFEXITED(status) and os.WEXITSTATUS(status) != 0:
+elif os.WIFEXITED(status) and os.WEXITSTATUS(status) != 0:
     print(f"Pi TUI exited with status {os.WEXITSTATUS(status)}", file=sys.stderr)
     sys.exit(1)
 raw = bytes(data)
