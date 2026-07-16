@@ -3,11 +3,27 @@ import os from "node:os"
 import path from "node:path"
 
 import { getPiHooksLogFilePath, getPiHooksLogger, resetPiHooksLoggerForTests } from "../core/logger.js"
+import {
+  __resetHookHostProfileForTests,
+  configureHookHostProfile,
+} from "../core/host-profile.js"
 
 interface Case {
   readonly name: string
   readonly run: () => { ok: boolean; detail?: string }
 }
+function withEnv<T>(key: string, value: string | undefined, run: () => T): T {
+  const previous = process.env[key]
+  if (value === undefined) delete process.env[key]
+  else process.env[key] = value
+  try {
+    return run()
+  } finally {
+    if (previous === undefined) delete process.env[key]
+    else process.env[key] = previous
+  }
+}
+
 
 function withLoggerEnv<T>(
   options: { debug?: boolean; level?: string; logFile?: string },
@@ -153,6 +169,74 @@ const cases: Case[] = [
       const truncated = line.includes("[truncated")
       return redactedToken && truncated ? { ok: true } : { ok: false, detail: line }
     }),
+  },
+  {
+    name: "Pi default log path remains under the Pi agent directory",
+    run: () => {
+      const tempDir = mkdtempSync(path.join(os.tmpdir(), "pi-yaml-hooks-log-pi-default-"))
+      try {
+        __resetHookHostProfileForTests()
+        resetPiHooksLoggerForTests()
+        const resolved = withEnv("HOME", tempDir, () =>
+          withEnv("PI_YAML_HOOKS_LOG_FILE", undefined, () => getPiHooksLogFilePath()),
+        )
+        const expected = path.join(tempDir, ".pi", "agent", "logs", "pi-yaml-hooks.ndjson")
+        return resolved === expected
+          ? { ok: true }
+          : { ok: false, detail: `resolved=${resolved} expected=${expected}` }
+      } finally {
+        __resetHookHostProfileForTests()
+        resetPiHooksLoggerForTests()
+        rmSync(tempDir, { recursive: true, force: true })
+      }
+    },
+  },
+  {
+    name: "OMP default and named agent directories define default log roots",
+    run: () => {
+      const tempDir = mkdtempSync(path.join(os.tmpdir(), "pi-yaml-hooks-log-omp-defaults-"))
+      const agentDirs = [
+        path.join(tempDir, ".omp", "agent"),
+        path.join(tempDir, ".omp", "agent", "profiles", "work"),
+      ]
+      try {
+        for (const agentDir of agentDirs) {
+          __resetHookHostProfileForTests()
+          resetPiHooksLoggerForTests()
+          const profile = configureHookHostProfile({ kind: "omp", agentDir })
+          const resolved = withEnv("PI_YAML_HOOKS_LOG_FILE", undefined, () => getPiHooksLogFilePath())
+          const expected = path.join(profile.agentDir, "logs", "pi-yaml-hooks.ndjson")
+          if (resolved !== expected) {
+            return { ok: false, detail: `resolved=${resolved} expected=${expected}` }
+          }
+        }
+        return { ok: true }
+      } finally {
+        __resetHookHostProfileForTests()
+        resetPiHooksLoggerForTests()
+        rmSync(tempDir, { recursive: true, force: true })
+      }
+    },
+  },
+  {
+    name: "environment log override remains authoritative for OMP",
+    run: () => {
+      const tempDir = mkdtempSync(path.join(os.tmpdir(), "pi-yaml-hooks-log-omp-override-"))
+      try {
+        __resetHookHostProfileForTests()
+        configureHookHostProfile({ kind: "omp", agentDir: path.join(tempDir, ".omp", "agent") })
+        return withLoggerEnv({ debug: true }, (logFile) => {
+          const resolved = getPiHooksLogFilePath()
+          return resolved === logFile
+            ? { ok: true }
+            : { ok: false, detail: `resolved=${resolved} expected=${logFile}` }
+        })
+      } finally {
+        __resetHookHostProfileForTests()
+        resetPiHooksLoggerForTests()
+        rmSync(tempDir, { recursive: true, force: true })
+      }
+    },
   },
 ]
 
