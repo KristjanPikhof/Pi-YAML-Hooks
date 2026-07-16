@@ -123,17 +123,18 @@ SMOKE_LIST="$SMOKE_ROOT/plugin-list.json" \
 SMOKE_PLUGIN_DIR="$PLUGIN_DIR" \
 SMOKE_PLUGIN_VERSION="$PLUGIN_VERSION" \
 bun --eval '
-  import { readFileSync } from "node:fs";
+  import { readFileSync, realpathSync } from "node:fs";
   const dry = JSON.parse(readFileSync(process.env.SMOKE_DRY, "utf8"));
   const installed = JSON.parse(readFileSync(process.env.SMOKE_INSTALL, "utf8"));
   const listed = JSON.parse(readFileSync(process.env.SMOKE_LIST, "utf8"));
   const expectedPath = process.env.SMOKE_PLUGIN_DIR;
   const expectedVersion = process.env.SMOKE_PLUGIN_VERSION;
+  const samePath = (actual) => realpathSync(actual) === realpathSync(expectedPath);
   if (!String(dry.name).startsWith("pi-yaml-hooks@http://127.0.0.1:")) throw new Error("dry-run did not use named HTTP tarball spec");
-  if (installed.name !== "pi-yaml-hooks" || installed.version !== expectedVersion || installed.path !== expectedPath) throw new Error(`unexpected install: ${JSON.stringify(installed)}`);
+  if (installed.name !== "pi-yaml-hooks" || installed.version !== expectedVersion || !samePath(installed.path)) throw new Error(`unexpected install: ${JSON.stringify(installed)}`);
   if (JSON.stringify(installed.manifest?.extensions) !== JSON.stringify(["./extensions/omp-yaml-hooks/index.ts"])) throw new Error("native OMP manifest extension was not discovered");
   const plugin = listed.npm?.find((entry) => entry.name === "pi-yaml-hooks");
-  if (!plugin || plugin.version !== expectedVersion || plugin.path !== expectedPath || plugin.enabled !== true) throw new Error(`plugin list mismatch: ${JSON.stringify(listed)}`);
+  if (!plugin || plugin.version !== expectedVersion || !samePath(plugin.path) || plugin.enabled !== true) throw new Error(`plugin list mismatch: ${JSON.stringify(listed)}`);
 '
 
 [[ -f "$PLUGIN_DIR/package.json" ]] || fail "installed plugin package.json is missing"
@@ -163,6 +164,7 @@ function startRpc(enableUserBash, confirmations = []) {
   });
   const frames = [];
   const waiters = [];
+  let stdout = "";
   let stderr = "";
   let exited = false;
   let exitCode;
@@ -180,6 +182,7 @@ function startRpc(enableUserBash, confirmations = []) {
   };
 
   readline.createInterface({ input: child.stdout }).on("line", (line) => {
+    stdout += `${line}\n`;
     appendFileSync(transcript, `${line}\n`);
     let frame;
     try { frame = JSON.parse(line); } catch { return; }
@@ -231,7 +234,7 @@ function startRpc(enableUserBash, confirmations = []) {
     if (!exited) await new Promise((resolve) => child.once("close", resolve));
     assert(exitCode === 0, `OMP RPC exit code was ${exitCode}`);
   };
-  return { child, frames, get stderr() { return stderr; }, waitFor, send, prompt, close };
+  return { child, frames, get output() { return stdout + stderr; }, waitFor, send, prompt, close };
 }
 
 writeFileSync(transcript, "");
@@ -243,25 +246,25 @@ for (const name of ["hooks-status", "hooks-validate", "hooks-trust", "hooks-relo
   assert(commands.commands?.some((entry) => entry.name === name && entry.source === "extension"), `missing extension command ${name}`);
 }
 await first.prompt("status-untrusted", "/hooks-status");
-assert(first.stderr.includes("Project trusted: no"), "hooks-status did not report the untrusted project");
-assert(first.stderr.includes(projectConfig) && first.stderr.includes(trustFile) && first.stderr.includes(logFile), "hooks-status did not report native OMP paths");
+assert(first.output.includes("Project trusted: no"), "hooks-status did not report the untrusted project");
+assert(first.output.includes(projectConfig) && first.output.includes(trustFile) && first.output.includes(logFile), "hooks-status did not report native OMP paths");
 await first.prompt("validate-untrusted", "/hooks-validate");
-assert(/valid but untrusted/i.test(first.stderr), "hooks-validate did not explain valid-but-untrusted config");
+assert(/valid but untrusted/i.test(first.output), "hooks-validate did not explain valid-but-untrusted config");
 await first.prompt("trust", "/hooks-trust");
 assert(first.frames.some((frame) => frame.type === "extension_ui_request" && frame.method === "notify" && String(frame.message).includes(trustFile)), "hooks-trust notification is missing");
 await first.prompt("status-trusted", "/hooks-status");
-assert(first.stderr.includes("Project trusted: yes"), "trusted status was not observed");
+assert(first.output.includes("Project trusted: yes"), "trusted status was not observed");
 await first.prompt("tail-log", "/hooks-tail-log --path");
 assert(first.frames.some((frame) => frame.type === "extension_ui_request" && frame.method === "notify" && frame.message === logFile), "hooks-tail-log did not return the default OMP log path");
 
 copyFileSync(invalidFixture, projectConfig);
-const invalidStart = first.stderr.length;
+const invalidStart = first.output.length;
 await first.prompt("validate-invalid", "/hooks-validate");
-assert(/command: actions are not supported|validation issue|invalid/i.test(first.stderr.slice(invalidStart)), "invalid config was not rejected by hooks-validate");
+assert(/command: actions are not supported|validation issue|invalid/i.test(first.output.slice(invalidStart)), "invalid config was not rejected by hooks-validate");
 copyFileSync(validFixture, projectConfig);
-const validStart = first.stderr.length;
+const validStart = first.output.length;
 await first.prompt("validate-valid", "/hooks-validate");
-assert(/valid/i.test(first.stderr.slice(validStart)) && !/command: actions are not supported/i.test(first.stderr.slice(validStart)), "restored valid config did not validate");
+assert(/valid/i.test(first.output.slice(validStart)) && !/command: actions are not supported/i.test(first.output.slice(validStart)), "restored valid config did not validate");
 await first.prompt("reload", "/hooks-reload");
 await sleep(150);
 assert(first.frames.some((frame) => frame.type === "extension_ui_request" && frame.method === "notify" && /Reloading PI extensions/.test(String(frame.message))), "hooks-reload notification is missing");

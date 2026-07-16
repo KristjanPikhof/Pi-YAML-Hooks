@@ -59,6 +59,14 @@ assert_contains() {
   grep -F -- "$needle" "$file" >/dev/null 2>&1 || fail "expected $(printf '%q' "$needle") in $file"
 }
 
+assert_not_contains() {
+  local file="$1"
+  local needle="$2"
+  if grep -F -- "$needle" "$file" >/dev/null 2>&1; then
+    fail "unexpected $(printf '%q' "$needle") in $file"
+  fi
+}
+
 assert_not_contains_regex() {
   local file="$1"
   local pattern="$2"
@@ -166,6 +174,8 @@ const targets = [
   path.join(home, ".pi", "agent", "trusted-projects.json"),
   path.join(home, ".pi", "agent", "npm", "node_modules", "pi-yaml-hooks"),
   path.join(home, ".pi", "agent", "logs", "pi-yaml-hooks.ndjson"),
+  path.join(home, ".npm", "_logs"),
+  path.join(home, ".npm", "_update-notifier-last-checked"),
 ];
 const hash = crypto.createHash("sha256");
 function add(target, relative = "") {
@@ -209,6 +219,7 @@ const pending = new Map();
 const observed = [];
 let exited = false;
 let exitCode = null;
+let exitSignal = null;
 
 function writeMessage(message) {
   child.stdin.write(`${JSON.stringify(message)}\n`);
@@ -248,6 +259,7 @@ child.stderr.on("data", (chunk) => stderr.write(chunk));
 child.on("exit", (code, signal) => {
   exited = true;
   exitCode = code;
+  exitSignal = signal;
   for (const { reject, timer } of pending.values()) {
     clearTimeout(timer);
     reject(new Error(`pi exited before RPC response (code=${code}, signal=${signal})`));
@@ -290,12 +302,17 @@ async function slash(message) {
 async function shutdown() {
   child.stdin.end();
   for (let attempt = 0; attempt < 50 && !exited; attempt += 1) await sleep(100);
-  if (!exited) child.kill("SIGTERM");
-  for (let attempt = 0; attempt < 20 && !exited; attempt += 1) await sleep(100);
-  if (!exited) child.kill("SIGKILL");
+  if (!exited) {
+    child.kill("SIGTERM");
+    for (let attempt = 0; attempt < 20 && !exited; attempt += 1) await sleep(100);
+    if (!exited) child.kill("SIGKILL");
+    throw new Error("Pi RPC process did not exit after stdin closed");
+  }
   transcript.end();
   stderr.end();
-  if (exitCode !== null && exitCode !== 0 && exitCode !== 143) throw new Error(`pi exited with ${exitCode}`);
+  if (exitSignal !== null || exitCode !== 0) {
+    throw new Error(`Pi RPC process exited unexpectedly (code=${exitCode}, signal=${exitSignal})`);
+  }
 }
 
 try {
@@ -314,7 +331,8 @@ try {
     await rpc("bash", { command: "printf 'rpc-bash\\n' > .pi/hooks-smoke/rpc-bash.txt" });
     await rpc("prompt", { message: "Run the deterministic runtime smoke tool sequence now." });
     await waitUntilIdle();
-    await rpc("new_session");
+    const newSession = await rpc("new_session");
+    if (newSession.data.cancelled !== false) throw new Error(`new_session cancelled: ${JSON.stringify(newSession.data)}`);
     await sleep(500);
   } else if (mode === "invalid") {
     await rpc("get_commands");
@@ -435,9 +453,9 @@ collect(2.0)
 os.write(fd, b"/hooks-st")
 collect(1.0)
 os.write(fd, b"\t")
-collect(2.0)
-os.write(fd, b"\x03")
-collect(0.3)
+collect(1.0)
+os.write(fd, b"\r")
+collect(1.5)
 os.write(fd, b"!printf 'tui-user-bash\\n' > .pi/hooks-smoke/tui-user-bash.txt")
 os.write(fd, b"\r")
 collect(1.0)
@@ -446,18 +464,24 @@ collect(2.0)
 os.write(fd, b"\x03")
 collect(0.3)
 os.write(fd, b"\x03")
-collect(1.5)
+collect(2.0)
+waited = 0
+status = 0
 try:
     waited, status = os.waitpid(pid, os.WNOHANG)
     if waited == 0:
         os.kill(pid, signal.SIGTERM)
-        time.sleep(0.2)
-        waited, status = os.waitpid(pid, os.WNOHANG)
-        if waited == 0:
-            os.kill(pid, signal.SIGKILL)
-            os.waitpid(pid, 0)
+        os.waitpid(pid, 0)
+        print("Pi TUI did not exit after the scripted Ctrl-C sequence", file=sys.stderr)
+        sys.exit(1)
 except ChildProcessError:
-    pass
+    waited = pid
+if waited and os.WIFSIGNALED(status):
+    print(f"Pi TUI exited from signal {os.WTERMSIG(status)}", file=sys.stderr)
+    sys.exit(1)
+if waited and os.WIFEXITED(status) and os.WEXITSTATUS(status) != 0:
+    print(f"Pi TUI exited with status {os.WEXITSTATUS(status)}", file=sys.stderr)
+    sys.exit(1)
 raw = bytes(data)
 with open(raw_path, "wb") as output:
     output.write(raw)
@@ -467,8 +491,8 @@ text = re.sub(r"\x1b\[[0-?]*[ -/]*[@-~]", "", text)
 text = "".join(character for character in text if character in "\n\r\t" or ord(character) >= 32)
 with open(plain_path, "w", encoding="utf-8") as output:
     output.write(text)
-if "hooks-status" not in text:
-    print("autocomplete did not produce hooks-status", file=sys.stderr)
+if "hooks-status" not in text or "Hooks status for" not in text:
+    print("Tab completion did not execute /hooks-status", file=sys.stderr)
     sys.exit(1)
 PY
 }
