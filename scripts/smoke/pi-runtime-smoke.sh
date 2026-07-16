@@ -453,16 +453,23 @@ collect(2.0)
 os.write(fd, b"/hooks-st")
 collect(1.0)
 os.write(fd, b"\t")
-collect(1.0)
+collect(0.5)
+os.write(fd, b"\r")
+collect(0.5)
 os.write(fd, b"\r")
 collect(1.5)
 os.write(fd, b"!printf 'tui-user-bash\\n' > .pi/hooks-smoke/tui-user-bash.txt")
 os.write(fd, b"\r")
 collect(1.0)
 os.write(fd, b"\r")
-collect(2.0)
-os.write(fd, b"/quit")
-os.write(fd, b"\r")
+user_bash_marker = os.path.join(project_dir, ".pi", "hooks-smoke", "tui-user-bash.txt")
+for _ in range(25):
+    collect(0.2)
+    if os.path.isfile(user_bash_marker):
+        break
+os.write(fd, b"\x03")
+collect(0.2)
+os.write(fd, b"\x04")
 collect(2.0)
 waited = 0
 status = 0
@@ -471,7 +478,7 @@ try:
     if waited == 0:
         os.kill(pid, signal.SIGTERM)
         os.waitpid(pid, 0)
-        print("Pi TUI did not exit after /quit", file=sys.stderr)
+        print("Pi TUI did not exit after Ctrl-D on an empty editor", file=sys.stderr)
         sys.exit(1)
 except ChildProcessError:
     waited = pid
