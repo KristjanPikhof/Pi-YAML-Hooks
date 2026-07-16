@@ -71,11 +71,13 @@ export function registerHookDiagnostics(pi: ExtensionAPI): void {
   const supportsEntries = hasEntryCapabilities(pi)
   entryEnabled.set(pi, false)
   pi.on("session_start", (_event, ctx) => {
-    entryEnabled.set(pi, supportsEntries && ctx.mode === "tui")
+    const mode = (ctx as unknown as { readonly mode?: unknown }).mode
+    entryEnabled.set(pi, supportsEntries && mode === "tui")
   })
 
   if (supportsEntries) {
-    pi.registerEntryRenderer(
+    const entryPi = pi as unknown as EntryCapablePi
+    entryPi.registerEntryRenderer(
       PI_YAML_HOOKS_DIAGNOSTICS_MESSAGE_TYPE,
       (entry, { expanded }, theme) => {
         const data = entry.data
