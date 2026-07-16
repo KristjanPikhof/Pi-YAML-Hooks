@@ -811,7 +811,7 @@ NODE
   [[ "$real_home_before" == "$real_home_after" ]] || fail "real HOME Pi mutation surfaces changed"
 
   pass_count=$((pass_count + 1))
-  printf 'A23P PASS — packed artifact installed by native Pi package/settings flow; source=%s installed=%s\n' "$package_source" "$installed_package"
+  printf 'A23P PASS — packed artifact installed by native Pi package/settings flow; package=%s@%s sha256=%s source=%s installed=%s\n' "$packed_name" "$packed_version" "$artifact_sha256" "$package_source" "$installed_package"
   pass_count=$((pass_count + 1))
   printf 'A24P PASS — commands, trust, configs, logs, tools, lifecycle, user_bash, prompt, diagnostics, and UI evidence asserted\n'
   printf 'A24P INTERACTIVE %s\n' "$interactive_row"
@@ -830,10 +830,10 @@ NODE
   pass_count=$((pass_count + 1))
   printf 'A25P PASS — cleanup removed temp HOME/install/processes; real_HOME_snapshot=%s temp_removed=%s\n' "$real_home_after" "$smoke_root"
   pass_count=$((pass_count + 1))
-  printf 'A26P PASS — Pi=%s SDK(pi-coding-agent)=%s SDK(pi-tui)=%s Node=%s\n' "$pi_version" "$coding_agent_version" "$tui_version" "$node_version"
+  printf 'A26P PASS — package=%s@%s Pi=%s SDK(pi-coding-agent)=%s SDK(pi-tui)=%s Node=%s\n' "$packed_name" "$packed_version" "$pi_version" "$coding_agent_version" "$tui_version" "$node_version"
   printf 'EVIDENCE paths: global=%s project=%s trust=%s default_log=%s override_log=%s events=%s\n' \
     "$global_config" "$project_config" "$trust_file" "$default_log" "$override_log" "$events_file"
-  printf 'EVIDENCE events: global.session.created,session.created,tool.before.bash,tool.after.read,tool.after.write,file.changed,session.idle,session.deleted\n'
+  printf 'EVIDENCE events: %s; names=global.session.created,session.created,tool.before.bash,tool.after.read,tool.after.write,file.changed,session.idle,session.deleted\n' "$event_sequence"
   printf 'PASS count: %d/4 acceptance rows; cleanup proof: %s absent; real HOME mutation surfaces unchanged\n' "$pass_count" "$smoke_root"
 }
 

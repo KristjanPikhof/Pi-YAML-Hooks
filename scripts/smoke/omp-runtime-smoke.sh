@@ -148,6 +148,7 @@ import readline from "node:readline";
 const [home, profile, project, validFixture, invalidFixture, projectConfig, trustFile, logFile, transcript, stderrFile] = process.argv.slice(2);
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 const assert = (condition, message) => { if (!condition) throw new Error(message); };
+const normalizePathText = (value) => String(value).replaceAll("/private/var/", "/var/");
 
 function startRpc(enableUserBash, confirmations = []) {
   const child = spawn("omp", ["--profile", profile, "--mode", "rpc", "--cwd", project, "--no-title"], {
@@ -247,15 +248,16 @@ for (const name of ["hooks-status", "hooks-validate", "hooks-trust", "hooks-relo
 }
 await first.prompt("status-untrusted", "/hooks-status");
 assert(first.output.includes("Project trusted: no"), "hooks-status did not report the untrusted project");
-assert(first.output.includes(projectConfig) && first.output.includes(trustFile) && first.output.includes(logFile), "hooks-status did not report native OMP paths");
+const untrustedStatus = normalizePathText(first.output);
+assert([projectConfig, trustFile, logFile].every((file) => untrustedStatus.includes(normalizePathText(file))), "hooks-status did not report native OMP paths");
 await first.prompt("validate-untrusted", "/hooks-validate");
 assert(/valid but untrusted/i.test(first.output), "hooks-validate did not explain valid-but-untrusted config");
 await first.prompt("trust", "/hooks-trust");
-assert(first.frames.some((frame) => frame.type === "extension_ui_request" && frame.method === "notify" && String(frame.message).includes(trustFile)), "hooks-trust notification is missing");
+assert(first.frames.some((frame) => frame.type === "extension_ui_request" && frame.method === "notify" && normalizePathText(frame.message).includes(normalizePathText(trustFile))), "hooks-trust notification is missing");
 await first.prompt("status-trusted", "/hooks-status");
 assert(first.output.includes("Project trusted: yes"), "trusted status was not observed");
 await first.prompt("tail-log", "/hooks-tail-log --path");
-assert(first.frames.some((frame) => frame.type === "extension_ui_request" && frame.method === "notify" && frame.message === logFile), "hooks-tail-log did not return the default OMP log path");
+assert(first.frames.some((frame) => frame.type === "extension_ui_request" && frame.method === "notify" && normalizePathText(frame.message) === normalizePathText(logFile)), "hooks-tail-log did not return the default OMP log path");
 
 copyFileSync(invalidFixture, projectConfig);
 const invalidStart = first.output.length;
