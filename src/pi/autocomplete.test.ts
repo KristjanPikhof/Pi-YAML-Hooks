@@ -3,6 +3,10 @@ import os from "node:os"
 import path from "node:path"
 
 import { resetPiHooksLoggerForTests } from "../core/logger.js"
+import {
+  __resetHookHostProfileForTests,
+  configureHookHostProfile,
+} from "../core/host-profile.js"
 import { registerHookAutocomplete, resetHookAutocompleteForTests } from "./autocomplete.js"
 
 interface Case {
@@ -84,13 +88,16 @@ function makeContext(opts: { projectDir: string; hasUI: boolean; expose: boolean
   }
 }
 
-function writeProjectHooks(projectDir: string, content: string): void {
-  const filePath = path.join(projectDir, ".pi", "hook", "hooks.yaml")
+function writeHooksFile(filePath: string, content: string): void {
   mkdirSync(path.dirname(filePath), { recursive: true })
   writeFileSync(filePath, content, "utf8")
 }
 
-async function withSandbox<T>(run: (projectDir: string) => Promise<T>): Promise<T> {
+function writeProjectHooks(projectDir: string, content: string): void {
+  writeHooksFile(path.join(projectDir, ".pi", "hook", "hooks.yaml"), content)
+}
+
+async function withSandbox<T>(run: (projectDir: string, homeDir: string) => Promise<T>): Promise<T> {
   const projectDir = mkdtempSync(path.join(os.tmpdir(), "pi-yaml-hooks-autocomplete-"))
   const homeDir = mkdtempSync(path.join(os.tmpdir(), "pi-yaml-hooks-home-"))
   const previousHome = process.env.HOME
@@ -99,10 +106,11 @@ async function withSandbox<T>(run: (projectDir: string) => Promise<T>): Promise<
   process.env.HOME = homeDir
   process.env.USERPROFILE = homeDir
   process.env.PI_YAML_HOOKS_TRUST_PROJECT = "1"
+  __resetHookHostProfileForTests()
   resetPiHooksLoggerForTests()
   resetHookAutocompleteForTests()
   try {
-    return await run(projectDir)
+    return await run(projectDir, homeDir)
   } finally {
     if (previousHome === undefined) delete process.env.HOME
     else process.env.HOME = previousHome
@@ -112,6 +120,7 @@ async function withSandbox<T>(run: (projectDir: string) => Promise<T>): Promise<
     else process.env.PI_YAML_HOOKS_TRUST_PROJECT = previousTrust
     resetPiHooksLoggerForTests()
     resetHookAutocompleteForTests()
+    __resetHookHostProfileForTests()
     rmSync(projectDir, { recursive: true, force: true })
     rmSync(homeDir, { recursive: true, force: true })
   }
@@ -315,18 +324,106 @@ const cases: Case[] = [
       }),
   },
   {
-    name: "/hooks-trust argument completions include the project config path",
+    name: "/hooks-status reports selected Pi paths and trusted project state",
     run: async () =>
-      await withSandbox(async (projectDir) => {
+      await withSandbox(async (projectDir, homeDir) => {
         writeProjectHooks(projectDir, `hooks:\n  - event: session.idle\n    actions:\n      - notify: hi\n`)
         const ctx = makeContext({ projectDir, hasUI: true, expose: true })
         registerHookAutocomplete(ctx as never)
         const provider = ctx.factories[0](createNoopProvider())
-        const input = "/hooks-trust "
+        const input = "/hooks-status "
         const suggestions = await provider.getSuggestions([input], 0, input.length, { signal: signal() })
-        const values = suggestions?.items.map((i) => i.value) ?? []
-        const expected = path.join(projectDir, ".pi", "hook", "hooks.yaml")
-        return values.includes(expected) ? { ok: true } : { ok: false, detail: JSON.stringify({ values, expected }) }
+        const items = suggestions?.items ?? []
+        const globalPath = path.join(homeDir, ".pi", "agent", "hook", "hooks.yaml")
+        const projectPath = path.join(projectDir, ".pi", "hook", "hooks.yaml")
+        const globalItem = items.find((item) => item.value === globalPath)
+        const projectItem = items.find((item) => item.value === projectPath)
+        const ok =
+          globalItem?.description?.includes("Pi global") === true &&
+          projectItem?.description?.includes("Pi project") === true &&
+          projectItem.description.includes("(trusted)")
+        return ok ? { ok: true } : { ok: false, detail: JSON.stringify({ globalItem, projectItem }) }
+      }),
+  },
+  {
+    name: "/hooks-status reports selected OMP native paths and trusted project state",
+    run: async () =>
+      await withSandbox(async (projectDir, homeDir) => {
+        const agentDir = path.join(homeDir, ".omp", "agent", "profiles", "work")
+        const profile = configureHookHostProfile({ kind: "omp", agentDir })
+        const globalPath = path.join(profile.agentDir, "hook", "hooks.yaml")
+        const projectPath = path.join(projectDir, ".omp", "hook", "hooks.yaml")
+        writeHooksFile(globalPath, "hooks: []\n")
+        writeHooksFile(projectPath, "hooks: []\n")
+        const ctx = makeContext({ projectDir, hasUI: true, expose: true })
+        registerHookAutocomplete(ctx as never)
+        const provider = ctx.factories[0](createNoopProvider())
+        const input = "/hooks-status "
+        const suggestions = await provider.getSuggestions([input], 0, input.length, { signal: signal() })
+        const items = suggestions?.items ?? []
+        const globalItem = items.find((item) => item.value === globalPath)
+        const projectItem = items.find((item) => item.value === projectPath)
+        const ok =
+          globalItem?.description?.includes("OMP global") === true &&
+          projectItem?.description?.includes("OMP project") === true &&
+          projectItem.description.includes("(trusted)")
+        return ok ? { ok: true } : { ok: false, detail: JSON.stringify({ globalItem, projectItem }) }
+      }),
+  },
+  {
+    name: "refreshes OMP fallback path suggestions after native configs appear without re-registering",
+    run: async () =>
+      await withSandbox(async (projectDir, homeDir) => {
+        const agentDir = path.join(homeDir, ".omp", "agent")
+        const profile = configureHookHostProfile({ kind: "omp", agentDir })
+        const fallbackGlobal = path.join(homeDir, ".pi", "agent", "hook", "hooks.yaml")
+        const fallbackProject = path.join(projectDir, ".pi", "hook", "hooks.yaml")
+        const nativeGlobal = path.join(profile.agentDir, "hook", "hooks.yaml")
+        const nativeProject = path.join(projectDir, ".omp", "hook", "hooks.yaml")
+        writeHooksFile(fallbackGlobal, "hooks: []\n")
+        writeHooksFile(fallbackProject, "hooks: []\n")
+        const ctx = makeContext({ projectDir, hasUI: true, expose: true })
+        registerHookAutocomplete(ctx as never)
+        const provider = ctx.factories[0](createNoopProvider())
+        const input = "/hooks-status "
+        const initial = await provider.getSuggestions([input], 0, input.length, { signal: signal() })
+        writeHooksFile(nativeGlobal, "hooks: []\n")
+        writeHooksFile(nativeProject, "hooks: []\n")
+        const refreshed = await provider.getSuggestions([input], 0, input.length, { signal: signal() })
+        const initialValues = initial?.items.map((item) => item.value) ?? []
+        const refreshedValues = refreshed?.items.map((item) => item.value) ?? []
+        const ok =
+          ctx.factories.length === 1 &&
+          initialValues.includes(fallbackGlobal) &&
+          initialValues.includes(fallbackProject) &&
+          refreshedValues.includes(nativeGlobal) &&
+          refreshedValues.includes(nativeProject) &&
+          !refreshedValues.includes(fallbackGlobal) &&
+          !refreshedValues.includes(fallbackProject)
+        return ok ? { ok: true } : { ok: false, detail: JSON.stringify({ initialValues, refreshedValues }) }
+      }),
+  },
+  {
+    name: "refreshes project trust description lazily without re-registering",
+    run: async () =>
+      await withSandbox(async (projectDir) => {
+        writeProjectHooks(projectDir, "hooks: []\n")
+        delete process.env.PI_YAML_HOOKS_TRUST_PROJECT
+        const ctx = makeContext({ projectDir, hasUI: true, expose: true })
+        registerHookAutocomplete(ctx as never)
+        const provider = ctx.factories[0](createNoopProvider())
+        const input = "/hooks-status "
+        const initial = await provider.getSuggestions([input], 0, input.length, { signal: signal() })
+        process.env.PI_YAML_HOOKS_TRUST_PROJECT = "1"
+        const refreshed = await provider.getSuggestions([input], 0, input.length, { signal: signal() })
+        const projectPath = path.join(projectDir, ".pi", "hook", "hooks.yaml")
+        const initialItem = initial?.items.find((item) => item.value === projectPath)
+        const refreshedItem = refreshed?.items.find((item) => item.value === projectPath)
+        const ok =
+          ctx.factories.length === 1 &&
+          initialItem?.description?.includes("(untrusted)") === true &&
+          refreshedItem?.description?.includes("(trusted)") === true
+        return ok ? { ok: true } : { ok: false, detail: JSON.stringify({ initialItem, refreshedItem }) }
       }),
   },
   {

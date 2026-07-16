@@ -3,6 +3,7 @@ import os from "node:os"
 import path from "node:path"
 import { fileURLToPath, pathToFileURL } from "node:url"
 
+import { __resetHookHostProfileForTests } from "../core/host-profile.js"
 import { resetPiHooksLoggerForTests } from "../core/logger.js"
 import { __testing__ as adapterTesting } from "./adapter.js"
 import { resetHookAutocompleteForTests } from "./autocomplete.js"
@@ -11,8 +12,14 @@ const currentDir = path.dirname(fileURLToPath(import.meta.url))
 const extensionEntrypointPath = currentDir.endsWith(`${path.sep}dist${path.sep}pi`)
   ? path.resolve(currentDir, "../extensions/index.js")
   : path.resolve(currentDir, "../../extensions/index.ts")
+const sharedEntrypointPath = currentDir.endsWith(`${path.sep}dist${path.sep}pi`)
+  ? path.resolve(currentDir, "../index.js")
+  : path.resolve(currentDir, "../index.ts")
 const { default: piHooksExtension } = (await import(pathToFileURL(extensionEntrypointPath).href)) as {
   default: (pi: unknown) => void
+}
+const { registerHooksExtension } = (await import(pathToFileURL(sharedEntrypointPath).href)) as {
+  registerHooksExtension: (pi: unknown, profile: { kind: "omp"; agentDir: string }) => void
 }
 
 interface Case {
@@ -63,7 +70,11 @@ class FakePiHarness {
   reloads = 0
   notificationsWithLevel: Array<{ message: string; type?: string }> = []
 
-  constructor(projectDir: string, sessionId = "session-1") {
+  constructor(
+    projectDir: string,
+    sessionId = "session-1",
+    readonly hostKind: "pi" | "omp" = "pi",
+  ) {
     this.projectDir = projectDir
     this.sessionId = sessionId
   }
@@ -93,7 +104,11 @@ class FakePiHarness {
       },
     } as unknown as Parameters<typeof piHooksExtension>[0]
 
-    piHooksExtension(pi)
+    if (this.hostKind === "pi") piHooksExtension(pi)
+    else {
+      const homeDir = process.env.HOME || process.env.USERPROFILE || os.homedir()
+      registerHooksExtension(pi, { kind: "omp", agentDir: path.join(homeDir, ".omp", "agent") })
+    }
   }
 
   createContext(): unknown {
@@ -174,12 +189,24 @@ class FakePiHarness {
     await this.emit("session_start", { reason })
   }
 
+  async sessionStartWithoutReason(): Promise<void> {
+    await this.emit("session_start", { type: "session_start" })
+  }
+
   async sessionBeforeSwitch(reason?: "new" | "resume"): Promise<void> {
     await this.emit("session_before_switch", reason ? { type: "session_before_switch", reason } : {})
   }
 
   async sessionShutdown(reason?: "quit" | "reload" | "new" | "resume" | "fork"): Promise<void> {
     await this.emit("session_shutdown", reason ? { type: "session_shutdown", reason } : {})
+  }
+
+  async sessionSwitch(reason?: "new" | "resume" | "fork"): Promise<void> {
+    await this.emit("session_switch", reason ? { type: "session_switch", reason } : {})
+  }
+
+  async sessionStop(): Promise<void> {
+    await this.emit("session_stop", { type: "session_stop" })
   }
 
   async beforeAgentStart(prompt = "hi", systemPrompt = "base system prompt"): Promise<unknown> {
@@ -251,6 +278,7 @@ async function withIsolatedProject<T>(trusted: boolean, run: (projectDir: string
   const previousUserProfile = process.env.USERPROFILE
   process.env.HOME = homeDir
   process.env.USERPROFILE = homeDir
+  __resetHookHostProfileForTests()
   resetPiHooksLoggerForTests()
   resetHookAutocompleteForTests()
   console.warn = () => {}
@@ -268,6 +296,7 @@ async function withIsolatedProject<T>(trusted: boolean, run: (projectDir: string
       else process.env.HOME = previousHome
       if (previousUserProfile === undefined) delete process.env.USERPROFILE
       else process.env.USERPROFILE = previousUserProfile
+      __resetHookHostProfileForTests()
       resetPiHooksLoggerForTests()
       resetHookAutocompleteForTests()
       rmSync(projectDir, { recursive: true, force: true })
@@ -286,6 +315,42 @@ function readTrustedProjectsFile(): string[] {
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms))
+}
+
+interface FakeMacrotasks {
+  readonly pendingCount: number
+  flushAll(): Promise<void>
+}
+
+async function withFakeMacrotasks<T>(run: (clock: FakeMacrotasks) => Promise<T>): Promise<T> {
+  const originalSetTimeout = globalThis.setTimeout
+  const queue: Array<() => unknown> = []
+  globalThis.setTimeout = ((
+    callback: (...args: unknown[]) => unknown,
+    _delay?: number,
+    ...args: unknown[]
+  ) => {
+    queue.push(() => callback(...args))
+    return 0 as unknown as NodeJS.Timeout
+  }) as typeof setTimeout
+
+  const clock: FakeMacrotasks = {
+    get pendingCount() {
+      return queue.length
+    },
+    async flushAll() {
+      while (queue.length > 0) {
+        const callback = queue.shift()
+        if (callback) await callback()
+      }
+    },
+  }
+
+  try {
+    return await run(clock)
+  } finally {
+    globalThis.setTimeout = originalSetTimeout
+  }
 }
 
 function createNoopAutocompleteProvider(): AutocompleteProvider {
@@ -428,6 +493,143 @@ const cases: Case[] = [
           ? { ok: true }
           : { ok: false, detail: `notifications=${JSON.stringify(harness.notifications)}` }
       }),
+  },
+  {
+    name: "OMP session.created maps startup and new switch once while excluding resume and fork",
+    run: async () =>
+      await withIsolatedProject(true, async (projectDir) => {
+        writeProjectHooks(
+          projectDir,
+          `hooks:
+  - event: session.created
+    actions:
+      - notify: "created"
+`,
+        )
+
+        const harness = new FakePiHarness(projectDir, "session-1", "omp")
+        harness.register()
+        await harness.sessionStartWithoutReason()
+        await harness.sessionStartWithoutReason()
+        await harness.sessionStart("resume")
+        await harness.sessionStart("fork")
+        harness.replaceSession("session-2")
+        await harness.sessionSwitch("new")
+        await harness.sessionSwitch("new")
+        harness.replaceSession("session-3")
+        await harness.sessionSwitch("resume")
+        harness.replaceSession("session-4")
+        await harness.sessionSwitch("fork")
+
+        return harness.notifications.join(",") === "created,created"
+          ? { ok: true }
+          : { ok: false, detail: `notifications=${JSON.stringify(harness.notifications)}` }
+      }),
+  },
+  {
+    name: "OMP session.deleted preserves reasons and deduplicates switch shutdown pairs",
+    run: async () =>
+      await withIsolatedProject(true, async (projectDir) => {
+        writeProjectHooks(
+          projectDir,
+          `hooks:
+  - event: session.deleted
+    actions:
+      - notify: "deleted"
+`,
+        )
+        const logFile = path.join(projectDir, "lifecycle.ndjson")
+        const previousDebug = process.env.PI_YAML_HOOKS_DEBUG
+        const previousLogFile = process.env.PI_YAML_HOOKS_LOG_FILE
+        process.env.PI_YAML_HOOKS_DEBUG = "1"
+        process.env.PI_YAML_HOOKS_LOG_FILE = logFile
+        try {
+          const harness = new FakePiHarness(projectDir, "session-1", "omp")
+          harness.register()
+          await harness.sessionBeforeSwitch("new")
+          await harness.sessionShutdown("new")
+          harness.replaceSession("session-2")
+          await harness.sessionShutdown("quit")
+
+          const entries = readFileSync(logFile, "utf8")
+            .trim()
+            .split("\n")
+            .map((line) => JSON.parse(line) as {
+              kind?: string
+              event?: string
+              details?: { reason?: string }
+            })
+          const reasons = entries
+            .filter((entry) => entry.kind === "dispatch_start" && entry.event === "session.deleted")
+            .map((entry) => entry.details?.reason)
+          const expectedReasons = JSON.stringify(["new", "quit"])
+          return harness.notifications.join(",") === "deleted,deleted" &&
+              JSON.stringify(reasons) === expectedReasons
+            ? { ok: true }
+            : {
+                ok: false,
+                detail: `notifications=${JSON.stringify(harness.notifications)}, reasons=${JSON.stringify(reasons)}`,
+              }
+        } finally {
+          if (previousDebug === undefined) delete process.env.PI_YAML_HOOKS_DEBUG
+          else process.env.PI_YAML_HOOKS_DEBUG = previousDebug
+          if (previousLogFile === undefined) delete process.env.PI_YAML_HOOKS_LOG_FILE
+          else process.env.PI_YAML_HOOKS_LOG_FILE = previousLogFile
+        }
+      }),
+  },
+  {
+    name: "OMP session_stop defers idle and suppresses replaced, continuing, busy, and pending turns",
+    run: async () =>
+      await withIsolatedProject(true, async (projectDir) =>
+        await withFakeMacrotasks(async (clock) => {
+          writeProjectHooks(
+            projectDir,
+            `hooks:
+  - event: session.idle
+    actions:
+      - notify: "idle"
+`,
+          )
+
+          const harness = new FakePiHarness(projectDir, "session-1", "omp")
+          harness.register()
+          await harness.agentStart()
+          await harness.sessionStop()
+          const deferredUntilMacrotask = harness.notifications.length === 0 && clock.pendingCount === 1
+          harness.replaceSession("session-2")
+          await clock.flushAll()
+
+          await harness.agentStart()
+          await harness.sessionStop()
+          await harness.agentStart()
+          await clock.flushAll()
+
+          harness.idle = false
+          await harness.sessionStop()
+          await clock.flushAll()
+          harness.idle = true
+          harness.pendingMessages = true
+          await harness.sessionStop()
+          await clock.flushAll()
+
+          harness.pendingMessages = false
+          await harness.agentStart()
+          await harness.sessionStop()
+          await harness.sessionStop()
+          const dedupeChecksQueued = clock.pendingCount === 2
+          await clock.flushAll()
+
+          return deferredUntilMacrotask && dedupeChecksQueued && harness.notifications.join(",") === "idle"
+            ? { ok: true }
+            : {
+                ok: false,
+                detail:
+                  `deferred=${deferredUntilMacrotask}, dedupeQueued=${dedupeChecksQueued}, ` +
+                  `notifications=${JSON.stringify(harness.notifications)}, pending=${clock.pendingCount}`,
+              }
+        }),
+      ),
   },
   {
     name: "registers the hook diagnostics message renderer",

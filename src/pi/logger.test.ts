@@ -238,6 +238,43 @@ const cases: Case[] = [
       }
     },
   },
+  {
+    name: "cached logger follows a later explicit OMP profile",
+    run: () => {
+      const tempDir = mkdtempSync(path.join(os.tmpdir(), "pi-yaml-hooks-log-profile-refresh-"))
+      try {
+        __resetHookHostProfileForTests()
+        resetPiHooksLoggerForTests()
+        return withEnv("HOME", tempDir, () =>
+          withEnv("PI_YAML_HOOKS_LOG_FILE", undefined, () =>
+            withEnv("PI_YAML_HOOKS_DEBUG", "1", () => {
+              const piLogger = getPiHooksLogger()
+              const profile = configureHookHostProfile({
+                kind: "omp",
+                agentDir: path.join(tempDir, ".omp", "agent"),
+              })
+              const ompLogger = getPiHooksLogger()
+              const expected = path.join(profile.agentDir, "logs", "pi-yaml-hooks.ndjson")
+              return piLogger !== ompLogger && ompLogger.filePath === expected
+                ? { ok: true }
+                : {
+                    ok: false,
+                    detail: JSON.stringify({
+                      piFilePath: piLogger.filePath,
+                      ompFilePath: ompLogger.filePath,
+                      expected,
+                    }),
+                  }
+            }),
+          ),
+        )
+      } finally {
+        __resetHookHostProfileForTests()
+        resetPiHooksLoggerForTests()
+        rmSync(tempDir, { recursive: true, force: true })
+      }
+    },
+  },
 ]
 
 export function main(): number {

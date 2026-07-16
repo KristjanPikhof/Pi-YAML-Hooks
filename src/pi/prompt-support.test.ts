@@ -3,6 +3,10 @@ import os from "node:os"
 import path from "node:path"
 
 import { resetPiHooksLoggerForTests } from "../core/logger.js"
+import {
+  __resetHookHostProfileForTests,
+  configureHookHostProfile,
+} from "../core/host-profile.js"
 import { registerPromptSupport } from "./prompt-support.js"
 
 interface Case {
@@ -39,7 +43,10 @@ function withTrust<T>(trusted: boolean, run: () => Promise<T>): Promise<T> {
   })
 }
 
-async function withSandbox<T>(opts: { trusted: boolean; awareness?: string | null }, run: (projectDir: string) => Promise<T>): Promise<T> {
+async function withSandbox<T>(
+  opts: { trusted: boolean; awareness?: string | null },
+  run: (projectDir: string, homeDir: string) => Promise<T>,
+): Promise<T> {
   const projectDir = mkdtempSync(path.join(os.tmpdir(), "pi-yaml-hooks-prompt-"))
   const homeDir = mkdtempSync(path.join(os.tmpdir(), "pi-yaml-hooks-home-"))
   const previousHome = process.env.HOME
@@ -54,11 +61,12 @@ async function withSandbox<T>(opts: { trusted: boolean; awareness?: string | nul
   } else {
     process.env.PI_YAML_HOOKS_PROMPT_AWARENESS = opts.awareness
   }
+  __resetHookHostProfileForTests()
   resetPiHooksLoggerForTests()
 
   return withTrust(opts.trusted, async () => {
     try {
-      return await run(projectDir)
+      return await run(projectDir, homeDir)
     } finally {
       if (previousHome === undefined) delete process.env.HOME
       else process.env.HOME = previousHome
@@ -67,16 +75,20 @@ async function withSandbox<T>(opts: { trusted: boolean; awareness?: string | nul
       if (previousAwareness === undefined) delete process.env.PI_YAML_HOOKS_PROMPT_AWARENESS
       else process.env.PI_YAML_HOOKS_PROMPT_AWARENESS = previousAwareness
       resetPiHooksLoggerForTests()
+      __resetHookHostProfileForTests()
       rmSync(projectDir, { recursive: true, force: true })
       rmSync(homeDir, { recursive: true, force: true })
     }
   })
 }
 
-function writeProjectHooks(projectDir: string, content: string): void {
-  const filePath = path.join(projectDir, ".pi", "hook", "hooks.yaml")
+function writeHooksFile(filePath: string, content: string): void {
   mkdirSync(path.dirname(filePath), { recursive: true })
   writeFileSync(filePath, content, "utf8")
+}
+
+function writeProjectHooks(projectDir: string, content: string): void {
+  writeHooksFile(path.join(projectDir, ".pi", "hook", "hooks.yaml"), content)
 }
 
 async function invokeBeforeAgentStart(
@@ -84,6 +96,7 @@ async function invokeBeforeAgentStart(
   projectDir: string,
   hasUI = true,
   basePrompt = "base system prompt",
+  mode?: string,
 ): Promise<unknown> {
   const handlers = pi.handlers.get("before_agent_start") ?? []
   if (handlers.length === 0) {
@@ -93,6 +106,7 @@ async function invokeBeforeAgentStart(
     cwd: projectDir,
     hasUI,
     ui: hasUI ? { notify: () => {}, confirm: async () => true, setStatus: () => {} } : undefined,
+    ...(mode !== undefined ? { mode } : {}),
     sessionManager: { getSessionId: () => "session", getHeader: () => ({ id: "session" }) },
     isIdle: () => true,
     hasPendingMessages: () => false,
@@ -119,9 +133,10 @@ const cases: Case[] = [
       }),
   },
   {
-    name: "appends Hook-awareness block when project hooks are loaded",
+    name: "reports selected Pi paths and trust state when SDK mode is omitted",
     run: async () =>
-      await withSandbox({ trusted: true }, async (projectDir) => {
+      await withSandbox({ trusted: true }, async (projectDir, homeDir) => {
+        const projectPath = path.join(projectDir, ".pi", "hook", "hooks.yaml")
         writeProjectHooks(
           projectDir,
           `hooks:
@@ -138,8 +153,66 @@ const cases: Case[] = [
         const ok =
           sp.startsWith("base system prompt") &&
           sp.includes("Hook-awareness for this session:") &&
+          sp.includes("- active hook host: Pi") &&
+          sp.includes(`- selected global hook config: ${path.join(homeDir, ".pi", "agent", "hook", "hooks.yaml")}`) &&
+          sp.includes(`- project hooks are trusted and active when loaded: ${projectPath}`) &&
+          sp.includes(`- project trust list: ${path.join(homeDir, ".pi", "agent", "trusted-projects.json")}`) &&
           sp.includes("pi-yaml-hooks loaded 1 hooks")
         return ok ? { ok: true } : { ok: false, detail: sp }
+      }),
+  },
+  {
+    name: "reports selected OMP native paths and trust state",
+    run: async () =>
+      await withSandbox({ trusted: true }, async (projectDir, homeDir) => {
+        const agentDir = path.join(homeDir, ".omp", "agent", "profiles", "work")
+        const profile = configureHookHostProfile({ kind: "omp", agentDir })
+        const globalPath = path.join(profile.agentDir, "hook", "hooks.yaml")
+        const projectPath = path.join(projectDir, ".omp", "hook", "hooks.yaml")
+        writeHooksFile(globalPath, "hooks: []\n")
+        writeHooksFile(projectPath, "hooks: []\n")
+        const pi = createFakePi()
+        registerPromptSupport(pi as never)
+        const result = await invokeBeforeAgentStart(pi, projectDir)
+        const sp = (result as { systemPrompt?: string } | undefined)?.systemPrompt
+        const ok =
+          typeof sp === "string" &&
+          sp.includes("- active hook host: OMP") &&
+          sp.includes(`- selected global hook config: ${globalPath}`) &&
+          sp.includes(`- project hooks are trusted and active when loaded: ${projectPath}`) &&
+          sp.includes(`- project trust list: ${path.join(profile.agentDir, "trusted-projects.json")}`)
+        return ok ? { ok: true } : { ok: false, detail: typeof sp === "string" ? sp : JSON.stringify(result) }
+      }),
+  },
+  {
+    name: "refreshes OMP fallback prompt paths after native configs appear without re-registering",
+    run: async () =>
+      await withSandbox({ trusted: true }, async (projectDir, homeDir) => {
+        const agentDir = path.join(homeDir, ".omp", "agent")
+        const profile = configureHookHostProfile({ kind: "omp", agentDir })
+        const fallbackGlobal = path.join(homeDir, ".pi", "agent", "hook", "hooks.yaml")
+        const fallbackProject = path.join(projectDir, ".pi", "hook", "hooks.yaml")
+        const nativeGlobal = path.join(profile.agentDir, "hook", "hooks.yaml")
+        const nativeProject = path.join(projectDir, ".omp", "hook", "hooks.yaml")
+        writeHooksFile(fallbackGlobal, "hooks: []\n")
+        writeHooksFile(fallbackProject, "hooks: []\n")
+        const pi = createFakePi()
+        registerPromptSupport(pi as never)
+        const initialResult = await invokeBeforeAgentStart(pi, projectDir)
+        writeHooksFile(nativeGlobal, "hooks: []\n")
+        writeHooksFile(nativeProject, "hooks: []\n")
+        const refreshedResult = await invokeBeforeAgentStart(pi, projectDir)
+        const initial = (initialResult as { systemPrompt?: string } | undefined)?.systemPrompt
+        const refreshed = (refreshedResult as { systemPrompt?: string } | undefined)?.systemPrompt
+        const ok =
+          (pi.handlers.get("before_agent_start") ?? []).length === 1 &&
+          initial?.includes(`- selected global hook config: ${fallbackGlobal}`) === true &&
+          initial.includes(`- project hooks are trusted and active when loaded: ${fallbackProject}`) &&
+          refreshed?.includes(`- selected global hook config: ${nativeGlobal}`) === true &&
+          refreshed.includes(`- project hooks are trusted and active when loaded: ${nativeProject}`) &&
+          !refreshed.includes(fallbackGlobal) &&
+          !refreshed.includes(fallbackProject)
+        return ok ? { ok: true } : { ok: false, detail: JSON.stringify({ initial, refreshed }) }
       }),
   },
   {
@@ -200,7 +273,7 @@ const cases: Case[] = [
       }),
   },
   {
-    name: "mentions UI degradation when hasUI is false",
+    name: "mentions UI degradation in headless RPC mode",
     run: async () =>
       await withSandbox({ trusted: true }, async (projectDir) => {
         writeProjectHooks(
@@ -213,7 +286,7 @@ const cases: Case[] = [
         )
         const pi = createFakePi()
         registerPromptSupport(pi as never)
-        const result = await invokeBeforeAgentStart(pi, projectDir, /* hasUI */ false)
+        const result = await invokeBeforeAgentStart(pi, projectDir, false, "base system prompt", "rpc")
         const sp = (result as { systemPrompt?: string } | undefined)?.systemPrompt
         return typeof sp === "string" && sp.includes("UI is unavailable in this mode")
           ? { ok: true }

@@ -534,13 +534,21 @@ const cases: Case[] = [
     name: "host profile defaults without locking and rejects conflicting reload",
     run: () => {
       const sandbox = createSandbox("host-profile-state")
-      const agentDir = path.join(sandbox, "named-agent")
+      const realParent = path.join(sandbox, "real")
+      const linkedParent = path.join(sandbox, "linked")
+      const agentDir = path.join(linkedParent, "named-agent")
       try {
         __resetHookHostProfileForTests()
-        mkdirSync(agentDir, { recursive: true })
+        mkdirSync(realParent, { recursive: true })
+        symlinkSync(realParent, linkedParent, "dir")
         const unconfigured = withEnv("HOME", path.join(sandbox, "home"), () => getHookHostProfile())
         const configured = configureHookHostProfile({ kind: "omp", agentDir })
+        mkdirSync(path.join(realParent, "named-agent"), { recursive: true })
         const reloaded = configureHookHostProfile({ kind: "omp", agentDir: path.join(agentDir, ".") })
+        const whitespaceProfile = createHookHostProfile({
+          kind: "omp",
+          agentDir: path.join(sandbox, " named-agent "),
+        })
         let conflictRejected = false
         try {
           configureHookHostProfile({ kind: "pi" })
@@ -551,10 +559,13 @@ const cases: Case[] = [
           unconfigured.kind === "pi" &&
           getConfiguredHookHostProfile() === configured &&
           configured === reloaded &&
-          configured.agentDir === realpathSync.native(agentDir) &&
+          configured.agentDir === realpathSync.native(path.join(realParent, "named-agent")) &&
+          path.basename(whitespaceProfile.agentDir) === " named-agent " &&
           Object.isFrozen(configured) &&
           conflictRejected
-        return ok ? { ok: true } : { ok: false, detail: JSON.stringify({ unconfigured, configured, conflictRejected }) }
+        return ok
+          ? { ok: true }
+          : { ok: false, detail: JSON.stringify({ unconfigured, configured, whitespaceProfile, conflictRejected }) }
       } finally {
         __resetHookHostProfileForTests()
         cleanup(sandbox)

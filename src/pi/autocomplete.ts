@@ -3,8 +3,9 @@ import path from "node:path"
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent"
 import type { AutocompleteItem, AutocompleteProvider as PiAutocompleteProvider } from "@earendil-works/pi-tui"
 
-import { resolveHookConfigPaths } from "../core/config-paths.js"
+import { resolveHookConfigPaths, resolveProjectHookResolution } from "../core/config-paths.js"
 import { loadDiscoveredHooksSnapshot } from "../core/load-hooks.js"
+import { getHookHostProfile } from "../core/host-profile.js"
 import { SESSION_HOOK_EVENTS } from "../core/types.js"
 import { getPiHooksLogFilePath } from "../core/logger.js"
 
@@ -126,7 +127,18 @@ let cachedAutocompleteState: CachedState | null = null
 function getOrComputeAutocompleteState(cwd: string): HookAutocompleteState {
   const projectDir = path.resolve(cwd)
   const snapshot = loadDiscoveredHooksSnapshot({ projectDir })
-  const signature = snapshot.signature
+  const profile = getHookHostProfile()
+  const globalPath = resolveHookConfigPaths({ profile }).global
+  const project = resolveProjectHookResolution({ projectDir, profile })
+  const hostLabel = profile.kind === "omp" ? "OMP" : "Pi"
+  const signature = [
+    snapshot.signature,
+    profile.kind,
+    globalPath ?? "",
+    project?.projectConfigPath ?? "",
+    project?.trustFilePath ?? "",
+    project?.trusted ? "trusted" : "untrusted",
+  ].join("\0")
   if (
     cachedAutocompleteState &&
     cachedAutocompleteState.projectDir === projectDir &&
@@ -135,7 +147,6 @@ function getOrComputeAutocompleteState(cwd: string): HookAutocompleteState {
     return cachedAutocompleteState.state
   }
 
-  const paths = resolveHookConfigPaths({ projectDir })
   const hookIds = new Map<string, AutocompleteItem>()
 
   for (const hooks of snapshot.hooks.values()) {
@@ -150,13 +161,21 @@ function getOrComputeAutocompleteState(cwd: string): HookAutocompleteState {
     }
   }
 
-  const configPathItems = [paths.global, paths.project]
-    .filter((filePath): filePath is string => typeof filePath === "string" && filePath.length > 0)
-    .map((filePath) => ({
-      value: filePath,
-      label: filePath,
-      description: "pi-yaml-hooks config path",
-    }))
+  const configPathItems: AutocompleteItem[] = []
+  if (globalPath) {
+    configPathItems.push({
+      value: globalPath,
+      label: globalPath,
+      description: `${hostLabel} global pi-yaml-hooks config path`,
+    })
+  }
+  if (project?.projectConfigPath) {
+    configPathItems.push({
+      value: project.projectConfigPath,
+      label: project.projectConfigPath,
+      description: `${hostLabel} project pi-yaml-hooks config path (${project.trusted ? "trusted" : "untrusted"})`,
+    })
+  }
 
   const logFilePath = getPiHooksLogFilePath()
 
@@ -185,8 +204,12 @@ function createHookAutocompleteProviderFactory(cwd: string): AutocompleteProvide
   return (current: HookAutocompleteProvider): HookAutocompleteProvider => ({
     async getSuggestions(lines, cursorLine, cursorCol, options) {
       const currentSuggestions = await current.getSuggestions(lines, cursorLine, cursorCol, options)
-      // P1-11: recompute (or reuse cached) state on every call so freshly
-      // edited hooks.yaml files become visible without a PI restart.
+      const line = lines[cursorLine] ?? ""
+      if (!line.slice(0, cursorCol).startsWith("/hooks")) {
+        return currentSuggestions
+      }
+      // P1-11: recompute (or reuse cached) state for each hook-completion
+      // request so freshly edited hooks.yaml files appear without a restart.
       const state = getOrComputeAutocompleteState(cwd)
       const hookSuggestions = getHookSuggestions(state, lines, cursorLine, cursorCol)
       if (!hookSuggestions) {
