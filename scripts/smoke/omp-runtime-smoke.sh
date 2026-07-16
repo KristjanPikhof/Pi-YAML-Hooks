@@ -309,7 +309,9 @@ assert(!second.frames.some((frame) => frame.type === "extension_error"), "second
 assert(!second.frames.some((frame) => /autocomplete/i.test(String(frame.type))), "RPC unexpectedly exposed the TUI autocomplete provider");
 await second.close();
 
-const allFrames = readFileSync(transcript, "utf8").trim().split("\n").filter(Boolean).map((line) => JSON.parse(line));
+const allFrames = readFileSync(transcript, "utf8").trim().split("\n").flatMap((line) => {
+  try { return [JSON.parse(line)]; } catch { return []; }
+});
 assert(!allFrames.some((frame) => frame.type === "extension_error"), "RPC transcript contains extension_error");
 assert(!/failed to load extension|cannot find module|extension load error/i.test(readFileSync(stderrFile, "utf8")), "RPC stderr contains an extension load error");
 RPC
@@ -383,7 +385,7 @@ while (Date.now() < deadline) {
 throw new Error("timed out waiting for installed OMP adapter deferred idle dispatch");
 IDLE
 bun "$SMOKE_ROOT/deferred-idle.mjs" \
-  "$PLUGIN_DIR/extensions/omp-yaml-hooks/index.ts" "$AGENT_DIR" "$PROJECT_DIR" "$EVENT_FILE"
+  "$PLUGIN_DIR/dist/extensions/omp-yaml-hooks/index.js" "$AGENT_DIR" "$PROJECT_DIR" "$EVENT_FILE"
 
 cp "$VALID_FIXTURE" "$PROJECT_CONFIG"
 sed 's/omp-lazy-initial/omp-lazy-refreshed/' "$VALID_FIXTURE" > "$SMOKE_ROOT/refreshed-hooks.yaml"
