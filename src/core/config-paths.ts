@@ -5,7 +5,6 @@ import { execFileSync } from "node:child_process"
 
 import { getPiHooksLogger } from "./logger.js"
 import {
-  createHookHostProfile,
   getConfiguredHookHostProfile,
   type HookHostProfile,
 } from "./host-profile.js"
@@ -394,6 +393,7 @@ export function resolveTrustedProjectsFilePath(
 function resolveDiscoveryProfile(
   options: Pick<HookConfigDiscoveryOptions, "profile">,
   homeDir: string,
+): HookHostProfile {
   return (
     options.profile ??
     getConfiguredHookHostProfile() ??
