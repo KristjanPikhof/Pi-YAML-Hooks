@@ -58,6 +58,8 @@ class FakePiHarness {
   hasUI = true
   exposeAutocomplete = true
   confirmResult = true
+  idle = true
+  pendingMessages = false
   reloads = 0
   notificationsWithLevel: Array<{ message: string; type?: string }> = []
 
@@ -139,8 +141,8 @@ class FakePiHarness {
           return { id: this.sessionId }
         },
       },
-      isIdle: () => true,
-      hasPendingMessages: () => false,
+      isIdle: () => this.idle,
+      hasPendingMessages: () => this.pendingMessages,
       reload: async () => {
         this.reloads += 1
       },
@@ -184,8 +186,21 @@ class FakePiHarness {
     return await this.emit("before_agent_start", { type: "before_agent_start", prompt, systemPrompt })
   }
 
+  async agentStart(): Promise<void> {
+    await this.emit("agent_start")
+  }
+
   async agentEnd(): Promise<void> {
     await this.emit("agent_end")
+  }
+
+  async agentSettled(): Promise<void> {
+    await this.emit("agent_settled")
+  }
+
+  async agentRunEnd(): Promise<void> {
+    await this.agentStart()
+    await this.agentEnd()
   }
 
   async toolCall(toolName: string, toolCallId: string, input: Record<string, unknown> = {}): Promise<unknown> {
@@ -321,10 +336,95 @@ const cases: Case[] = [
         const harness = new FakePiHarness(projectDir)
         harness.register()
         await harness.sessionStart("new")
-        await harness.agentEnd()
+        await harness.agentRunEnd()
 
         const expected = JSON.stringify(["trusted-created", "trusted-idle"])
         return JSON.stringify(harness.notifications) === expected
+          ? { ok: true }
+          : { ok: false, detail: `notifications=${JSON.stringify(harness.notifications)}` }
+      }),
+  },
+  {
+    name: "session.idle waits for agent_settled when agent_end is not yet idle",
+    run: async () =>
+      await withIsolatedProject(true, async (projectDir) => {
+        writeProjectHooks(
+          projectDir,
+          `hooks:
+  - event: session.idle
+    actions:
+      - notify: "settled-idle"
+`,
+        )
+
+        const harness = new FakePiHarness(projectDir)
+        harness.register()
+        await harness.agentStart()
+        harness.idle = false
+        await harness.agentEnd()
+        const notificationsAtAgentEnd = harness.notifications.length
+        harness.idle = true
+        await harness.agentSettled()
+
+        return notificationsAtAgentEnd === 0 && harness.notifications.join(",") === "settled-idle"
+          ? { ok: true }
+          : {
+              ok: false,
+              detail: `atAgentEnd=${notificationsAtAgentEnd}, notifications=${JSON.stringify(harness.notifications)}`,
+            }
+      }),
+  },
+  {
+    name: "session.idle deduplicates agent_end and agent_settled and re-arms on agent_start",
+    run: async () =>
+      await withIsolatedProject(true, async (projectDir) => {
+        writeProjectHooks(
+          projectDir,
+          `hooks:
+  - event: session.idle
+    actions:
+      - notify: "idle"
+`,
+        )
+
+        const harness = new FakePiHarness(projectDir)
+        harness.register()
+        await harness.agentStart()
+        await harness.agentEnd()
+        await harness.agentSettled()
+        await harness.agentStart()
+        await harness.agentEnd()
+        await harness.agentSettled()
+
+        return harness.notifications.join(",") === "idle,idle"
+          ? { ok: true }
+          : { ok: false, detail: `notifications=${JSON.stringify(harness.notifications)}` }
+      }),
+  },
+  {
+    name: "session.idle suppresses pending messages until the continuation settles",
+    run: async () =>
+      await withIsolatedProject(true, async (projectDir) => {
+        writeProjectHooks(
+          projectDir,
+          `hooks:
+  - event: session.idle
+    actions:
+      - notify: "idle"
+`,
+        )
+
+        const harness = new FakePiHarness(projectDir)
+        harness.register()
+        await harness.agentStart()
+        harness.pendingMessages = true
+        await harness.agentEnd()
+        await harness.agentSettled()
+        harness.pendingMessages = false
+        await harness.agentStart()
+        await harness.agentEnd()
+
+        return harness.notifications.join(",") === "idle"
           ? { ok: true }
           : { ok: false, detail: `notifications=${JSON.stringify(harness.notifications)}` }
       }),
@@ -469,7 +569,7 @@ const cases: Case[] = [
         const harness = new FakePiHarness(projectDir)
         harness.register()
         await harness.sessionStart("new")
-        await harness.agentEnd()
+        await harness.agentRunEnd()
 
         return harness.notifications.length === 0
           ? { ok: true }
@@ -770,7 +870,7 @@ const cases: Case[] = [
         const harness = new FakePiHarness(projectDir)
         harness.register()
 
-        await harness.agentEnd()
+        await harness.agentRunEnd()
 
         writeProjectHooks(
           projectDir,
@@ -781,7 +881,7 @@ const cases: Case[] = [
 `,
         )
         await harness.toolResult("edit", "call-3", { path: path.join(projectDir, ".pi", "hook", "hooks.yaml") })
-        await harness.agentEnd()
+        await harness.agentRunEnd()
 
         writeProjectHooks(
           projectDir,
@@ -792,7 +892,7 @@ const cases: Case[] = [
 `,
         )
         await harness.toolResult("edit", "call-4", { path: path.join(projectDir, ".pi", "hook", "hooks.yaml") })
-        await harness.agentEnd()
+        await harness.agentRunEnd()
 
         const expected = JSON.stringify(["idle-v1", "idle-v2", "idle-v2"])
         return JSON.stringify(harness.notifications) === expected
@@ -827,7 +927,7 @@ hooks: []
         const harness = new FakePiHarness(projectDir)
         harness.register()
 
-        await harness.agentEnd()
+        await harness.agentRunEnd()
 
         writeFileSync(
           importedPath,
@@ -839,7 +939,7 @@ hooks: []
           "utf8",
         )
         await harness.toolResult("edit", "call-import-1", { path: importedPath })
-        await harness.agentEnd()
+        await harness.agentRunEnd()
 
         writeFileSync(
           importedPath,
@@ -851,7 +951,7 @@ hooks: []
           "utf8",
         )
         await harness.toolResult("edit", "call-import-2", { path: importedPath })
-        await harness.agentEnd()
+        await harness.agentRunEnd()
 
         const expected = JSON.stringify(["import-v1", "import-v2", "import-v2"])
         return JSON.stringify(harness.notifications) === expected
@@ -1060,7 +1160,7 @@ hooks: []
 
         const harness = new FakePiHarness(projectDir)
         harness.register()
-        await harness.agentEnd()
+        await harness.agentRunEnd()
 
         return harness.customMessages.some((message) => message.customType === "pi-yaml-hooks-diagnostics") &&
             harness.customMessages.some((message) => JSON.stringify(message.content).includes("validation issue"))

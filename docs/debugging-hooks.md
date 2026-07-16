@@ -10,13 +10,13 @@ Even without debug logging, hook execution failures and adapter dispatch failure
 
 ## Structured in-session diagnostics
 
-`pi-yaml-hooks` also emits structured PI-native diagnostics messages for:
+`pi-yaml-hooks` also emits structured PI-native diagnostics for:
 
 - `/hooks-status`
 - `/hooks-validate`
 - hook-load validation problems detected while loading a config
 
-These appear inline in the session when PI supports custom messages. In no-UI or other non-rendered contexts, the same message content still degrades to plain text plus the existing logs; RPC mode in Pi 0.79+ may still expose UI depending on the host.
+On the Pi 0.80-capable TUI path, these are persisted as custom entries that appear inline but do not enter model context. Older Pi and non-TUI paths retain custom messages. In no-UI or other non-rendered contexts, the same content still degrades to plain text plus the existing logs; RPC mode in Pi 0.79+ may still expose UI depending on the host.
 
 ## Log file
 

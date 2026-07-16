@@ -11,7 +11,7 @@ This repo is the PI port of [OpenCode-Hooks](https://github.com/KristjanPikhof/O
 - Filter hooks with `matchesCodeFiles`, `matchesAnyPath`, and `matchesAllPaths`
 - Load one global root config and one trusted project root config; imports are gated by trust and opt-in env vars
 - Show built-in diagnostics with `/hooks-status`, `/hooks-validate`, `/hooks-trust`, `/hooks-reload`, and `/hooks-tail-log`
-- Emit structured in-session diagnostics when PI supports custom messages
+- Persist diagnostics as context-free custom entries on Pi 0.80-capable TUI hosts, with custom-message fallback on older or non-TUI hosts
 - Inject a short hook-awareness note before agent start (disable with `PI_YAML_HOOKS_PROMPT_AWARENESS=0`)
 
 ## Quick start
@@ -115,7 +115,7 @@ When an event matches, `pi-yaml-hooks` evaluates conditions and runs the configu
 | `tool.after.*` | After a tool call |
 | `file.changed` | Synthesized after recognized file mutations |
 | `session.created` | PI startup or a genuinely new session |
-| `session.idle` | Agent turn finished and no messages are pending |
+| `session.idle` | Agent turn has settled with no retry, compaction retry, or queued continuation remaining on capable hosts; older Pi falls back to `agent_end` behavior |
 | `session.deleted` | Best-effort cleanup on shutdown or session switch; includes PI's reason (`quit`, `reload`, `new`, `resume`, or `fork`) when available |
 
 ### Actions
@@ -138,7 +138,7 @@ When an event matches, `pi-yaml-hooks` evaluates conditions and runs the configu
 | `/hooks-reload` | Asks PI to reload extensions; edited hooks also refresh lazily on the next relevant event |
 | `/hooks-tail-log` | Log path plus a ready-to-run `tail -F` command; `--follow` starts a detached live tail, and `--path` prints only the path |
 
-`/hooks-status`, `/hooks-validate`, and hook-load validation errors also emit structured in-session diagnostics when PI supports custom messages.
+`/hooks-status`, `/hooks-validate`, and hook-load validation errors persist as custom entries on the Pi 0.80-capable TUI path. These entries do not enter model context. Older Pi and non-TUI paths retain the custom-message fallback.
 
 PI exposes `ctx.ui.addAutocompleteProvider` in the TUI editor, so `pi-yaml-hooks` layers guarded `/hooks` autocomplete only when `ctx.mode` is `"tui"` (or absent on older SDKs) and the method exists. Suggestions include the command names plus contextual hook IDs, event names, config paths, and log-tail options where useful. Hook IDs are loaded lazily and memoized by hook-snapshot signature, not fixed at extension registration time.
 

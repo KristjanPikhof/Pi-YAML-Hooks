@@ -154,7 +154,7 @@ Custom tool names can also match if the host emits them.
 |---|---|---|
 | `file.changed` | After recognized file mutations | Synthesized by `pi-yaml-hooks`; see below for exact sources |
 | `session.created` | On PI startup or a genuinely new session | Does not fire on resume, reload, or fork re-entry |
-| `session.idle` | When the agent loop ends and there are no pending messages | Includes accumulated file changes since the last successful idle dispatch |
+| `session.idle` | When no retry, compaction retry, or queued continuation remains on capable hosts | Falls back to `agent_end` behavior on older Pi; includes accumulated file changes since the last successful idle dispatch |
 | `session.deleted` | On shutdown and before session switches | Best-effort and lossy by design; PI may provide a `reason` (`quit`, `reload`, `new`, `resume`, or `fork`), which is forwarded on the envelope when available |
 
 ### Exact `file.changed` behavior
@@ -538,7 +538,7 @@ For a real PI 0.79-compatible run, verify these compatibility-sensitive surfaces
 
 - `before_agent_start` appends the hook-awareness note when `PI_YAML_HOOKS_PROMPT_AWARENESS` is not `0`
 - no-UI/headless mode still mentions degraded UI actions in that prompt note, while RPC UI mode can deliver `notify`, `confirm`, and `setStatus` when `ctx.hasUI` is true
-- `/hooks-status`, `/hooks-validate`, and `/hooks-reload` work and emit structured diagnostics when PI supports custom messages
+- `/hooks-status`, `/hooks-validate`, and `/hooks-reload` work; the Pi 0.80-capable TUI path persists diagnostics as custom entries outside model context, while older or non-TUI paths retain custom messages
 - `tool.before.bash`, `tool.after.read`, `tool.after.write`, and synthesized `file.changed` events reach smoke hooks
 - `tool:` actions produce a follow-up prompt in the current PI session, not imperative tool execution
 - `PI_YAML_HOOKS_ENABLE_USER_BASH=1` routes human `!` / `!!` commands through `tool.before.bash` only

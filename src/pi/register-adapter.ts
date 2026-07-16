@@ -49,7 +49,8 @@ import { registerUserBashInterception } from "./user-bash.js";
  * Installs:
  * - `tool_call`    → runtime `tool.execute.before` (+ block-tool response)
  * - `tool_result`  → Phase 1 snapshot-hook + runtime `tool.execute.after`
- * - `agent_end`    → runtime `session.idle` (when idle + no pending messages)
+ * - `agent_end` / `agent_settled`
+ *                  → runtime `session.idle` (when idle + no pending messages)
  * - `session_start`→ runtime `session.created` (on new/startup)
  * - `session_shutdown` / `session_before_switch`
  *                  → Phase 1 worker flush + runtime `session.deleted`
@@ -169,21 +170,44 @@ export function registerAdapter(pi: ExtensionAPI): void {
     }
   });
 
-  // ---- agent_end ----
-  // Fire session.idle once the agent loop ends AND no messages are queued.
-  pi.on("agent_end", async (_event, ctx: ExtensionContext): Promise<void> => {
+  // ---- agent_start / agent_end / agent_settled ----
+  // Pi <=0.79 is idle at agent_end. Pi >=0.80 emits agent_settled only after
+  // retries, compaction, and queued continuations are exhausted. Register the
+  // newer event through a narrow compatibility shape so older SDK types and
+  // runtimes remain supported without version checks.
+  let sessionIdleDispatched = false;
+
+  pi.on("agent_start", () => {
+    sessionIdleDispatched = false;
+  });
+
+  const dispatchSessionIdle = async (ctx: ExtensionContext): Promise<void> => {
+    if (sessionIdleDispatched) return;
+
     rememberContext(ctx.cwd, ctx);
     const sessionId = safeGetSessionId(ctx.sessionManager);
     if (!sessionId) return;
     if (!ctx.isIdle || !ctx.isIdle()) return;
     if (ctx.hasPendingMessages && ctx.hasPendingMessages()) return;
 
+    sessionIdleDispatched = true;
     try {
       const runtime = getRuntimeFor(ctx.cwd);
       await runtime.event(buildSessionIdleEvent(sessionId));
     } catch (error) {
       reportDispatchFailure(logger, { cwd: ctx.cwd, event: "session.idle", sessionId }, error);
     }
+  };
+
+  pi.on("agent_end", async (_event, ctx: ExtensionContext): Promise<void> => {
+    await dispatchSessionIdle(ctx);
+  });
+
+  const settledEventApi = pi as unknown as {
+    on(event: "agent_settled", handler: (_event: unknown, ctx: ExtensionContext) => Promise<void>): void;
+  };
+  settledEventApi.on("agent_settled", async (_event, ctx): Promise<void> => {
+    await dispatchSessionIdle(ctx);
   });
 
   // ---- session_start / session_shutdown / session_before_switch ----
