@@ -37,6 +37,9 @@ cleanup() {
     kill "$SERVER_PID" 2>/dev/null || true
     wait "$SERVER_PID" 2>/dev/null || true
   fi
+  sleep 0.2
+  rm -rf "$SMOKE_ROOT" || true
+  sleep 0.2
   rm -rf "$SMOKE_ROOT"
 }
 trap cleanup EXIT INT TERM
@@ -166,8 +169,7 @@ function startRpc(enableUserBash, confirmations = []) {
   });
   const frames = [];
   const waiters = [];
-  let stdout = "";
-  let stderr = "";
+  let output = "";
   let exited = false;
   let exitCode;
 
@@ -184,7 +186,7 @@ function startRpc(enableUserBash, confirmations = []) {
   };
 
   readline.createInterface({ input: child.stdout }).on("line", (line) => {
-    stdout += `${line}\n`;
+    output += `${line}\n`;
     appendFileSync(transcript, `${line}\n`);
     let frame;
     try { frame = JSON.parse(line); } catch { return; }
@@ -198,7 +200,7 @@ function startRpc(enableUserBash, confirmations = []) {
   });
   child.stderr.on("data", (chunk) => {
     const text = chunk.toString();
-    stderr += text;
+    output += text;
     appendFileSync(stderrFile, text);
   });
   child.on("close", (code) => {
@@ -236,7 +238,7 @@ function startRpc(enableUserBash, confirmations = []) {
     if (!exited) await new Promise((resolve) => child.once("close", resolve));
     assert(exitCode === 0, `OMP RPC exit code was ${exitCode}`);
   };
-  return { child, frames, get output() { return stdout + stderr; }, waitFor, send, prompt, close };
+  return { child, frames, get output() { return output; }, waitFor, send, prompt, close };
 }
 
 writeFileSync(transcript, "");
