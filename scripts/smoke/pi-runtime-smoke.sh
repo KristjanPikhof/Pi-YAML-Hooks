@@ -461,9 +461,8 @@ os.write(fd, b"\r")
 collect(1.0)
 os.write(fd, b"\r")
 collect(2.0)
-os.write(fd, b"\x03")
-collect(0.3)
-os.write(fd, b"\x03")
+os.write(fd, b"/quit")
+os.write(fd, b"\r")
 collect(2.0)
 waited = 0
 status = 0
@@ -472,7 +471,7 @@ try:
     if waited == 0:
         os.kill(pid, signal.SIGTERM)
         os.waitpid(pid, 0)
-        print("Pi TUI did not exit after the scripted Ctrl-C sequence", file=sys.stderr)
+        print("Pi TUI did not exit after /quit", file=sys.stderr)
         sys.exit(1)
 except ChildProcessError:
     waited = pid
@@ -799,7 +798,7 @@ NODE
   if [[ "$pty_exit" -eq 75 ]]; then
     interactive_row="BLOCKED: platform PTY unavailable ($(tr '\n' ' ' < "$transcript_dir/pi-tui.stderr"))"
   elif [[ "$pty_exit" -ne 0 ]]; then
-    fail "Pi TUI autocomplete assertion failed; see $transcript_dir/pi-tui.stderr"
+    fail "Pi TUI assertion failed: $(tr '\n' ' ' < "$transcript_dir/pi-tui.stderr")"
   else
     assert_contains "$pty_plain" "hooks-status"
     assert_file "$evidence_dir/tui-user-bash.txt"
