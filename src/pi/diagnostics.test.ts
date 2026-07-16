@@ -16,24 +16,60 @@ interface CapturedMessage {
   readonly details?: unknown
 }
 
-interface FakePi {
-  readonly messages: CapturedMessage[]
-  readonly renderers: Map<string, unknown>
-  registerMessageRenderer<T>(type: string, render: (message: { content: unknown; details: T | undefined }, opts: { expanded: boolean }, theme: unknown) => unknown): void
-  sendMessage<T>(message: { customType: string; content: string; display: boolean; details?: T }): void
+interface CapturedEntry {
+  readonly customType: string
+  readonly data: unknown
 }
 
-function createFakePi(): FakePi {
+interface FakePi {
+  readonly messages: CapturedMessage[]
+  readonly entries: CapturedEntry[]
+  readonly renderers: Map<string, unknown>
+  readonly entryRenderers?: Map<string, unknown>
+  registerMessageRenderer<T>(type: string, render: (message: { content: unknown; details: T | undefined }, opts: { expanded: boolean }, theme: unknown) => unknown): void
+  registerEntryRenderer?(type: string, render: unknown): void
+  sendMessage<T>(message: { customType: string; content: string; display: boolean; details?: T }): void
+  appendEntry?(customType: string, data: unknown): void
+  on(type: string, handler: (event: unknown, ctx: { mode: string }) => void): void
+  startSession(mode: string): void
+}
+
+function createFakePi(options: { entryRenderer?: boolean; appendEntry?: boolean } = {}): FakePi {
   const messages: CapturedMessage[] = []
+  const entries: CapturedEntry[] = []
   const renderers = new Map<string, unknown>()
+  const entryRenderers = options.entryRenderer ? new Map<string, unknown>() : undefined
+  let sessionStart: ((event: unknown, ctx: { mode: string }) => void) | undefined
   return {
     messages,
+    entries,
     renderers,
+    ...(entryRenderers
+      ? {
+          entryRenderers,
+          registerEntryRenderer(type: string, render: unknown) {
+            entryRenderers.set(type, render)
+          },
+        }
+      : {}),
+    ...(options.appendEntry
+      ? {
+          appendEntry(customType: string, data: unknown) {
+            entries.push({ customType, data })
+          },
+        }
+      : {}),
     registerMessageRenderer(type, render) {
       renderers.set(type, render)
     },
     sendMessage(message) {
       messages.push(message)
+    },
+    on(type, handler) {
+      if (type === "session_start") sessionStart = handler
+    },
+    startSession(mode) {
+      sessionStart?.({}, { mode })
     },
   }
 }
@@ -51,11 +87,80 @@ const cases: Case[] = [
     },
   },
   {
+    name: "registers an entry renderer only when both entry capabilities exist",
+    run: () => {
+      const complete = createFakePi({ entryRenderer: true, appendEntry: true })
+      const missingSender = createFakePi({ entryRenderer: true })
+      registerHookDiagnostics(complete as never)
+      registerHookDiagnostics(missingSender as never)
+
+      const completeRegistered = complete.entryRenderers?.has(PI_YAML_HOOKS_DIAGNOSTICS_MESSAGE_TYPE) === true
+      const partialRegistered = missingSender.entryRenderers?.has(PI_YAML_HOOKS_DIAGNOSTICS_MESSAGE_TYPE) === true
+      return completeRegistered && !partialRegistered
+        ? { ok: true }
+        : { ok: false, detail: `complete=${completeRegistered}, partial=${partialRegistered}` }
+    },
+  },
+  {
     name: "PI_YAML_HOOKS_DIAGNOSTICS_MESSAGE_TYPE is the canonical pi-yaml-hooks-diagnostics string",
     run: () =>
       PI_YAML_HOOKS_DIAGNOSTICS_MESSAGE_TYPE === "pi-yaml-hooks-diagnostics"
         ? { ok: true }
         : { ok: false, detail: PI_YAML_HOOKS_DIAGNOSTICS_MESSAGE_TYPE },
+  },
+  {
+    name: "TUI diagnostics use context-free entries when both capabilities exist",
+    run: () => {
+      const pi = createFakePi({ entryRenderer: true, appendEntry: true })
+      registerHookDiagnostics(pi as never)
+      pi.startSession("tui")
+      const sections = [{ label: "details", lines: ["one"] }]
+      sendHookDiagnostics(pi as never, {
+        title: "Entry title",
+        level: "warning",
+        content: "entry content",
+        sections,
+      })
+
+      if (pi.messages.length !== 0 || pi.entries.length !== 1) {
+        return { ok: false, detail: `messages=${pi.messages.length}, entries=${pi.entries.length}` }
+      }
+      const entry = pi.entries[0]
+      const data = entry.data as { content?: string; title?: string; level?: string; sections?: unknown }
+      return entry.customType === PI_YAML_HOOKS_DIAGNOSTICS_MESSAGE_TYPE &&
+        data.content === "entry content" &&
+        data.title === "Entry title" &&
+        data.level === "warning" &&
+        JSON.stringify(data.sections) === JSON.stringify(sections)
+        ? { ok: true }
+        : { ok: false, detail: JSON.stringify(entry) }
+    },
+  },
+  {
+    name: "non-TUI diagnostics keep the custom-message fallback",
+    run: () => {
+      const pi = createFakePi({ entryRenderer: true, appendEntry: true })
+      registerHookDiagnostics(pi as never)
+      pi.startSession("json")
+      sendHookDiagnostics(pi as never, { title: "headless", level: "info", content: "fallback" })
+
+      return pi.entries.length === 0 && pi.messages.length === 1 && pi.messages[0].content === "fallback"
+        ? { ok: true }
+        : { ok: false, detail: `messages=${pi.messages.length}, entries=${pi.entries.length}` }
+    },
+  },
+  {
+    name: "partial entry capability keeps the custom-message fallback",
+    run: () => {
+      const pi = createFakePi({ appendEntry: true })
+      registerHookDiagnostics(pi as never)
+      pi.startSession("tui")
+      sendHookDiagnostics(pi as never, { title: "partial", level: "error", content: "fallback" })
+
+      return pi.entries.length === 0 && pi.messages.length === 1
+        ? { ok: true }
+        : { ok: false, detail: `messages=${pi.messages.length}, entries=${pi.entries.length}` }
+    },
   },
   {
     name: "sendHookDiagnostics emits a structured message with display=true",
@@ -178,6 +283,36 @@ const cases: Case[] = [
       return sawWarningBadge && sawDimSectionLabel
         ? { ok: true }
         : { ok: false, detail: `colorCalls=${JSON.stringify(colorCalls)}` }
+    },
+  },
+  {
+    name: "entry renderer reuses message formatting",
+    run: () => {
+      const pi = createFakePi({ entryRenderer: true, appendEntry: true })
+      registerHookDiagnostics(pi as never)
+      const renderer = pi.entryRenderers?.get(PI_YAML_HOOKS_DIAGNOSTICS_MESSAGE_TYPE) as (
+        entry: { data: { content: string; title: string; level: "error"; sections: Array<{ label: string; lines: string[] }> } },
+        opts: { expanded: boolean },
+        theme: { fg: (color: string, text: string) => string; bg: (color: string, text: string) => string },
+      ) => unknown
+      const colorCalls: string[] = []
+      const theme = {
+        fg: (color: string, text: string) => {
+          colorCalls.push(`${color}:${text}`)
+          return text
+        },
+        bg: (_color: string, text: string) => text,
+      }
+
+      renderer(
+        { data: { content: "entry", title: "entry title", level: "error", sections: [{ label: "sec", lines: ["line"] }] } },
+        { expanded: true },
+        theme,
+      )
+
+      return colorCalls.includes("error:[ERROR]") && colorCalls.includes("dim:sec")
+        ? { ok: true }
+        : { ok: false, detail: JSON.stringify(colorCalls) }
     },
   },
   {
