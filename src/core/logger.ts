@@ -9,8 +9,8 @@ import {
   unlinkSync,
   writeSync,
 } from "node:fs"
-import os from "node:os"
 import path from "node:path"
+import { getHookHostProfile } from "./host-profile.js"
 
 export type PiHooksLogLevel = "error" | "warn" | "info" | "debug"
 
@@ -318,8 +318,10 @@ function resolveLogLevel(enabled: boolean): PiHooksLogLevel | undefined {
 }
 
 function resolveLogFilePath(): string {
-  const homeDir = process.env.HOME || process.env.USERPROFILE || os.homedir()
-  return process.env.PI_YAML_HOOKS_LOG_FILE || path.join(homeDir, ".pi", "agent", "logs", "pi-yaml-hooks.ndjson")
+  return (
+    process.env.PI_YAML_HOOKS_LOG_FILE ??
+    path.join(getHookHostProfile().agentDir, "logs", "pi-yaml-hooks.ndjson")
+  )
 }
 
 function serializeLogEntry(entry: PiHooksLogEntry): string {

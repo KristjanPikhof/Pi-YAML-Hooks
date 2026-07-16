@@ -41,6 +41,7 @@ export interface ProjectHookResolution {
   readonly canonicalAnchorDir: string
   readonly worktreeRoot?: string
   readonly discoveredProjectRoot?: string
+  readonly trustFilePath: string
   readonly projectConfigPath?: string
   readonly trusted: boolean
 }
