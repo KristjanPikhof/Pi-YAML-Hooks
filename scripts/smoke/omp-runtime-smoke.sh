@@ -249,7 +249,8 @@ for (const name of ["hooks-status", "hooks-validate", "hooks-trust", "hooks-relo
 await first.prompt("status-untrusted", "/hooks-status");
 assert(first.output.includes("Project trusted: no"), "hooks-status did not report the untrusted project");
 const untrustedStatus = normalizePathText(first.output);
-assert([projectConfig, trustFile, logFile].every((file) => untrustedStatus.includes(normalizePathText(file))), "hooks-status did not report native OMP paths");
+const missingStatusPaths = [projectConfig, trustFile, logFile].filter((file) => !untrustedStatus.includes(normalizePathText(file)));
+assert(missingStatusPaths.length === 0, `hooks-status did not report native OMP paths; missing=${missingStatusPaths.join(",")}; output=${untrustedStatus}`);
 await first.prompt("validate-untrusted", "/hooks-validate");
 assert(/valid but untrusted/i.test(first.output), "hooks-validate did not explain valid-but-untrusted config");
 await first.prompt("trust", "/hooks-trust");

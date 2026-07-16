@@ -124,7 +124,7 @@ Pi settings. The package must appear in both \`pi list\` and
 \`$agent_dir/settings.json\`.
 
 \`\`\`bash
-npm pack --pack-destination "$smoke_dir/artifact"
+HOME="$isolated_home" USERPROFILE="$isolated_home" npm_config_cache="$smoke_dir/npm-cache" npm pack --pack-destination "$smoke_dir/artifact"
 HOME="$isolated_home" USERPROFILE="$isolated_home" PI_CODING_AGENT_DIR="$agent_dir" \\
   pi install "npm:pi-yaml-hooks@file:$smoke_dir/artifact/<packed-tarball>.tgz"
 HOME="$isolated_home" USERPROFILE="$isolated_home" PI_CODING_AGENT_DIR="$agent_dir" pi list
