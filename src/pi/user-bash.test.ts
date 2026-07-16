@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, readFileSync, rmSync } from "node:fs"
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs"
 import os from "node:os"
 import path from "node:path"
 
@@ -9,6 +9,11 @@ import type {
   UserBashEventResult,
 } from "@earendil-works/pi-coding-agent"
 
+import { resolveTrustedProjectsFilePath } from "../core/config-paths.js"
+import {
+  __resetHookHostProfileForTests,
+  configureHookHostProfile,
+} from "../core/host-profile.js"
 import { resetPiHooksLoggerForTests } from "../core/logger.js"
 import type { HooksRuntime } from "../core/runtime.js"
 import {
@@ -112,6 +117,52 @@ async function withEnabledHandler<T>(
   }
 }
 
+function withTrustWarningSandbox<T>(
+  host: "pi" | "omp",
+  run: (paths: { homeDir: string; activeTrustFile: string }) => T,
+): T {
+  const homeDir = mkdtempSync(path.join(os.tmpdir(), "pi-yaml-hooks-userbash-trust-"))
+  const previousHome = process.env.HOME
+  const previousUserProfile = process.env.USERPROFILE
+  process.env.HOME = homeDir
+  process.env.USERPROFILE = homeDir
+  __resetHookHostProfileForTests()
+  if (host === "omp") {
+    configureHookHostProfile({ kind: "omp", agentDir: path.join(homeDir, ".omp", "agent") })
+  }
+  _resetUserBashWarningForTests()
+
+  try {
+    return run({ homeDir, activeTrustFile: resolveTrustedProjectsFilePath() })
+  } finally {
+    if (previousHome === undefined) delete process.env.HOME
+    else process.env.HOME = previousHome
+    if (previousUserProfile === undefined) delete process.env.USERPROFILE
+    else process.env.USERPROFILE = previousUserProfile
+    _resetUserBashWarningForTests()
+    __resetHookHostProfileForTests()
+    rmSync(homeDir, { recursive: true, force: true })
+  }
+}
+
+function captureUserBashWarning(callCount = 1): string {
+  let captured = ""
+  const stderr = process.stderr as unknown as { write: typeof process.stderr.write }
+  const original = stderr.write
+  stderr.write = (chunk: unknown, ..._args: unknown[]): boolean => {
+    if (typeof chunk === "string") captured += chunk
+    return true
+  }
+  try {
+    for (let index = 0; index < callCount; index += 1) {
+      _emitUserBashWarningOnce()
+    }
+  } finally {
+    stderr.write = original
+  }
+  return captured
+}
+
 const cases: Case[] = [
   {
     name: "generateCallId returns a non-empty string",
@@ -204,6 +255,61 @@ const cases: Case[] = [
         ? { ok: true }
         : { ok: false, detail: `warning missing phrases: ${missing.join(", ")}` }
     },
+  },
+  {
+    name: "Pi user_bash warning enumerates only the Pi trust store",
+    run: () =>
+      withTrustWarningSandbox("pi", ({ homeDir, activeTrustFile }) => {
+        const piProject = path.join(homeDir, "pi-project")
+        const ompProject = path.join(homeDir, "omp-project")
+        const ompTrustFile = path.join(homeDir, ".omp", "agent", "trusted-projects.json")
+        mkdirSync(path.dirname(activeTrustFile), { recursive: true })
+        mkdirSync(path.dirname(ompTrustFile), { recursive: true })
+        writeFileSync(activeTrustFile, JSON.stringify([piProject]), "utf8")
+        writeFileSync(ompTrustFile, JSON.stringify([ompProject]), "utf8")
+
+        const warning = captureUserBashWarning()
+        return warning.includes(piProject) && !warning.includes(ompProject)
+          ? { ok: true }
+          : { ok: false, detail: warning }
+      }),
+  },
+  {
+    name: "OMP user_bash warning enumerates only the active OMP trust store once",
+    run: () =>
+      withTrustWarningSandbox("omp", ({ homeDir, activeTrustFile }) => {
+        const piProject = path.join(homeDir, "pi-project")
+        const ompProject = path.join(homeDir, "omp-project")
+        const piTrustFile = path.join(homeDir, ".pi", "agent", "trusted-projects.json")
+        mkdirSync(path.dirname(activeTrustFile), { recursive: true })
+        mkdirSync(path.dirname(piTrustFile), { recursive: true })
+        writeFileSync(activeTrustFile, JSON.stringify([ompProject]), "utf8")
+        writeFileSync(piTrustFile, JSON.stringify([piProject]), "utf8")
+
+        const warning = captureUserBashWarning(3)
+        const warningCount = warning.match(/WARNING: PI_YAML_HOOKS_ENABLE_USER_BASH=1/g)?.length ?? 0
+        return warning.includes(ompProject) && !warning.includes(piProject) && warningCount === 1
+          ? { ok: true }
+          : { ok: false, detail: JSON.stringify({ warning, warningCount }) }
+      }),
+  },
+  {
+    name: "OMP user_bash warning fails closed on malformed active trust store",
+    run: () =>
+      withTrustWarningSandbox("omp", ({ homeDir, activeTrustFile }) => {
+        const piProject = path.join(homeDir, "pi-project")
+        const piTrustFile = path.join(homeDir, ".pi", "agent", "trusted-projects.json")
+        mkdirSync(path.dirname(activeTrustFile), { recursive: true })
+        mkdirSync(path.dirname(piTrustFile), { recursive: true })
+        writeFileSync(activeTrustFile, "{malformed", "utf8")
+        writeFileSync(piTrustFile, JSON.stringify([piProject]), "utf8")
+
+        const warning = captureUserBashWarning()
+        const ok =
+          warning.includes("(no projects currently in trusted-projects.json)") &&
+          !warning.includes(piProject)
+        return ok ? { ok: true } : { ok: false, detail: warning }
+      }),
   },
   {
     // Regression for P1-9: getRuntimeFor / rememberContext / getSessionId can

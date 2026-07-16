@@ -17,6 +17,7 @@ import type {
 } from "@earendil-works/pi-coding-agent";
 
 import type { getPiHooksLogger } from "../core/logger.js";
+import type { HookHostKind } from "../core/host-profile.js";
 import type { HooksRuntime } from "../core/runtime.js";
 import {
   buildSessionCreatedEvent,
@@ -53,6 +54,7 @@ export interface SessionLifecycleDeps {
 export function installSessionLifecycleHandlers(
   pi: ExtensionAPI,
   deps: SessionLifecycleDeps,
+  hostKind: HookHostKind = "pi",
 ): void {
   const { getRuntimeFor, rememberContext, logger, reportDispatchFailure } = deps;
 
@@ -61,24 +63,25 @@ export function installSessionLifecycleHandlers(
   // ids we have already fired session.deleted for so cleanup hooks do not
   // double-run. Entries are cleared shortly after to keep the set bounded.
   const deletedSessionIds = new Set<string>();
+  let lastCreatedOmpSessionId: string | undefined;
   function markSessionDeleted(sessionId: string): boolean {
     if (deletedSessionIds.has(sessionId)) return false;
     deletedSessionIds.add(sessionId);
+    if (lastCreatedOmpSessionId === sessionId) lastCreatedOmpSessionId = undefined;
     // Drop the marker after a few seconds — long enough to absorb the
     // before_switch/shutdown pair, short enough not to leak forever.
     setTimeout(() => deletedSessionIds.delete(sessionId), 5_000).unref?.();
     return true;
   }
 
-  // ---- session_start ----
-  // Filter to genuine session creation (new/startup). resume/reload/fork are
-  // existing sessions being re-entered; firing session.created there would
-  // overfire hooks that are meant to run once per fresh session.
-  pi.on("session_start", async (event: SessionStartEvent, ctx: ExtensionContext): Promise<void> => {
+  const dispatchSessionCreated = async (ctx: ExtensionContext): Promise<void> => {
     rememberContext(ctx.cwd, ctx);
-    if (event.reason !== "new" && event.reason !== "startup") return;
     const sessionId = safeGetSessionId(ctx.sessionManager);
     if (!sessionId) return;
+    if (hostKind === "omp") {
+      if (lastCreatedOmpSessionId === sessionId) return;
+      lastCreatedOmpSessionId = sessionId;
+    }
 
     // P1-3 fix: do NOT forward `header.parentSession` here. PI's
     // `parentSession` field is a FILE PATH to the parent session's JSONL
@@ -94,7 +97,37 @@ export function installSessionLifecycleHandlers(
     } catch (error) {
       reportDispatchFailure(logger, { cwd: ctx.cwd, event: "session.created", sessionId }, error);
     }
+  };
+
+  // ---- session_start ----
+  // Pi exposes explicit new/startup reasons. OMP's startup event has no
+  // reason; resume/fork remain excluded when a reason is present.
+  pi.on("session_start", async (event: SessionStartEvent, ctx: ExtensionContext): Promise<void> => {
+    rememberContext(ctx.cwd, ctx);
+    const reason = extractReason(event);
+    if (hostKind === "pi") {
+      if (reason !== "new" && reason !== "startup") return;
+    } else if (reason !== undefined && reason !== "new" && reason !== "startup") {
+      return;
+    }
+    await dispatchSessionCreated(ctx);
   });
+
+  if (hostKind === "omp") {
+    // OMP-only compatibility event; importing OMP runtime types here would
+    // break the Pi 0.74/0.79 SDK matrix this shared adapter must preserve.
+    const ompSessionEventApi = pi as unknown as {
+      on(
+        event: "session_switch",
+        handler: (event: { reason?: unknown }, ctx: ExtensionContext) => Promise<void>,
+      ): void;
+    };
+    ompSessionEventApi.on("session_switch", async (event, ctx): Promise<void> => {
+      rememberContext(ctx.cwd, ctx);
+      if (extractReason(event) !== "new") return;
+      await dispatchSessionCreated(ctx);
+    });
+  }
 
   // ---- session_shutdown ----
   // P1-4 fix: forward the SDK's `reason` field on the envelope so hook

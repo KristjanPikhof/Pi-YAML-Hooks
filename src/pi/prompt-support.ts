@@ -1,7 +1,8 @@
 import type { BeforeAgentStartEvent, ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent"
 
-import { resolveProjectHookResolution } from "../core/config-paths.js"
+import { resolveHookConfigPaths, resolveProjectHookResolution } from "../core/config-paths.js"
 import { loadDiscoveredHooksSnapshot, summarizeHookSources } from "../core/load-hooks.js"
+import { getHookHostProfile } from "../core/host-profile.js"
 
 const PROMPT_AWARENESS_DISABLE_ENV = "PI_YAML_HOOKS_PROMPT_AWARENESS"
 
@@ -36,22 +37,29 @@ function buildHookAwarenessSystemPrompt(ctx: ExtensionContext): string | undefin
 
   const loaded = loadDiscoveredHooksSnapshot({ projectDir: ctx.cwd })
   const summary = summarizeHookSources(loaded.sources)
-  const project = resolveProjectHookResolution({ projectDir: ctx.cwd })
-  const projectConfigExists = Boolean(project?.projectConfigPath)
-  const trustLine = projectConfigExists
-    ? project?.trusted
-      ? "- project hooks are trusted and active when loaded"
-      : "- project hooks exist but are currently untrusted"
+  const profile = getHookHostProfile()
+  const globalPath = resolveHookConfigPaths({ profile }).global
+  const project = resolveProjectHookResolution({ projectDir: ctx.cwd, profile })
+  const hostLabel = profile.kind === "omp" ? "OMP" : "Pi"
+  const trustLine = project?.projectConfigPath
+    ? project.trusted
+      ? `- project hooks are trusted and active when loaded: ${project.projectConfigPath}`
+      : `- project hooks exist but are currently untrusted: ${project.projectConfigPath}`
     : "- no project hook file is present for this repo/worktree scope"
 
-  const lines = ["Hook-awareness for this session:"]
+  const lines = [
+    "Hook-awareness for this session:",
+    `- active hook host: ${hostLabel}`,
+    `- selected global hook config: ${globalPath ?? "none"}`,
+    trustLine,
+    `- project trust list: ${project?.trustFilePath ?? "unavailable"}`,
+  ]
 
   if (loaded.errors.length > 0) {
     lines.push(`- current hook files have ${loaded.errors.length} validation issue(s); the runtime may be using the valid subset or a last known good hook set`)
     lines.push("- use /hooks-validate for the exact validation errors and active trust state")
   } else {
     lines.push(`- pi-yaml-hooks loaded ${summary.total} hooks (${summary.global} global, ${summary.project} project)`)
-    lines.push(trustLine)
   }
 
   lines.push("- command actions are unsupported on PI; prefer bash-backed hooks or user-invoked /hooks commands")

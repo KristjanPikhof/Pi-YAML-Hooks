@@ -28,6 +28,7 @@ import type {
 
 import path from "node:path";
 import { getPiHooksLogger } from "../core/logger.js";
+import type { HookHostKind } from "../core/host-profile.js";
 import {
   buildSessionIdleEvent,
   mapToolCallToBeforeInput,
@@ -60,7 +61,7 @@ import { registerUserBashInterception } from "./user-bash.js";
  *                    forward verbatim on the envelope so hook authors can
  *                    tell graceful shutdowns from session-replacement)
  */
-export function registerAdapter(pi: ExtensionAPI): void {
+export function registerAdapter(pi: ExtensionAPI, hostKind: HookHostKind = "pi"): void {
   const logger = getPiHooksLogger();
 
   if (process.platform === "win32") {
@@ -170,26 +171,31 @@ export function registerAdapter(pi: ExtensionAPI): void {
     }
   });
 
-  // ---- agent_start / agent_end / agent_settled ----
+  // ---- host-specific idle lifecycle ----
   // Pi <=0.79 is idle at agent_end. Pi >=0.80 emits agent_settled only after
-  // retries, compaction, and queued continuations are exhausted. Register the
-  // newer event through a narrow compatibility shape so older SDK types and
-  // runtimes remain supported without version checks.
+  // retries, compaction, and queued continuations are exhausted. OMP instead
+  // emits session_stop before a possible continuation starts, so its check is
+  // deferred to the next macrotask and invalidated by a new agent_start.
   let sessionIdleDispatched = false;
+  let sessionIdleGeneration = 0;
 
   pi.on("agent_start", () => {
     sessionIdleDispatched = false;
+    sessionIdleGeneration += 1;
   });
 
-  const dispatchSessionIdle = async (ctx: ExtensionContext): Promise<void> => {
+  const dispatchSessionIdle = async (
+    ctx: ExtensionContext,
+    expectedSessionId?: string,
+  ): Promise<void> => {
     if (sessionIdleDispatched) return;
 
-    rememberContext(ctx.cwd, ctx);
     const sessionId = safeGetSessionId(ctx.sessionManager);
-    if (!sessionId) return;
+    if (!sessionId || (expectedSessionId !== undefined && sessionId !== expectedSessionId)) return;
     if (!ctx.isIdle || !ctx.isIdle()) return;
     if (ctx.hasPendingMessages && ctx.hasPendingMessages()) return;
 
+    rememberContext(ctx.cwd, ctx);
     sessionIdleDispatched = true;
     try {
       const runtime = getRuntimeFor(ctx.cwd);
@@ -199,24 +205,44 @@ export function registerAdapter(pi: ExtensionAPI): void {
     }
   };
 
-  pi.on("agent_end", async (_event, ctx: ExtensionContext): Promise<void> => {
-    await dispatchSessionIdle(ctx);
-  });
+  if (hostKind === "omp") {
+    // OMP-only compatibility events deliberately use the smallest shape this
+    // adapter consumes so Pi 0.74/0.79 types remain the compile-time contract.
+    const ompSessionEventApi = pi as unknown as {
+      on(
+        event: "session_stop",
+        handler: (_event: unknown, ctx: ExtensionContext) => Promise<void> | void,
+      ): void;
+    };
+    ompSessionEventApi.on("session_stop", (_event, ctx): void => {
+      const expectedSessionId = safeGetSessionId(ctx.sessionManager);
+      if (!expectedSessionId) return;
+      const expectedGeneration = sessionIdleGeneration;
+      setTimeout(async () => {
+        if (expectedGeneration !== sessionIdleGeneration) return;
+        await dispatchSessionIdle(ctx, expectedSessionId);
+      }, 0);
+    });
+  } else {
+    pi.on("agent_end", async (_event, ctx: ExtensionContext): Promise<void> => {
+      await dispatchSessionIdle(ctx);
+    });
 
-  const settledEventApi = pi as unknown as {
-    on(event: "agent_settled", handler: (_event: unknown, ctx: ExtensionContext) => Promise<void>): void;
-  };
-  settledEventApi.on("agent_settled", async (_event, ctx): Promise<void> => {
-    await dispatchSessionIdle(ctx);
-  });
+    const settledEventApi = pi as unknown as {
+      on(event: "agent_settled", handler: (_event: unknown, ctx: ExtensionContext) => Promise<void>): void;
+    };
+    settledEventApi.on("agent_settled", async (_event, ctx): Promise<void> => {
+      await dispatchSessionIdle(ctx);
+    });
+  }
 
-  // ---- session_start / session_shutdown / session_before_switch ----
+  // ---- session creation/deletion lifecycle ----
   installSessionLifecycleHandlers(pi, {
     getRuntimeFor,
     rememberContext,
     logger,
     reportDispatchFailure,
-  });
+  }, hostKind);
 }
 
 /** Backwards-compat alias for the Phase 1 export name. */

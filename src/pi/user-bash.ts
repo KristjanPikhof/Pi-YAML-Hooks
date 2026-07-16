@@ -1,10 +1,9 @@
 import { randomUUID as nodeRandomUUID } from "node:crypto"
 import { existsSync, readFileSync } from "node:fs"
-import os from "node:os"
-import path from "node:path"
 
 import type { ExtensionAPI, ExtensionContext, UserBashEvent, UserBashEventResult } from "@earendil-works/pi-coding-agent"
 
+import { resolveTrustedProjectsFilePath } from "../core/config-paths.js"
 import { getPiHooksLogger } from "../core/logger.js"
 import type { HooksRuntime } from "../core/runtime.js"
 
@@ -50,8 +49,7 @@ function emitUserBashWarningOnce(): void {
 
 function readTrustedProjectsList(): string[] {
   try {
-    const homeDir = os.homedir()
-    const trustFile = path.join(homeDir, ".pi", "agent", "trusted-projects.json")
+    const trustFile = resolveTrustedProjectsFilePath()
     if (!existsSync(trustFile)) return []
     const raw = readFileSync(trustFile, "utf8")
     const parsed = JSON.parse(raw) as unknown
