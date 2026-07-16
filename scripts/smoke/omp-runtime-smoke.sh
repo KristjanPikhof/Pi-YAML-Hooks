@@ -5,7 +5,8 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 VALID_FIXTURE="$ROOT_DIR/scripts/smoke/omp-runtime-smoke-hooks.yaml"
 INVALID_FIXTURE="$ROOT_DIR/scripts/smoke/omp-runtime-smoke-invalid-hooks.yaml"
 PROFILE="omp-runtime-smoke"
-SMOKE_ROOT="$(mktemp -d "${TMPDIR:-/tmp}/pi-yaml-hooks-omp-runtime.XXXXXX")"
+TMP_BASE="${TMPDIR:-/tmp}"
+SMOKE_ROOT="$(mktemp -d "${TMP_BASE%/}/pi-yaml-hooks-omp-runtime.XXXXXX")"
 HOME_DIR="$SMOKE_ROOT/home"
 PROJECT_DIR="$SMOKE_ROOT/project"
 PACK_DIR="$SMOKE_ROOT/pack"
@@ -148,7 +149,7 @@ import readline from "node:readline";
 const [home, profile, project, validFixture, invalidFixture, projectConfig, trustFile, logFile, transcript, stderrFile] = process.argv.slice(2);
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 const assert = (condition, message) => { if (!condition) throw new Error(message); };
-const normalizePathText = (value) => String(value).replaceAll("/private/var/", "/var/");
+const normalizePathText = (value) => String(value).replaceAll("/private/var/", "/var/").replace(/\/+/g, "/");
 
 function startRpc(enableUserBash, confirmations = []) {
   const child = spawn("omp", ["--profile", profile, "--mode", "rpc", "--cwd", project, "--no-title"], {
