@@ -371,7 +371,7 @@ const cases: Case[] = [
     },
   },
   {
-    name: "OMP active agent global candidates precede legacy Pi candidates",
+    name: "OMP active agent globals never fall back to Pi global config",
     run: () => {
       const sandbox = createSandbox("omp-global")
       const homeDir = path.join(sandbox, "home")
@@ -379,35 +379,35 @@ const cases: Case[] = [
       const profile = createHookHostProfile({ kind: "omp", agentDir })
       try {
         const nativePreferred = writeConfig(path.join(profile.agentDir, "hook", "hooks.yaml"))
-        writeConfig(path.join(profile.agentDir, "hooks.yaml"))
+        const nativeFlat = writeConfig(path.join(profile.agentDir, "hooks.yaml"))
         writeConfig(path.join(homeDir, ".pi", "agent", "hook", "hooks.yaml"))
-        const entries = discoverHookConfigEntries({ homeDir, profile })
-        return entries.length === 1 && entries[0]?.scope === "global" && entries[0].filePath === nativePreferred
+        const nativeEntries = discoverHookConfigEntries({ homeDir, profile })
+        rmSync(nativePreferred, { force: true })
+        rmSync(nativeFlat, { force: true })
+        const withoutNativeEntries = discoverHookConfigEntries({ homeDir, profile })
+        return nativeEntries.length === 1 &&
+          nativeEntries[0]?.scope === "global" &&
+          nativeEntries[0].filePath === nativePreferred &&
+          withoutNativeEntries.length === 0
           ? { ok: true }
-          : { ok: false, detail: JSON.stringify(entries) }
+          : { ok: false, detail: JSON.stringify({ nativeEntries, withoutNativeEntries }) }
       } finally {
         cleanup(sandbox)
       }
     },
   },
   {
-    name: "OMP named agent falls back globally only after active-agent candidates",
+    name: "OMP named agent ignores Pi global config when its own config is absent",
     run: () => {
       const sandbox = createSandbox("omp-named-global")
       const homeDir = path.join(sandbox, "home")
       const profile = createHookHostProfile({ kind: "omp", agentDir: path.join(homeDir, ".omp", "agent", "profiles", "work") })
       try {
-        const activeFlat = writeConfig(path.join(profile.agentDir, "hooks.yaml"))
         const legacyPreferred = writeConfig(path.join(homeDir, ".pi", "agent", "hook", "hooks.yaml"))
-        const activeEntries = discoverHookConfigEntries({ homeDir, profile })
-        rmSync(activeFlat, { force: true })
-        const fallbackEntries = discoverHookConfigEntries({ homeDir, profile })
-        const ok =
-          activeEntries.length === 1 &&
-          activeEntries[0]?.filePath === activeFlat &&
-          fallbackEntries.length === 1 &&
-          fallbackEntries[0]?.filePath === legacyPreferred
-        return ok ? { ok: true } : { ok: false, detail: JSON.stringify({ activeEntries, fallbackEntries }) }
+        const entries = discoverHookConfigEntries({ homeDir, profile })
+        return entries.length === 0
+          ? { ok: true }
+          : { ok: false, detail: JSON.stringify({ legacyPreferred, entries }) }
       } finally {
         cleanup(sandbox)
       }

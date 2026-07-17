@@ -51,8 +51,9 @@ export interface ProjectHookResolution {
 
 /**
  * Resolve the primary global and project config paths for the active host.
- * Pi keeps its existing `.pi` locations. OMP checks its active agent
- * directory and native `.omp` project locations before legacy Pi fallbacks.
+ * Pi keeps its existing `.pi` locations. OMP uses its active agent directory
+ * for global config and checks native `.omp` project locations before
+ * trust-gated legacy Pi project fallbacks.
  */
 export function resolveHookConfigPaths(options: HookConfigDiscoveryOptions = {}): HookConfigPaths {
   const exists = options.exists ?? existsSync
@@ -311,14 +312,7 @@ function globalCandidatePaths(
     path.join(profile.agentDir, "hooks.yaml"),
   ]
 
-  if (profile.kind === "omp") {
-    const legacyAgentDir = path.join(homeDir, ".pi", "agent")
-    candidates.push(path.join(legacyAgentDir, "hook", "hooks.yaml"))
-    candidates.push(path.join(legacyAgentDir, "hooks.yaml"))
-    return candidates
-  }
-
-  if (platform === "win32" && appDataDir) {
+  if (profile.kind === "pi" && platform === "win32" && appDataDir) {
     candidates.push(path.join(appDataDir, "pi", "agent", "hook", "hooks.yaml"))
     candidates.push(path.join(appDataDir, "pi", "agent", "hooks.yaml"))
   }
