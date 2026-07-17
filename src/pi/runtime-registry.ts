@@ -175,13 +175,15 @@ export function createRuntimeRegistry(pi: ExtensionAPI): RuntimeRegistry {
         cwd,
         details: { files: loaded.files, summary, sources: loaded.sources },
       });
+      const synchronousBashBudgetMs = resolveSynchronousBashBudgetMs(getHookHostProfile().kind);
       const runtime = createHooksRuntime(host, {
         directory: cwd,
         hooks: loaded.hooks,
         initialSignature: loaded.signature,
         initialFiles: loaded.files,
+        initialWatchPaths: loaded.watchPaths,
         reloadDiscoveredHooks: true,
-        synchronousBashBudgetMs: resolveSynchronousBashBudgetMs(getHookHostProfile().kind),
+        ...(synchronousBashBudgetMs === undefined ? {} : { synchronousBashBudgetMs }),
       });
       runtimes.set(cwd, runtime);
       evictIfNeeded();
