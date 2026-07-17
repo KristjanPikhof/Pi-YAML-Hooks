@@ -50,7 +50,7 @@ import { registerUserBashInterception } from "./user-bash.js";
  * Installs:
  * - `tool_call`    → runtime `tool.execute.before` (+ block-tool response)
  * - `tool_result`  → Phase 1 snapshot-hook + runtime `tool.execute.after`
- * - `agent_end` / `agent_settled` (PI), deferred `session_stop` (OMP)
+ * - `agent_end` / `agent_settled` (PI), `session_stop`-armed `agent_end` (OMP)
  *                  → runtime `session.idle` (when idle + no pending messages)
  * - `session_start`→ runtime `session.created` (on new/startup)
  * - `session_shutdown` / `session_before_switch`
@@ -208,21 +208,26 @@ export function registerAdapter(pi: ExtensionAPI, hostKind: HookHostKind = "pi")
   };
 
   if (hostKind === "omp") {
+    let idleCandidate: { sessionId: string; generation: number } | undefined;
     const sessionStopEventApi = pi as unknown as {
       on(event: "session_stop", handler: (_event: unknown, ctx: ExtensionContext) => void): void;
     };
     sessionStopEventApi.on("session_stop", (_event, ctx): void => {
-      const expectedSessionId = safeGetSessionId(ctx.sessionManager);
-      if (!expectedSessionId) return;
-      const expectedGeneration = sessionIdleGeneration;
+      const sessionId = safeGetSessionId(ctx.sessionManager);
+      idleCandidate = sessionId
+        ? { sessionId, generation: sessionIdleGeneration }
+        : undefined;
+    });
 
-      // OMP awaits session_stop handlers sequentially, then consumes any
-      // continuation result. Yield a macrotask instead of awaiting here so
-      // queued continuation state or a new agent_start can invalidate this
-      // captured stop before it is treated as authoritative idle.
-      setTimeout(() => {
-        void dispatchSessionIdle(ctx, expectedSessionId, expectedGeneration);
-      }, 0);
+    pi.on("agent_end", async (_event, ctx: ExtensionContext): Promise<void> => {
+      const candidate = idleCandidate;
+      idleCandidate = undefined;
+      if (!candidate) return;
+
+      // OMP emits this agent_end only after every session_stop handler has
+      // settled and its continuation result has been queued. Retry and other
+      // nonterminal agent_end events have no armed candidate and are ignored.
+      await dispatchSessionIdle(ctx, candidate.sessionId, candidate.generation);
     });
   } else {
     pi.on("agent_end", async (_event, ctx: ExtensionContext): Promise<void> => {

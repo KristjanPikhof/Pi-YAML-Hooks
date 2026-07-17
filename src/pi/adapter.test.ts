@@ -221,7 +221,6 @@ class FakePiHarness {
   }
 
   async agentEnd(): Promise<void> {
-    if (!this.handlers.has("agent_end")) return
     await this.emit("agent_end")
   }
 
@@ -553,7 +552,7 @@ const cases: Case[] = [
       }),
   },
   {
-    name: "OMP retry agent_end does not dispatch idle while genuine session_stop does",
+    name: "OMP retry agent_end does not dispatch idle while session_stop-armed agent_end does",
     run: async () =>
       await withIsolatedProject(true, async (projectDir) => {
         writeProjectHooks(
@@ -570,26 +569,25 @@ const cases: Case[] = [
 
         await harness.agentStart()
         await harness.agentEnd()
-        await sleep(0)
         const retrySuppressed = harness.notifications.length === 0
 
         await harness.sessionStop()
-        const deferred = harness.notifications.length === 0
-        await sleep(0)
+        const waitsForFollowingAgentEnd = harness.notifications.length === 0
+        await harness.agentEnd()
         const genuineStopDispatched = harness.notifications.join(",") === "idle"
 
-        return retrySuppressed && deferred && genuineStopDispatched
+        return retrySuppressed && waitsForFollowingAgentEnd && genuineStopDispatched
           ? { ok: true }
           : {
               ok: false,
               detail:
-                `retrySuppressed=${retrySuppressed}, deferred=${deferred}, ` +
+                `retrySuppressed=${retrySuppressed}, waitsForFollowingAgentEnd=${waitsForFollowingAgentEnd}, ` +
                 `genuineStopDispatched=${genuineStopDispatched}, notifications=${JSON.stringify(harness.notifications)}`,
             }
       }),
   },
   {
-    name: "OMP deferred session_stop idle is suppressed by queued continuation or agent_start",
+    name: "OMP idle waits for later async session_stop handlers and suppresses continuation or restart",
     run: async () =>
       await withIsolatedProject(true, async (projectDir) => {
         writeProjectHooks(
@@ -605,14 +603,18 @@ const cases: Case[] = [
         harness.register()
         let queueContinuation = true
         const sessionStopHandlers = harness.handlers.get("session_stop") ?? []
-        sessionStopHandlers.push(() => {
+        sessionStopHandlers.push(async () => {
+          await sleep(10)
           if (queueContinuation) harness.pendingMessages = true
         })
         harness.handlers.set("session_stop", sessionStopHandlers)
 
         await harness.agentStart()
-        await harness.sessionStop()
+        const stopping = harness.sessionStop()
         await sleep(0)
+        const asyncHandlerDidNotRace = harness.notifications.length === 0
+        await stopping
+        await harness.agentEnd()
         const continuationSuppressed = harness.notifications.length === 0
 
         queueContinuation = false
@@ -620,20 +622,21 @@ const cases: Case[] = [
         await harness.agentStart()
         await harness.sessionStop()
         await harness.agentStart()
-        await sleep(0)
+        await harness.agentEnd()
         const restartedSuppressed = harness.notifications.length === 0
 
         await harness.sessionStop()
-        await sleep(0)
+        await harness.agentEnd()
         const laterStopDispatched = harness.notifications.join(",") === "idle"
 
-        return continuationSuppressed && restartedSuppressed && laterStopDispatched
+        return asyncHandlerDidNotRace && continuationSuppressed && restartedSuppressed && laterStopDispatched
           ? { ok: true }
           : {
               ok: false,
               detail:
-                `continuationSuppressed=${continuationSuppressed}, restartedSuppressed=${restartedSuppressed}, ` +
-                `laterStopDispatched=${laterStopDispatched}, notifications=${JSON.stringify(harness.notifications)}`,
+                `asyncHandlerDidNotRace=${asyncHandlerDidNotRace}, continuationSuppressed=${continuationSuppressed}, ` +
+                `restartedSuppressed=${restartedSuppressed}, laterStopDispatched=${laterStopDispatched}, ` +
+                `notifications=${JSON.stringify(harness.notifications)}`,
             }
       }),
   },
