@@ -7,7 +7,11 @@ import {
   __resetHookHostProfileForTests,
   configureHookHostProfile,
 } from "../core/host-profile.js"
-import { registerHookAutocomplete, resetHookAutocompleteForTests } from "./autocomplete.js"
+import {
+  __setHookAutocompleteInstrumentationForTests,
+  registerHookAutocomplete,
+  resetHookAutocompleteForTests,
+} from "./autocomplete.js"
 
 interface Case {
   readonly name: string
@@ -103,6 +107,9 @@ async function withSandbox<T>(run: (projectDir: string, homeDir: string) => Prom
   const previousHome = process.env.HOME
   const previousUserProfile = process.env.USERPROFILE
   const previousTrust = process.env.PI_YAML_HOOKS_TRUST_PROJECT
+  const previousAllowGlobalImports = process.env.PI_YAML_HOOKS_ALLOW_GLOBAL_IMPORTS
+  const previousAllowPackageImports = process.env.PI_YAML_HOOKS_ALLOW_PACKAGE_IMPORTS
+  const previousAllowOutsideTrust = process.env.PI_YAML_HOOKS_ALLOW_PROJECT_IMPORTS_OUTSIDE_TRUST_ANCHOR
   process.env.HOME = homeDir
   process.env.USERPROFILE = homeDir
   process.env.PI_YAML_HOOKS_TRUST_PROJECT = "1"
@@ -118,6 +125,12 @@ async function withSandbox<T>(run: (projectDir: string, homeDir: string) => Prom
     else process.env.USERPROFILE = previousUserProfile
     if (previousTrust === undefined) delete process.env.PI_YAML_HOOKS_TRUST_PROJECT
     else process.env.PI_YAML_HOOKS_TRUST_PROJECT = previousTrust
+    if (previousAllowGlobalImports === undefined) delete process.env.PI_YAML_HOOKS_ALLOW_GLOBAL_IMPORTS
+    else process.env.PI_YAML_HOOKS_ALLOW_GLOBAL_IMPORTS = previousAllowGlobalImports
+    if (previousAllowPackageImports === undefined) delete process.env.PI_YAML_HOOKS_ALLOW_PACKAGE_IMPORTS
+    else process.env.PI_YAML_HOOKS_ALLOW_PACKAGE_IMPORTS = previousAllowPackageImports
+    if (previousAllowOutsideTrust === undefined) delete process.env.PI_YAML_HOOKS_ALLOW_PROJECT_IMPORTS_OUTSIDE_TRUST_ANCHOR
+    else process.env.PI_YAML_HOOKS_ALLOW_PROJECT_IMPORTS_OUTSIDE_TRUST_ANCHOR = previousAllowOutsideTrust
     resetPiHooksLoggerForTests()
     resetHookAutocompleteForTests()
     __resetHookHostProfileForTests()
@@ -267,6 +280,117 @@ const cases: Case[] = [
         return values.includes("brand-new-hook")
           ? { ok: true }
           : { ok: false, detail: JSON.stringify(values) }
+      }),
+  },
+  {
+    name: "reuses cached autocomplete state without repeating discovery or project resolution",
+    run: async () =>
+      await withSandbox(async (projectDir) => {
+        writeProjectHooks(projectDir, "hooks: []\n")
+        let discoveryCalls = 0
+        let projectResolutionCalls = 0
+        __setHookAutocompleteInstrumentationForTests({
+          onDiscovery: () => {
+            discoveryCalls += 1
+          },
+          onProjectResolution: () => {
+            projectResolutionCalls += 1
+          },
+        })
+        const ctx = makeContext({ projectDir, hasUI: true, expose: true })
+        registerHookAutocomplete(ctx as never)
+        const provider = ctx.factories[0](createNoopProvider())
+        const input = "/hooks-status "
+        await provider.getSuggestions([input], 0, input.length, { signal: signal() })
+        await provider.getSuggestions([input], 0, input.length, { signal: signal() })
+        await provider.getSuggestions([input], 0, input.length, { signal: signal() })
+        return discoveryCalls === 1 && projectResolutionCalls === 1
+          ? { ok: true }
+          : { ok: false, detail: JSON.stringify({ discoveryCalls, projectResolutionCalls }) }
+      }),
+  },
+  {
+    name: "invalidates cached autocomplete state when a watched hook file changes",
+    run: async () =>
+      await withSandbox(async (projectDir) => {
+        writeProjectHooks(
+          projectDir,
+          `hooks:
+  - id: original-hook
+    event: tool.after.write
+    actions:
+      - notify: ok
+`,
+        )
+        let discoveryCalls = 0
+        __setHookAutocompleteInstrumentationForTests({
+          onDiscovery: () => {
+            discoveryCalls += 1
+          },
+        })
+        const ctx = makeContext({ projectDir, hasUI: true, expose: true })
+        registerHookAutocomplete(ctx as never)
+        const provider = ctx.factories[0](createNoopProvider())
+        const input = "/hooks-status changed-"
+        await provider.getSuggestions([input], 0, input.length, { signal: signal() })
+        writeProjectHooks(
+          projectDir,
+          `hooks:
+  - id: changed-hook
+    event: tool.after.read
+    actions:
+      - notify: refreshed
+`,
+        )
+        const refreshed = await provider.getSuggestions([input], 0, input.length, { signal: signal() })
+        const values = refreshed?.items.map((item) => item.value) ?? []
+        return discoveryCalls === 2 && values.includes("changed-hook")
+          ? { ok: true }
+          : { ok: false, detail: JSON.stringify({ discoveryCalls, values }) }
+      }),
+  },
+  {
+    name: "invalidates cached autocomplete state when an import trust env value changes",
+    run: async () =>
+      await withSandbox(async (projectDir, homeDir) => {
+        const globalDir = path.join(homeDir, ".pi", "agent", "hook")
+        writeHooksFile(
+          path.join(globalDir, "hooks.yaml"),
+          `imports:
+  - ./shared.yaml
+hooks: []
+`,
+        )
+        writeHooksFile(
+          path.join(globalDir, "shared.yaml"),
+          `hooks:
+  - id: imported-after-env
+    event: session.idle
+    actions:
+      - notify: imported
+`,
+        )
+        delete process.env.PI_YAML_HOOKS_ALLOW_GLOBAL_IMPORTS
+        let discoveryCalls = 0
+        __setHookAutocompleteInstrumentationForTests({
+          onDiscovery: () => {
+            discoveryCalls += 1
+          },
+        })
+        const ctx = makeContext({ projectDir, hasUI: true, expose: true })
+        registerHookAutocomplete(ctx as never)
+        const provider = ctx.factories[0](createNoopProvider())
+        const input = "/hooks-status imported-"
+        const initial = await provider.getSuggestions([input], 0, input.length, { signal: signal() })
+        process.env.PI_YAML_HOOKS_ALLOW_GLOBAL_IMPORTS = "1"
+        const refreshed = await provider.getSuggestions([input], 0, input.length, { signal: signal() })
+        const initialValues = initial?.items.map((item) => item.value) ?? []
+        const refreshedValues = refreshed?.items.map((item) => item.value) ?? []
+        return discoveryCalls === 2 &&
+          !initialValues.includes("imported-after-env") &&
+          refreshedValues.includes("imported-after-env")
+          ? { ok: true }
+          : { ok: false, detail: JSON.stringify({ discoveryCalls, initialValues, refreshedValues }) }
       }),
   },
   {
