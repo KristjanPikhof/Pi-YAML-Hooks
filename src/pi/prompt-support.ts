@@ -1,4 +1,15 @@
-import type { BeforeAgentStartEvent, ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent"
+import type {
+  BeforeAgentStartEvent as PiBeforeAgentStartEvent,
+  BeforeAgentStartEventResult as PiBeforeAgentStartEventResult,
+  ExtensionAPI as PiExtensionAPI,
+  ExtensionContext as PiExtensionContext,
+} from "@earendil-works/pi-coding-agent"
+import type {
+  BeforeAgentStartEvent as OmpBeforeAgentStartEvent,
+  BeforeAgentStartEventResult as OmpBeforeAgentStartEventResult,
+  ExtensionAPI as OmpExtensionAPI,
+  ExtensionContext as OmpExtensionContext,
+} from "@oh-my-pi/pi-coding-agent"
 
 import { resolveHookConfigPaths, resolveProjectHookResolution } from "../core/config-paths.js"
 import { loadDiscoveredHooksSnapshot, summarizeHookSources } from "../core/load-hooks.js"
@@ -6,17 +17,50 @@ import { getHookHostProfile } from "../core/host-profile.js"
 
 const PROMPT_AWARENESS_DISABLE_ENV = "PI_YAML_HOOKS_PROMPT_AWARENESS"
 
-export function registerPromptSupport(pi: ExtensionAPI): void {
-  pi.on("before_agent_start", (event: BeforeAgentStartEvent, ctx: ExtensionContext) => {
-    const systemPrompt = buildHookAwarenessSystemPrompt(ctx)
-    if (!systemPrompt) {
-      return
-    }
+export function registerPromptSupport(api: PiExtensionAPI | OmpExtensionAPI): void {
+  const profile = getHookHostProfile()
+  if (profile.kind === "omp") {
+    registerOmpPromptSupport(api as OmpExtensionAPI)
+    return
+  }
 
-    return {
-      systemPrompt: `${event.systemPrompt.trimEnd()}\n\n${systemPrompt}`,
-    }
-  })
+  registerPiPromptSupport(api as PiExtensionAPI)
+}
+
+function registerPiPromptSupport(pi: PiExtensionAPI): void {
+  pi.on("before_agent_start", handlePiBeforeAgentStart)
+}
+
+function handlePiBeforeAgentStart(
+  event: PiBeforeAgentStartEvent,
+  ctx: PiExtensionContext,
+): PiBeforeAgentStartEventResult | undefined {
+  const systemPrompt = buildHookAwarenessSystemPrompt(ctx)
+  if (!systemPrompt) {
+    return undefined
+  }
+
+  return {
+    systemPrompt: `${event.systemPrompt.trimEnd()}\n\n${systemPrompt}`,
+  }
+}
+
+function registerOmpPromptSupport(omp: OmpExtensionAPI): void {
+  omp.on("before_agent_start", handleOmpBeforeAgentStart)
+}
+
+function handleOmpBeforeAgentStart(
+  event: OmpBeforeAgentStartEvent,
+  ctx: OmpExtensionContext,
+): OmpBeforeAgentStartEventResult | undefined {
+  const systemPrompt = buildHookAwarenessSystemPrompt(ctx)
+  if (!systemPrompt) {
+    return undefined
+  }
+
+  return {
+    systemPrompt: [...event.systemPrompt, systemPrompt],
+  }
 }
 
 // P3-3: accept a small set of common "off" spellings so users do not have to
@@ -30,7 +74,7 @@ function isPromptAwarenessDisabled(): boolean {
   return PROMPT_AWARENESS_DISABLE_VALUES.has(raw.trim().toLowerCase())
 }
 
-function buildHookAwarenessSystemPrompt(ctx: ExtensionContext): string | undefined {
+function buildHookAwarenessSystemPrompt(ctx: Pick<PiExtensionContext | OmpExtensionContext, "cwd" | "hasUI">): string | undefined {
   if (isPromptAwarenessDisabled()) {
     return undefined
   }

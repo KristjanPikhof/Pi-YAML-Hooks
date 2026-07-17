@@ -227,7 +227,10 @@ export function registerCommands(pi: ExtensionAPI): void {
         const scriptPath = locateTailHookLogScript()
         if (scriptPath) {
           try {
-            const child = spawn("bash", [scriptPath], { detached: true, stdio: "inherit" })
+            const child = spawn("bash", [scriptPath, "--file", logFilePath], {
+              detached: true,
+              stdio: "inherit",
+            })
             child.on("error", (error) => {
               // eslint-disable-next-line no-console
               console.error(`[pi-yaml-hooks] tail-hook-log.sh failed to start: ${error.message}`)

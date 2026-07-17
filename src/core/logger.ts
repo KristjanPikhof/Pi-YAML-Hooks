@@ -40,6 +40,15 @@ interface PiHooksLogger {
   debug(kind: string, message: string, fields?: Omit<PiHooksLogEntry, "kind" | "message" | "level">): void
 }
 
+interface LoggerConfiguration {
+  readonly hostKind: "pi" | "omp"
+  readonly agentDir: string
+  readonly enabled: boolean
+  readonly filePath: string
+  readonly level?: PiHooksLogLevel
+  readonly mirrorToStderr: boolean
+}
+
 const LEVEL_PRIORITIES: Record<PiHooksLogLevel, number> = {
   error: 0,
   warn: 1,
@@ -69,6 +78,7 @@ const DEFAULT_LOG_MAX_BYTES = 10 * 1024 * 1024
 const ROTATED_SUFFIX = ".1"
 
 let cachedLogger: PiHooksLogger | undefined
+let cachedLoggerConfiguration: LoggerConfiguration | undefined
 let warnedAboutLoggerFailure = false
 let cachedLogFd: number | undefined
 let cachedLogFdPath: string | undefined
@@ -80,12 +90,17 @@ let cachedLogFdPath: string | undefined
 let drainCount = 0
 
 export function getPiHooksLogger(): PiHooksLogger {
-  if (cachedLogger?.enabled && cachedLogger.filePath !== resolveLogFilePath()) {
+  const configuration = resolveLoggerConfiguration()
+  if (cachedLogger && !loggerConfigurationsMatch(cachedLoggerConfiguration, configuration)) {
     closeCachedLogFile()
     cachedLogger = undefined
+    cachedLoggerConfiguration = undefined
     warnedAboutLoggerFailure = false
   }
-  cachedLogger ??= createPiHooksLogger()
+  if (!cachedLogger) {
+    cachedLogger = createPiHooksLogger(configuration)
+    cachedLoggerConfiguration = configuration
+  }
   return cachedLogger
 }
 
@@ -95,6 +110,7 @@ export function getPiHooksLogFilePath(): string {
 
 export function resetPiHooksLoggerForTests(): void {
   cachedLogger = undefined
+  cachedLoggerConfiguration = undefined
   warnedAboutLoggerFailure = false
   closeCachedLogFile()
   drainCount = 0
