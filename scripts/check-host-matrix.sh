@@ -26,6 +26,11 @@ OMP_SMOKE_COMMAND=(bash scripts/smoke/omp-runtime-smoke.sh)
 OMP_SMOKE_TIMEOUT_SECONDS="${OMP_SMOKE_TIMEOUT_SECONDS:-300}"
 OMP_SMOKE_TIMEOUT_GRACE_SECONDS="${OMP_SMOKE_TIMEOUT_GRACE_SECONDS:-5}"
 PACK_COMMAND=(npm pack --json --dry-run --ignore-scripts)
+PACKED_IMPORT_INSTALL_COMMAND=(
+  npm install --no-audit --no-fund --ignore-scripts --no-save
+  "@oh-my-pi/pi-coding-agent@$OMP_SDK_SPEC"
+  "@oh-my-pi/pi-tui@$OMP_SDK_SPEC"
+)
 
 print_dry_command() {
   printf '[dry-run]'
@@ -95,6 +100,10 @@ PLAN
     print_dry_command node --input-type=module - "$OMP_SMOKE_TIMEOUT_SECONDS" "$OMP_SMOKE_TIMEOUT_GRACE_SECONDS" "${OMP_SMOKE_COMMAND[@]}"
     print_dry_command "${PACK_COMMAND[@]}"
     print_dry_command node --input-type=module - '<isolated>/npm-pack.json' '<isolated>/package.json' "$EXPECTED_PACK_FILES"
+    print_dry_command npm pack --json --ignore-scripts --pack-destination '<isolated>'
+    printf '[dry-run] create <isolated>/omp-packed-consumer/package.json\n'
+    print_dry_command "${PACKED_IMPORT_INSTALL_COMMAND[@]}" '<isolated>/pi-yaml-hooks-<version>.tgz'
+    printf '[dry-run] assert <consumer>/node_modules/@earendil-works is absent and import pi-yaml-hooks/extensions/omp-yaml-hooks\n'
     cat <<'PLAN'
 [dry-run] rm -rf <isolated temp root>
 [dry-run] cksum package.json package-lock.json
@@ -466,6 +475,45 @@ console.log(`Package hosts: pi=${manifest.pi.extensions[0]} omp=${manifest.omp.e
 NODE
 }
 
+verify_packed_omp_import() {
+  local pack_json="$MATRIX_ROOT/packed-import.json"
+  local consumer="$MATRIX_ROOT/omp-packed-consumer"
+  local tarball
+
+  mkdir -p "$consumer"
+  (cd "$OMP_COPY" && npm pack --json --ignore-scripts --pack-destination "$MATRIX_ROOT") > "$pack_json"
+  tarball="$(node --input-type=module - "$pack_json" "$MATRIX_ROOT" <<'NODE'
+import { readFileSync } from "node:fs";
+import path from "node:path";
+const [packJson, destination] = process.argv.slice(2);
+const records = JSON.parse(readFileSync(packJson, "utf8"));
+if (!Array.isArray(records) || records.length !== 1 || typeof records[0].filename !== "string") {
+  throw new Error("unexpected npm pack result for isolated OMP import");
+}
+process.stdout.write(path.join(destination, records[0].filename));
+NODE
+)"
+  printf '{"name":"omp-packed-consumer","private":true,"type":"module"}\n' > "$consumer/package.json"
+
+  (
+    cd "$consumer"
+    "${PACKED_IMPORT_INSTALL_COMMAND[@]}" "$tarball"
+    node --input-type=module - <<'NODE'
+import { existsSync } from "node:fs";
+
+if (existsSync(new URL("./node_modules/@earendil-works", import.meta.url))) {
+  throw new Error("packed OMP consumer unexpectedly installed @earendil-works packages");
+}
+const extension = await import("pi-yaml-hooks/extensions/omp-yaml-hooks");
+if (typeof extension.default !== "function") {
+  throw new Error(`packed OMP extension default export is ${typeof extension.default}, expected function`);
+}
+console.log("Packed OMP import: subpath=pi-yaml-hooks/extensions/omp-yaml-hooks earendil_packages=0 default=function");
+NODE
+  )
+}
+
+
 PACKAGE_JSON_BEFORE="$(checksum_file "$ROOT_DIR/package.json")"
 PACKAGE_LOCK_BEFORE="$(checksum_file "$ROOT_DIR/package-lock.json")"
 
@@ -477,3 +525,4 @@ run_stage "OMP SDK typecheck ($OMP_SDK_SPEC)" run_omp_typecheck
 run_stage "OMP internal suite ($OMP_SDK_SPEC)" run_omp_internal
 run_stage "OMP runtime smoke ($OMP_SDK_SPEC)" run_omp_runtime_smoke
 run_stage "npm package-content verification" verify_package_contents
+run_stage "packed OMP subpath import without Earendil peers" verify_packed_omp_import
