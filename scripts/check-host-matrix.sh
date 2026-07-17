@@ -345,7 +345,7 @@ if (!Number.isFinite(timeoutMs) || timeoutMs <= 0 || !Number.isFinite(graceMs) |
   throw new Error(`invalid timeout invocation: timeout=${timeoutText} grace=${graceText} command=${command ?? ""}`);
 }
 
-const child = spawn(command, args, { stdio: ["ignore", "inherit", "inherit"] });
+const child = spawn(command, args, { detached: true, stdio: ["ignore", "inherit", "inherit"] });
 let timedOut = false;
 let spawnError;
 let killTimer;
@@ -353,19 +353,26 @@ const closed = new Promise((resolve) => {
   child.once("error", (error) => { spawnError = error; });
   child.once("close", (code, signal) => resolve({ code, signal }));
 });
+const signalChildGroup = (signal) => {
+  if (child.pid === undefined || child.exitCode !== null || child.signalCode !== null) return;
+  try { process.kill(-child.pid, signal); }
+  catch (error) {
+    if (error?.code !== "ESRCH") throw error;
+  }
+};
 const deadlineTimer = setTimeout(() => {
   timedOut = true;
   console.error(`[TIMEOUT] command exceeded ${timeoutText}s; sending SIGTERM: ${[command, ...args].join(" ")}`);
-  child.kill("SIGTERM");
+  signalChildGroup("SIGTERM");
   killTimer = setTimeout(() => {
     if (child.exitCode === null && child.signalCode === null) {
       console.error(`[TIMEOUT] command ignored SIGTERM for ${graceText}s; sending SIGKILL`);
-      child.kill("SIGKILL");
+      signalChildGroup("SIGKILL");
     }
   }, graceMs);
 }, timeoutMs);
 for (const signal of ["SIGHUP", "SIGINT", "SIGTERM"]) {
-  process.once(signal, () => child.kill(signal));
+  process.once(signal, () => signalChildGroup(signal));
 }
 const { code, signal } = await closed;
 clearTimeout(deadlineTimer);
