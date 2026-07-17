@@ -184,6 +184,58 @@ const cases: Case[] = [
     },
   },
   {
+    name: "symlinked cwd traversal stays within the canonical trusted repo",
+    run: () => {
+      const sandbox = createSandbox("symlink-boundary")
+      const homeDir = path.join(sandbox, "home")
+      const repoDir = path.join(sandbox, "trusted-repo")
+      const repoCwd = path.join(repoDir, "packages", "app")
+      const externalDir = path.join(sandbox, "external")
+      const linkedCwd = path.join(externalDir, "linked-cwd")
+      try {
+        mkdirSync(repoCwd, { recursive: true })
+        mkdirSync(externalDir, { recursive: true })
+        const repoConfig = writePreferredHooks(repoDir)
+        const externalConfig = writePreferredHooks(externalDir)
+        symlinkSync(repoCwd, linkedCwd, "dir")
+        writeTrustedProjects(homeDir, [repoDir])
+
+        const options = {
+          homeDir,
+          projectDir: linkedCwd,
+          resolveGitWorktreeRoot: () => repoDir,
+        }
+        const discovered = discoverHookConfigPaths(options)
+        const watched = resolveHookConfigWatchPaths(options).paths
+        const canonicalRepoDir = realpathSync.native(repoDir)
+        const canonicalCwd = realpathSync.native(repoCwd)
+        const expectedWatched = [
+          path.join(homeDir, ".pi", "agent", "hook", "hooks.yaml"),
+          path.join(homeDir, ".pi", "agent", "hooks.yaml"),
+          path.join(homeDir, ".pi", "agent", "trusted-projects.json"),
+        ]
+        for (const dir of [canonicalCwd, path.dirname(canonicalCwd), canonicalRepoDir]) {
+          expectedWatched.push(
+            path.join(dir, ".pi", "hook", "hooks.yaml"),
+            path.join(dir, ".pi", "hooks.yaml"),
+            path.join(dir, ".git"),
+          )
+        }
+
+        const ok =
+          samePaths(discovered, [repoConfig]) &&
+          JSON.stringify(watched) === JSON.stringify(expectedWatched) &&
+          !watched.includes(externalConfig) &&
+          !watched.includes(realpathSync.native(externalConfig))
+        return ok
+          ? { ok: true }
+          : { ok: false, detail: JSON.stringify({ discovered, watched, expectedWatched, externalConfig }) }
+      } finally {
+        cleanup(sandbox)
+      }
+    },
+  },
+  {
     name: "non-git upward search works",
     run: () => {
       const sandbox = createSandbox("nongit")

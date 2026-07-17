@@ -125,11 +125,8 @@ export function resolveHookConfigWatchPaths(
     return { paths: uniquePaths(paths) }
   }
 
-  const realpath = options.realpath ?? defaultRealpath
   const project = resolveProjectHookResolution(options)
-  const cwd = project?.cwd ?? path.resolve(options.projectDir)
-  const stopDir = project?.worktreeRoot
-  for (const dir of ancestorDirs(cwd, stopDir, realpath)) {
+  for (const dir of ancestorDirs(project.canonicalCwd, project.canonicalAnchorDir)) {
     paths.push(...projectCandidatePaths(dir, profile.kind))
     paths.push(path.join(dir, ".git"))
   }
@@ -200,7 +197,7 @@ export function resolveProjectHookResolution(options: HookConfigDiscoveryOptions
   const cwd = path.resolve(projectDir)
   const canonicalCwd = canonicalizePath(cwd, realpath)
   const worktreeRoot = resolveWorktreeRoot(cwd, options.resolveGitWorktreeRoot, realpath)
-  const discoveredProjectRoot = findNearestProjectRoot(cwd, worktreeRoot, exists, realpath, profile.kind)
+  const discoveredProjectRoot = findNearestProjectRoot(canonicalCwd, worktreeRoot, exists, profile.kind)
   const projectConfigPath = discoveredProjectRoot
     ? pickFirstExisting(projectCandidatePaths(discoveredProjectRoot, profile.kind), exists)
     : undefined
@@ -335,13 +332,12 @@ function projectCandidatePaths(projectDir: string, hostKind: HookHostProfile["ki
 }
 
 function findNearestProjectRoot(
-  cwd: string,
-  worktreeRoot: string | undefined,
+  canonicalCwd: string,
+  canonicalWorktreeRoot: string | undefined,
   exists: (filePath: string) => boolean,
-  realpath: (filePath: string) => string,
   hostKind: HookHostProfile["kind"],
 ): string | undefined {
-  for (const dir of ancestorDirs(cwd, worktreeRoot, realpath)) {
+  for (const dir of ancestorDirs(canonicalCwd, canonicalWorktreeRoot)) {
     if (pickFirstExisting(projectCandidatePaths(dir, hostKind), exists)) {
       return dir
     }
@@ -350,13 +346,12 @@ function findNearestProjectRoot(
   return undefined
 }
 
-function* ancestorDirs(cwd: string, stopDir: string | undefined, realpath: (filePath: string) => string): Iterable<string> {
-  const canonicalStopDir = stopDir ? canonicalizePath(stopDir, realpath) : undefined
-  let current = path.resolve(cwd)
+function* ancestorDirs(canonicalCwd: string, canonicalStopDir?: string): Iterable<string> {
+  let current = path.resolve(canonicalCwd)
 
   while (true) {
     yield current
-    if (canonicalStopDir && canonicalizePath(current, realpath) === canonicalStopDir) {
+    if (current === canonicalStopDir) {
       return
     }
     const parent = path.dirname(current)
