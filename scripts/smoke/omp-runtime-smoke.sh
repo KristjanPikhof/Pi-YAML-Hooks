@@ -21,6 +21,7 @@ RPC_TRANSCRIPT="$SMOKE_ROOT/rpc-frames.ndjson"
 RPC_STDERR="$SMOKE_ROOT/rpc-stderr.log"
 TUI_TRANSCRIPT="$SMOKE_ROOT/tui.log"
 TMUX_BIN="${TMUX_BIN:-}"
+TMUX_OVERRIDE="$TMUX_BIN"
 TMUX_SOCKET="$SMOKE_ROOT/tmux.sock"
 SERVER_PID=""
 CLEANED=0
@@ -55,7 +56,7 @@ for command in omp bun npm node; do
   command -v "$command" >/dev/null 2>&1 || fail "required command is unavailable: $command"
 done
 if [[ -n "$TMUX_BIN" ]]; then
-  TMUX_BIN="$(command -v "$TMUX_BIN" 2>/dev/null)" || fail "tmux override is unavailable: ${TMUX_BIN}"
+  TMUX_BIN="$(command -v "$TMUX_OVERRIDE" 2>/dev/null)" || fail "tmux override is unavailable: $TMUX_OVERRIDE"
 else
   TMUX_BIN="$(command -v tmux 2>/dev/null)" || fail "required command is unavailable: tmux (set TMUX_BIN to override)"
 fi
