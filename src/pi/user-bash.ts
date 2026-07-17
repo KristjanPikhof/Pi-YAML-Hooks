@@ -1,10 +1,9 @@
 import { randomUUID as nodeRandomUUID } from "node:crypto"
 import { existsSync, readFileSync } from "node:fs"
-import os from "node:os"
-import path from "node:path"
 
 import type { ExtensionAPI, ExtensionContext, UserBashEvent, UserBashEventResult } from "@earendil-works/pi-coding-agent"
 
+import { resolveTrustedProjectsFilePath } from "../core/config-paths.js"
 import { getPiHooksLogger } from "../core/logger.js"
 import type { HooksRuntime } from "../core/runtime.js"
 
@@ -50,8 +49,7 @@ function emitUserBashWarningOnce(): void {
 
 function readTrustedProjectsList(): string[] {
   try {
-    const homeDir = os.homedir()
-    const trustFile = path.join(homeDir, ".pi", "agent", "trusted-projects.json")
+    const trustFile = resolveTrustedProjectsFilePath()
     if (!existsSync(trustFile)) return []
     const raw = readFileSync(trustFile, "utf8")
     const parsed = JSON.parse(raw) as unknown
@@ -86,9 +84,8 @@ export function registerUserBashInterception(
     // execution unguarded. With the env-gate on, that meant the typed user
     // command would run without ever passing through tool.before.bash hooks.
     //
-    // P1-10 fix: when sessionId is missing we previously bypassed silently;
-    // now we emit a debug breadcrumb so operators can correlate "hook didn't
-    // fire" reports with the cause.
+    // A missing session ID is an internal interception failure: without one,
+    // the runtime cannot safely address the command's hook session.
     const logger = getPiHooksLogger()
     try {
       emitUserBashUiWarningOnce(ctx)
@@ -116,11 +113,12 @@ export function registerUserBashInterception(
       }
 
       if (!sessionId) {
-        logger.debug("user_bash_bypassed", "user_bash interception bypassed because session id is missing.", {
+        const reason = "missing_session_id"
+        logger.error("user_bash_internal_error", "user_bash interception failed because session id is missing.", {
           cwd: ctx.cwd,
-          details: { reason: "missing_session_id" },
+          details: { reason },
         })
-        return
+        return cancelledInternalErrorResult(reason)
       }
 
       let runtime: HooksRuntime

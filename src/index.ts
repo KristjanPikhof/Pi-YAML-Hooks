@@ -8,6 +8,7 @@
  */
 
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import { configureHookHostProfile } from "./core/host-profile.js";
 
 // Side-effect import: registers the PI HookPolicy with the core loader so
 // `unsupported_on_pi` diagnostics fire on every parse. P2 #22: core no longer
@@ -19,13 +20,25 @@ import { registerCommands } from "./pi/commands.js";
 import { registerHookDiagnostics } from "./pi/diagnostics.js";
 import { registerPromptSupport } from "./pi/prompt-support.js";
 
-export default function piHooksExtension(pi: ExtensionAPI): void {
+export type HookExtensionHostProfile =
+  | { readonly kind: "pi"; readonly agentDir?: string }
+  | { readonly kind: "omp"; readonly agentDir: string };
+
+export function registerHooksExtension(
+  pi: ExtensionAPI,
+  profile: HookExtensionHostProfile = { kind: "pi" },
+): void {
+  const configuredProfile = configureHookHostProfile(profile);
   registerHookDiagnostics(pi);
   registerPromptSupport(pi);
   registerCommands(pi);
   pi.on("session_start", (_event, ctx) => registerHookAutocomplete(ctx));
   pi.on("before_agent_start", (_event, ctx) => registerHookAutocomplete(ctx));
-  registerAdapter(pi);
+  registerAdapter(pi, configuredProfile.kind);
+}
+
+export default function piHooksExtension(pi: ExtensionAPI): void {
+  registerHooksExtension(pi);
 }
 
 // Public type re-exports (P3-7). Consumers building type-aware tooling on

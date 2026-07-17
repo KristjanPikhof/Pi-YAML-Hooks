@@ -1,146 +1,113 @@
 # Debugging hooks
 
-`pi-yaml-hooks` can write persistent NDJSON debug logs when you start PI with:
+`pi-yaml-hooks` can write persistent NDJSON debug logs for either host:
 
 ```bash
 PI_YAML_HOOKS_DEBUG=1 pi
+PI_YAML_HOOKS_DEBUG=1 omp
 ```
 
-Even without debug logging, hook execution failures and adapter dispatch failures still print concise stderr errors by default. Debug mode adds persistent NDJSON traces and action-level detail.
+Even without debug logging, hook execution failures and adapter dispatch failures print concise stderr errors. Debug mode adds persistent NDJSON traces and action-level detail.
+
+## Find the active files
+
+Run `/hooks-status` inside Pi or OMP first. It reports the current project directory, selected global and project configs, project trust state, active trust store, and current log path. Trust checks themselves use the canonical repo/worktree anchor.
+
+| Host | Active agent directory | Global candidates, first existing wins | Project candidates at the nearest project root | Trust store | Default log |
+|---|---|---|---|---|---|
+| Pi | `~/.pi/agent` | `~/.pi/agent/hook/hooks.yaml`, then `~/.pi/agent/hooks.yaml` | `.pi/hook/hooks.yaml`, then `.pi/hooks.yaml` | `~/.pi/agent/trusted-projects.json` | `~/.pi/agent/logs/pi-yaml-hooks.ndjson` |
+| OMP default profile | `~/.omp/agent` | `<agentDir>/hook/hooks.yaml`, then `<agentDir>/hooks.yaml` | `.omp/hook/hooks.yaml`, then `.omp/hooks.yaml`, then the two `.pi` candidates | `~/.omp/agent/trusted-projects.json` | `~/.omp/agent/logs/pi-yaml-hooks.ndjson` |
+| OMP named profile | `~/.omp/profiles/<profile>/agent` | Same order under the active named `agentDir` | Same project order as OMP default | `~/.omp/profiles/<profile>/agent/trusted-projects.json` | `~/.omp/profiles/<profile>/agent/logs/pi-yaml-hooks.ndjson` |
+
+OMP gets its active `agentDir` from the running host. Do not infer a named profile path from `HOME` alone. `/hooks-status`, prompt awareness, autocomplete, trust warnings, and `/hooks-tail-log` all use that active directory.
+
+### Diagnose trust and fallback
+
+Project trust is stored as absolute canonical repo/worktree anchors. Use these commands against the running host:
+
+- `/hooks-status` shows the selected native or fallback project file and its trust state.
+- `/hooks-validate` reports validation errors for the selected paths without replacing the last-known-good hook set with an invalid config.
+- `/hooks-trust` writes only the active host's trust store, using an atomic mode-`0600` replacement on POSIX.
+
+OMP checks native `.omp` project candidates before legacy `.pi` candidates within each directory while walking upward; the first directory containing either form wins. A legacy project file still requires the repo/worktree anchor in the active OMP trust store. `~/.pi/agent/trusted-projects.json` never authorizes OMP project hooks, and `/hooks-trust` under OMP does not create or update Pi trust state.
+
+Malformed or missing trust files fail closed. The warning names the active trust store, and a malformed file is left unchanged. `PI_YAML_HOOKS_TRUST_PROJECT=1` is an explicit per-process bypass and logs a trust-boundary warning.
 
 ## Structured in-session diagnostics
 
-`pi-yaml-hooks` also emits structured PI-native diagnostics for:
+`pi-yaml-hooks` emits structured host diagnostics for `/hooks-status`, `/hooks-validate`, and hook-load validation problems.
 
-- `/hooks-status`
-- `/hooks-validate`
-- hook-load validation problems detected while loading a config
+| Surface | Diagnostics and UI behavior |
+|---|---|
+| TUI | On capable hosts, diagnostic entries render inline without entering model context. `/hooks` autocomplete is registered only when the TUI autocomplete method exists. Pi PTY and OMP tmux smoke tests exercise this path. |
+| RPC | No TUI autocomplete is registered. RPC may still expose `ctx.hasUI`; when it does, `notify`, `confirm`, and `setStatus` use those UI methods. |
+| Headless or no UI | Diagnostics remain available as plain text, custom messages where supported, stderr, and logs. `notify` and `setStatus` degrade with one warning. `confirm` denies by default unless `PI_YAML_HOOKS_CONFIRM_AUTO_APPROVE=1` explicitly opts in. |
 
-On the Pi 0.80-capable TUI path, these are persisted as custom entries that appear inline but do not enter model context. Older Pi and non-TUI paths retain custom messages. In no-UI or other non-rendered contexts, the same content still degrades to plain text plus the existing logs; RPC mode in Pi 0.79+ may still expose UI depending on the host.
+A stale or replaced session does not receive queued output from an earlier hook. `tool:` asks the active Pi or OMP session to handle a follow-up prompt; if the captured session no longer matches, delivery degrades instead of leaking the prompt into the replacement session.
 
-## Log file
+## Tail the active log
 
-Default path:
+From inside the running host:
 
 ```text
-~/.pi/agent/logs/pi-yaml-hooks.ndjson
+/hooks-tail-log
+/hooks-tail-log --path
+/hooks-tail-log --follow
 ```
 
-Override it with:
+With no arguments, the command prints the active log and a copy-pasteable `tail -F` command. `--path` prints only the resolved path. `--follow` starts the packaged helper with that exact path, including for named OMP profiles and explicit log overrides.
 
-```bash
-PI_YAML_HOOKS_LOG_FILE=/tmp/pi-yaml-hooks.ndjson PI_YAML_HOOKS_DEBUG=1 pi
-```
-
-The log file rotates automatically once it exceeds `PI_YAML_HOOKS_LOG_MAX_BYTES` (default 10 MiB). On rotation the live file is renamed to `<path>.1`, replacing any prior `.1`. Only one rotated copy is kept, so plumb the file into your own log shipper if you need more history.
-
-## Tail the log
-
-Raw tail:
+Raw host defaults:
 
 ```bash
 tail -F ~/.pi/agent/logs/pi-yaml-hooks.ndjson
+tail -F ~/.omp/agent/logs/pi-yaml-hooks.ndjson
 ```
 
-Pretty tail helper:
+The standalone helper cannot infer an OMP profile and defaults to the Pi path unless a non-empty `PI_YAML_HOOKS_LOG_FILE` or `--file` is supplied. `/hooks-tail-log --follow` passes the active path automatically. For direct helper use, print the path first:
 
 ```bash
-./scripts/tail-hook-log.sh
+./scripts/tail-hook-log.sh --file /path/from/hooks-tail-log
 ```
 
-Or from inside PI, run `/hooks-tail-log` to get the current log path and a `tail -F` command you can paste into a shell.
-
-Filter by hook:
+Useful filters:
 
 ```bash
-./scripts/tail-hook-log.sh --hook load-writer-skill-when-markdown-changes
+./scripts/tail-hook-log.sh --file /path/to/pi-yaml-hooks.ndjson --hook my-hook
+./scripts/tail-hook-log.sh --file /path/to/pi-yaml-hooks.ndjson --event session.idle --session abc123
+./scripts/tail-hook-log.sh --file /path/to/pi-yaml-hooks.ndjson --kind action_result --level info
+./scripts/tail-hook-log.sh --file /path/to/pi-yaml-hooks.ndjson --hook my-hook --raw
 ```
 
-Filter by event and session:
+Override every host default with:
 
 ```bash
-./scripts/tail-hook-log.sh --event session.idle --session abc123
+PI_YAML_HOOKS_LOG_FILE=/tmp/pi-yaml-hooks.ndjson PI_YAML_HOOKS_DEBUG=1 pi
+PI_YAML_HOOKS_LOG_FILE=/tmp/pi-yaml-hooks.ndjson PI_YAML_HOOKS_DEBUG=1 omp
 ```
 
-Filter by log kind:
+The live file rotates after `PI_YAML_HOOKS_LOG_MAX_BYTES` (default 10 MiB). It becomes `<path>.1`, replacing any prior `.1`; only one rotated copy is kept.
 
-```bash
-./scripts/tail-hook-log.sh --kind action_result --level info
-```
+## Read the trace
 
-See raw NDJSON after filtering:
+Debug logs include:
 
-```bash
-./scripts/tail-hook-log.sh --hook load-writer-skill-when-markdown-changes --raw
-```
-
-## What gets logged
-
-When debug logging is enabled, `pi-yaml-hooks` logs:
-
-- hook config load and reload events
-- event dispatches such as `tool.before.*`, `tool.after.*`, and `session.idle`
-- each hook considered for a matching event
-- why a hook matched or was skipped
+- config loads, reloads, selected source paths, validation failures, and trust decisions
+- dispatches for `tool.before.*`, `tool.after.*`, `file.changed`, and session events
+- each considered hook, match or skip result, and exact skip reason
 - each action start/result
-- the exact prompt text queued by `tool:` actions
-- bash result status, exit code, duration, stdout, and stderr
-- timeout cleanup details such as process-group SIGTERM, SIGKILL escalation, and final cleanup result
-- exact skip reasons such as `matchesAnyPath_failed` or `scope_mismatch`
-- target session ids and prompt text for `tool:` follow-up injections
-- whether `tool:`, `notify:`, and `setStatus:` actions were accepted, degraded, or failed
+- the exact follow-up prompt requested by a `tool:` action and whether the host accepted or degraded delivery
+- bash exit status, duration, stdout/stderr, and timeout cleanup
+- UI action acceptance, degradation, or failure
+- `session.deleted` reason when the host supplied one; the value is opaque telemetry
 
-## Important note
-
-These logs are written by the extension runtime, not by the PI session transcript.
-
-That means:
-
-- `~/.pi/agent/sessions/*.jsonl` will not contain the full hook debug trail
-- the canonical hook log is `~/.pi/agent/logs/pi-yaml-hooks.ndjson`
-
-## Common debugging workflow
-
-For a hook like:
-
-```yaml
-- id: load-writer-skill-when-markdown-changes
-  event: session.idle
-  conditions:
-    - matchesAnyPath:
-        - "*.md"
-        - "**/*.md"
-  actions:
-    - tool:
-        name: read
-        args:
-          path: /Users/me/.pi/agent/skills/writer/SKILL.md
-```
-
-Run:
-
-```bash
-PI_YAML_HOOKS_DEBUG=1 pi
-```
-
-Then in another terminal:
-
-```bash
-./scripts/tail-hook-log.sh --hook load-writer-skill-when-markdown-changes
-```
-
-You should be able to see:
-
-- whether the hook was considered
-- whether it matched or skipped
-- the skip reason if it did not match
-- the exact prompt text queued by the `tool:` action if it matched
+These entries come from the extension runtime, not the host session transcript. Pi session JSONL and OMP transcripts are not the canonical hook trail. Use the active log path printed by `/hooks-status` or `/hooks-tail-log`.
 
 ## Useful environment variables
 
-The full environment-variable reference lives in [`setup.md`](./setup.md#environment-variables). The variables most relevant to debugging are:
+The canonical environment-variable table lives in [`setup.md`](./setup.md#environment-variables). The debugging controls are:
 
-- `PI_YAML_HOOKS_DEBUG=1`: enables debug-level persistent logging
-- `PI_YAML_HOOKS_LOG_FILE=/path/file.ndjson`: changes the log file location
-- `PI_YAML_HOOKS_LOG_LEVEL=debug|info|warn|error`: sets the log level explicitly
-- `PI_YAML_HOOKS_LOG_STDERR=1`: mirrors structured log entries to stderr
+- `PI_YAML_HOOKS_DEBUG=1`: enable debug-level persistent logging
+- `PI_YAML_HOOKS_LOG_FILE=/path/file.ndjson`: set a non-empty override for the active host default
+- `PI_YAML_HOOKS_LOG_LEVEL=debug|info|warn|error`: set the log level
+- `PI_YAML_HOOKS_LOG_STDERR=1`: mirror structured entries to stderr

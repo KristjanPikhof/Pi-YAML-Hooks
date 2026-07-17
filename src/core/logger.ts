@@ -9,8 +9,8 @@ import {
   unlinkSync,
   writeSync,
 } from "node:fs"
-import os from "node:os"
 import path from "node:path"
+import { getHookHostProfile } from "./host-profile.js"
 
 export type PiHooksLogLevel = "error" | "warn" | "info" | "debug"
 
@@ -38,6 +38,15 @@ interface PiHooksLogger {
   warn(kind: string, message: string, fields?: Omit<PiHooksLogEntry, "kind" | "message" | "level">): void
   info(kind: string, message: string, fields?: Omit<PiHooksLogEntry, "kind" | "message" | "level">): void
   debug(kind: string, message: string, fields?: Omit<PiHooksLogEntry, "kind" | "message" | "level">): void
+}
+
+interface LoggerConfiguration {
+  readonly hostKind: "pi" | "omp"
+  readonly agentDir: string
+  readonly enabled: boolean
+  readonly filePath: string
+  readonly level?: PiHooksLogLevel
+  readonly mirrorToStderr: boolean
 }
 
 const LEVEL_PRIORITIES: Record<PiHooksLogLevel, number> = {
@@ -69,6 +78,7 @@ const DEFAULT_LOG_MAX_BYTES = 10 * 1024 * 1024
 const ROTATED_SUFFIX = ".1"
 
 let cachedLogger: PiHooksLogger | undefined
+let cachedLoggerConfiguration: LoggerConfiguration | undefined
 let warnedAboutLoggerFailure = false
 let cachedLogFd: number | undefined
 let cachedLogFdPath: string | undefined
@@ -80,7 +90,17 @@ let cachedLogFdPath: string | undefined
 let drainCount = 0
 
 export function getPiHooksLogger(): PiHooksLogger {
-  cachedLogger ??= createPiHooksLogger()
+  const configuration = resolveLoggerConfiguration()
+  if (cachedLogger && !loggerConfigurationsMatch(cachedLoggerConfiguration, configuration)) {
+    closeCachedLogFile()
+    cachedLogger = undefined
+    cachedLoggerConfiguration = undefined
+    warnedAboutLoggerFailure = false
+  }
+  if (!cachedLogger) {
+    cachedLogger = createPiHooksLogger(configuration)
+    cachedLoggerConfiguration = configuration
+  }
   return cachedLogger
 }
 
@@ -90,18 +110,23 @@ export function getPiHooksLogFilePath(): string {
 
 export function resetPiHooksLoggerForTests(): void {
   cachedLogger = undefined
+  cachedLoggerConfiguration = undefined
   warnedAboutLoggerFailure = false
+  closeCachedLogFile()
+  drainCount = 0
+}
+function closeCachedLogFile(): void {
   if (cachedLogFd !== undefined) {
     try {
       closeSync(cachedLogFd)
     } catch {
-      // ignore — best effort close on reset
+      // ignore — best effort close during reset or host-profile changes
     }
   }
   cachedLogFd = undefined
   cachedLogFdPath = undefined
-  drainCount = 0
 }
+
 
 /**
  * Test helper. Currently a no-op because writes are synchronous, but kept
@@ -223,11 +248,9 @@ function rotateLogIfNeeded(filePath: string, maxBytes: number): void {
   cachedLogFdPath = undefined
 }
 
-function createPiHooksLogger(): PiHooksLogger {
-  const enabled = shouldEnableLogging()
-  const level = resolveLogLevel(enabled)
-  const filePath = enabled ? resolveLogFilePath() : undefined
-  const mirrorToStderr = process.env.PI_YAML_HOOKS_LOG_STDERR === "1"
+function createPiHooksLogger(configuration: LoggerConfiguration): PiHooksLogger {
+  const { enabled, level, mirrorToStderr } = configuration
+  const filePath = enabled ? configuration.filePath : undefined
 
   return {
     enabled,
@@ -292,11 +315,34 @@ function createPiHooksLogger(): PiHooksLogger {
   }
 }
 
-function shouldEnableLogging(): boolean {
-  return (
+function resolveLoggerConfiguration(): LoggerConfiguration {
+  const profile = getHookHostProfile()
+  const enabled =
     process.env.PI_YAML_HOOKS_DEBUG === "1" ||
     process.env.PI_YAML_HOOKS_LOG_LEVEL !== undefined ||
     process.env.PI_YAML_HOOKS_LOG_FILE !== undefined
+  const level = resolveLogLevel(enabled)
+  return {
+    hostKind: profile.kind,
+    agentDir: profile.agentDir,
+    enabled,
+    filePath: resolveLogFilePath(profile.agentDir),
+    ...(level ? { level } : {}),
+    mirrorToStderr: process.env.PI_YAML_HOOKS_LOG_STDERR === "1",
+  }
+}
+
+function loggerConfigurationsMatch(
+  previous: LoggerConfiguration | undefined,
+  current: LoggerConfiguration,
+): boolean {
+  return (
+    previous?.hostKind === current.hostKind &&
+    previous.agentDir === current.agentDir &&
+    previous.enabled === current.enabled &&
+    previous.filePath === current.filePath &&
+    previous.level === current.level &&
+    previous.mirrorToStderr === current.mirrorToStderr
   )
 }
 
@@ -317,9 +363,9 @@ function resolveLogLevel(enabled: boolean): PiHooksLogLevel | undefined {
   return "info"
 }
 
-function resolveLogFilePath(): string {
-  const homeDir = process.env.HOME || process.env.USERPROFILE || os.homedir()
-  return process.env.PI_YAML_HOOKS_LOG_FILE || path.join(homeDir, ".pi", "agent", "logs", "pi-yaml-hooks.ndjson")
+function resolveLogFilePath(agentDir = getHookHostProfile().agentDir): string {
+  const override = process.env.PI_YAML_HOOKS_LOG_FILE?.trim()
+  return override || path.join(agentDir, "logs", "pi-yaml-hooks.ndjson")
 }
 
 function serializeLogEntry(entry: PiHooksLogEntry): string {

@@ -3,16 +3,25 @@ import os from "node:os"
 import path from "node:path"
 import { fileURLToPath, pathToFileURL } from "node:url"
 
+import { __resetHookHostProfileForTests } from "../core/host-profile.js"
 import { resetPiHooksLoggerForTests } from "../core/logger.js"
+import { getToolFileChanges } from "../core/tool-paths.js"
 import { __testing__ as adapterTesting } from "./adapter.js"
 import { resetHookAutocompleteForTests } from "./autocomplete.js"
+import { mapToolResultToAfterInput } from "./event-mappers.js"
 
 const currentDir = path.dirname(fileURLToPath(import.meta.url))
 const extensionEntrypointPath = currentDir.endsWith(`${path.sep}dist${path.sep}pi`)
   ? path.resolve(currentDir, "../extensions/index.js")
   : path.resolve(currentDir, "../../extensions/index.ts")
+const sharedEntrypointPath = currentDir.endsWith(`${path.sep}dist${path.sep}pi`)
+  ? path.resolve(currentDir, "../index.js")
+  : path.resolve(currentDir, "../index.ts")
 const { default: piHooksExtension } = (await import(pathToFileURL(extensionEntrypointPath).href)) as {
   default: (pi: unknown) => void
+}
+const { registerHooksExtension } = (await import(pathToFileURL(sharedEntrypointPath).href)) as {
+  registerHooksExtension: (pi: unknown, profile: { kind: "omp"; agentDir: string }) => void
 }
 
 interface Case {
@@ -21,6 +30,7 @@ interface Case {
 }
 
 type PiHandler = (event: unknown, ctx: unknown) => Promise<unknown> | unknown
+type ToolResultMapperEvent = Parameters<typeof mapToolResultToAfterInput>[0]
 type CommandHandler = (args: string, ctx: unknown) => Promise<void>
 type AutocompleteItem = { value: string; label: string; description?: string }
 type AutocompleteProvider = {
@@ -53,6 +63,7 @@ class FakePiHarness {
   readonly messageRenderers = new Map<string, unknown>()
   readonly autocompleteProviders: AutocompleteProviderFactory[] = []
   sessionId: string
+  parentSession: string | undefined
   private sessionGeneration = 0
   throwOnStalePiUse = false
   hasUI = true
@@ -63,7 +74,11 @@ class FakePiHarness {
   reloads = 0
   notificationsWithLevel: Array<{ message: string; type?: string }> = []
 
-  constructor(projectDir: string, sessionId = "session-1") {
+  constructor(
+    projectDir: string,
+    sessionId = "session-1",
+    readonly hostKind: "pi" | "omp" = "pi",
+  ) {
     this.projectDir = projectDir
     this.sessionId = sessionId
   }
@@ -93,7 +108,11 @@ class FakePiHarness {
       },
     } as unknown as Parameters<typeof piHooksExtension>[0]
 
-    piHooksExtension(pi)
+    if (this.hostKind === "pi") piHooksExtension(pi)
+    else {
+      const homeDir = process.env.HOME || process.env.USERPROFILE || os.homedir()
+      registerHooksExtension(pi, { kind: "omp", agentDir: path.join(homeDir, ".omp", "agent") })
+    }
   }
 
   createContext(): unknown {
@@ -138,7 +157,10 @@ class FakePiHarness {
         },
         getHeader: () => {
           assertFresh()
-          return { id: this.sessionId }
+          return {
+            id: this.sessionId,
+            ...(this.parentSession ? { parentSession: this.parentSession } : {}),
+          }
         },
       },
       isIdle: () => this.idle,
@@ -149,8 +171,9 @@ class FakePiHarness {
     } as never
   }
 
-  replaceSession(sessionId: string): void {
+  replaceSession(sessionId: string, parentSession?: string): void {
     this.sessionId = sessionId
+    this.parentSession = parentSession
     this.sessionGeneration += 1
   }
 
@@ -170,8 +193,12 @@ class FakePiHarness {
     return result
   }
 
-  async sessionStart(reason: "new" | "startup" | "resume" | "fork" = "new"): Promise<void> {
+  async sessionStart(reason: "new" | "startup" | "reload" | "resume" | "fork" | "handoff" = "new"): Promise<void> {
     await this.emit("session_start", { reason })
+  }
+
+  async sessionStartWithoutReason(): Promise<void> {
+    await this.emit("session_start", { type: "session_start" })
   }
 
   async sessionBeforeSwitch(reason?: "new" | "resume"): Promise<void> {
@@ -180,6 +207,14 @@ class FakePiHarness {
 
   async sessionShutdown(reason?: "quit" | "reload" | "new" | "resume" | "fork"): Promise<void> {
     await this.emit("session_shutdown", reason ? { type: "session_shutdown", reason } : {})
+  }
+
+  async sessionSwitch(reason?: "new" | "resume" | "fork" | "handoff"): Promise<void> {
+    await this.emit("session_switch", reason ? { type: "session_switch", reason } : {})
+  }
+
+  async sessionStop(): Promise<void> {
+    await this.emit("session_stop", { type: "session_stop" })
   }
 
   async beforeAgentStart(prompt = "hi", systemPrompt = "base system prompt"): Promise<unknown> {
@@ -207,8 +242,13 @@ class FakePiHarness {
     return await this.emit("tool_call", { toolName, toolCallId, input })
   }
 
-  async toolResult(toolName: string, toolCallId: string, input: Record<string, unknown> = {}): Promise<void> {
-    await this.emit("tool_result", { toolName, toolCallId, input })
+  async toolResult(
+    toolName: string,
+    toolCallId: string,
+    input: Record<string, unknown> = {},
+    details?: unknown,
+  ): Promise<void> {
+    await this.emit("tool_result", { toolName, toolCallId, input, details })
   }
 
   async userBash(command: string, excludeFromContext = false): Promise<unknown> {
@@ -251,6 +291,7 @@ async function withIsolatedProject<T>(trusted: boolean, run: (projectDir: string
   const previousUserProfile = process.env.USERPROFILE
   process.env.HOME = homeDir
   process.env.USERPROFILE = homeDir
+  __resetHookHostProfileForTests()
   resetPiHooksLoggerForTests()
   resetHookAutocompleteForTests()
   console.warn = () => {}
@@ -268,6 +309,7 @@ async function withIsolatedProject<T>(trusted: boolean, run: (projectDir: string
       else process.env.HOME = previousHome
       if (previousUserProfile === undefined) delete process.env.USERPROFILE
       else process.env.USERPROFILE = previousUserProfile
+      __resetHookHostProfileForTests()
       resetPiHooksLoggerForTests()
       resetHookAutocompleteForTests()
       rmSync(projectDir, { recursive: true, force: true })
@@ -287,6 +329,7 @@ function readTrustedProjectsFile(): string[] {
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms))
 }
+
 
 function createNoopAutocompleteProvider(): AutocompleteProvider {
   return {
@@ -428,6 +471,467 @@ const cases: Case[] = [
           ? { ok: true }
           : { ok: false, detail: `notifications=${JSON.stringify(harness.notifications)}` }
       }),
+  },
+  {
+    name: "OMP session.created fires once for startup and ignores duplicate and reload starts",
+    run: async () =>
+      await withIsolatedProject(true, async (projectDir) => {
+        writeProjectHooks(
+          projectDir,
+          `hooks:
+  - event: session.created
+    actions:
+      - notify: "created"
+`,
+        )
+
+        const harness = new FakePiHarness(projectDir, "session-1", "omp")
+        harness.register()
+        await harness.sessionStartWithoutReason()
+        await harness.sessionStartWithoutReason()
+        await harness.sessionStart("reload")
+        await harness.sessionStartWithoutReason()
+
+        return harness.notifications.join(",") === "created"
+          ? { ok: true }
+          : { ok: false, detail: `notifications=${JSON.stringify(harness.notifications)}` }
+      }),
+  },
+  {
+    name: "OMP new session_switch creates once and the following reasonless start deduplicates",
+    run: async () =>
+      await withIsolatedProject(true, async (projectDir) => {
+        writeProjectHooks(
+          projectDir,
+          `hooks:
+  - event: session.created
+    actions:
+      - notify: "created"
+`,
+        )
+
+        const harness = new FakePiHarness(projectDir, "session-1", "omp")
+        harness.register()
+        await harness.sessionStartWithoutReason()
+        harness.replaceSession("session-2")
+        await harness.sessionSwitch("new")
+        await harness.sessionStartWithoutReason()
+
+        return harness.notifications.join(",") === "created,created"
+          ? { ok: true }
+          : { ok: false, detail: `notifications=${JSON.stringify(harness.notifications)}` }
+      }),
+  },
+  {
+    name: "OMP resume session_switch and following reasonless start never create",
+    run: async () =>
+      await withIsolatedProject(true, async (projectDir) => {
+        writeProjectHooks(
+          projectDir,
+          `hooks:
+  - event: session.created
+    actions:
+      - notify: "created"
+`,
+        )
+
+        const harness = new FakePiHarness(projectDir, "session-1", "omp")
+        harness.register()
+        await harness.sessionStartWithoutReason()
+        harness.replaceSession("resumed-session")
+        await harness.sessionSwitch("resume")
+        await harness.sessionStartWithoutReason()
+
+        return harness.notifications.join(",") === "created"
+          ? { ok: true }
+          : { ok: false, detail: `notifications=${JSON.stringify(harness.notifications)}` }
+      }),
+  },
+  {
+    name: "OMP fork and handoff session_switch plus reasonless starts never create",
+    run: async () =>
+      await withIsolatedProject(true, async (projectDir) => {
+        writeProjectHooks(
+          projectDir,
+          `hooks:
+  - event: session.created
+    actions:
+      - notify: "created"
+`,
+        )
+
+        const harness = new FakePiHarness(projectDir, "session-1", "omp")
+        harness.register()
+        await harness.sessionStartWithoutReason()
+        harness.replaceSession("forked-session")
+        await harness.sessionSwitch("fork")
+        await harness.sessionStartWithoutReason()
+        harness.replaceSession("handoff-session")
+        await harness.sessionSwitch("handoff")
+        await harness.sessionStartWithoutReason()
+
+        return harness.notifications.join(",") === "created"
+          ? { ok: true }
+          : { ok: false, detail: `notifications=${JSON.stringify(harness.notifications)}` }
+      }),
+  },
+  {
+    name: "OMP session.deleted preserves reasons and deduplicates switch shutdown pairs",
+    run: async () =>
+      await withIsolatedProject(true, async (projectDir) => {
+        writeProjectHooks(
+          projectDir,
+          `hooks:
+  - event: session.deleted
+    actions:
+      - notify: "deleted"
+`,
+        )
+        const logFile = path.join(projectDir, "lifecycle.ndjson")
+        const previousDebug = process.env.PI_YAML_HOOKS_DEBUG
+        const previousLogFile = process.env.PI_YAML_HOOKS_LOG_FILE
+        process.env.PI_YAML_HOOKS_DEBUG = "1"
+        process.env.PI_YAML_HOOKS_LOG_FILE = logFile
+        try {
+          const harness = new FakePiHarness(projectDir, "session-1", "omp")
+          harness.register()
+          await harness.sessionBeforeSwitch("new")
+          await harness.sessionShutdown("new")
+          harness.replaceSession("session-2")
+          await harness.sessionShutdown("quit")
+
+          const entries = readFileSync(logFile, "utf8")
+            .trim()
+            .split("\n")
+            .map((line) => JSON.parse(line) as {
+              kind?: string
+              event?: string
+              details?: { reason?: string }
+            })
+          const reasons = entries
+            .filter((entry) => entry.kind === "dispatch_start" && entry.event === "session.deleted")
+            .map((entry) => entry.details?.reason)
+          const expectedReasons = JSON.stringify(["new", "quit"])
+          return harness.notifications.join(",") === "deleted,deleted" &&
+              JSON.stringify(reasons) === expectedReasons
+            ? { ok: true }
+            : {
+                ok: false,
+                detail: `notifications=${JSON.stringify(harness.notifications)}, reasons=${JSON.stringify(reasons)}`,
+              }
+        } finally {
+          if (previousDebug === undefined) delete process.env.PI_YAML_HOOKS_DEBUG
+          else process.env.PI_YAML_HOOKS_DEBUG = previousDebug
+          if (previousLogFile === undefined) delete process.env.PI_YAML_HOOKS_LOG_FILE
+          else process.env.PI_YAML_HOOKS_LOG_FILE = previousLogFile
+        }
+      }),
+  },
+  {
+    name: "OMP cancelled before_switch defers deletion until a successful session_switch",
+    run: async () =>
+      await withIsolatedProject(true, async (projectDir) => {
+        writeProjectHooks(
+          projectDir,
+          `hooks:
+  - event: session.deleted
+    actions:
+      - notify: "deleted"
+`,
+        )
+        const logFile = path.join(projectDir, "cancelled-switch.ndjson")
+        const previousDebug = process.env.PI_YAML_HOOKS_DEBUG
+        const previousLogFile = process.env.PI_YAML_HOOKS_LOG_FILE
+        process.env.PI_YAML_HOOKS_DEBUG = "1"
+        process.env.PI_YAML_HOOKS_LOG_FILE = logFile
+        try {
+          const harness = new FakePiHarness(projectDir, "old-session", "omp")
+          harness.register()
+          await harness.sessionBeforeSwitch("resume")
+          const cancelledDidNotDelete = harness.notifications.length === 0
+
+          harness.replaceSession("resumed-session")
+          await harness.sessionSwitch("resume")
+
+          const deletedDispatches = readFileSync(logFile, "utf8")
+            .trim()
+            .split("\n")
+            .map((line) => JSON.parse(line) as {
+              kind?: string
+              event?: string
+              sessionId?: string
+              details?: { reason?: string }
+            })
+            .filter((entry) => entry.kind === "dispatch_start" && entry.event === "session.deleted")
+          const captured = deletedDispatches[0]
+          return cancelledDidNotDelete &&
+              harness.notifications.join(",") === "deleted" &&
+              deletedDispatches.length === 1 &&
+              captured?.sessionId === "old-session" &&
+              captured.details?.reason === "resume"
+            ? { ok: true }
+            : {
+                ok: false,
+                detail:
+                  `cancelledDidNotDelete=${cancelledDidNotDelete}, notifications=${JSON.stringify(harness.notifications)}, ` +
+                  `deletedDispatches=${JSON.stringify(deletedDispatches)}`,
+              }
+        } finally {
+          if (previousDebug === undefined) delete process.env.PI_YAML_HOOKS_DEBUG
+          else process.env.PI_YAML_HOOKS_DEBUG = previousDebug
+          if (previousLogFile === undefined) delete process.env.PI_YAML_HOOKS_LOG_FILE
+          else process.env.PI_YAML_HOOKS_LOG_FILE = previousLogFile
+        }
+      }),
+  },
+  {
+    name: "OMP retry agent_end does not dispatch idle while session_stop-armed agent_end does",
+    run: async () =>
+      await withIsolatedProject(true, async (projectDir) => {
+        writeProjectHooks(
+          projectDir,
+          `hooks:
+  - event: session.idle
+    actions:
+      - notify: "idle"
+`,
+        )
+
+        const harness = new FakePiHarness(projectDir, "session-1", "omp")
+        harness.register()
+
+        await harness.agentStart()
+        await harness.agentEnd()
+        const retrySuppressed = harness.notifications.length === 0
+
+        await harness.sessionStop()
+        const waitsForFollowingAgentEnd = harness.notifications.length === 0
+        await harness.agentEnd()
+        const genuineStopDispatched = harness.notifications.join(",") === "idle"
+
+        return retrySuppressed && waitsForFollowingAgentEnd && genuineStopDispatched
+          ? { ok: true }
+          : {
+              ok: false,
+              detail:
+                `retrySuppressed=${retrySuppressed}, waitsForFollowingAgentEnd=${waitsForFollowingAgentEnd}, ` +
+                `genuineStopDispatched=${genuineStopDispatched}, notifications=${JSON.stringify(harness.notifications)}`,
+            }
+      }),
+  },
+  {
+    name: "OMP idle waits for later async session_stop handlers and suppresses continuation or restart",
+    run: async () =>
+      await withIsolatedProject(true, async (projectDir) => {
+        writeProjectHooks(
+          projectDir,
+          `hooks:
+  - event: session.idle
+    actions:
+      - notify: "idle"
+`,
+        )
+
+        const harness = new FakePiHarness(projectDir, "session-1", "omp")
+        harness.register()
+        let queueContinuation = true
+        const sessionStopHandlers = harness.handlers.get("session_stop") ?? []
+        sessionStopHandlers.push(async () => {
+          await sleep(10)
+          if (queueContinuation) harness.pendingMessages = true
+        })
+        harness.handlers.set("session_stop", sessionStopHandlers)
+
+        await harness.agentStart()
+        const stopping = harness.sessionStop()
+        await sleep(0)
+        const asyncHandlerDidNotRace = harness.notifications.length === 0
+        await stopping
+        await harness.agentEnd()
+        const continuationSuppressed = harness.notifications.length === 0
+
+        queueContinuation = false
+        harness.pendingMessages = false
+        await harness.agentStart()
+        await harness.sessionStop()
+        await harness.agentStart()
+        await harness.agentEnd()
+        const restartedSuppressed = harness.notifications.length === 0
+
+        await harness.sessionStop()
+        await harness.agentEnd()
+        const laterStopDispatched = harness.notifications.join(",") === "idle"
+
+        return asyncHandlerDidNotRace && continuationSuppressed && restartedSuppressed && laterStopDispatched
+          ? { ok: true }
+          : {
+              ok: false,
+              detail:
+                `asyncHandlerDidNotRace=${asyncHandlerDidNotRace}, continuationSuppressed=${continuationSuppressed}, ` +
+                `restartedSuppressed=${restartedSuppressed}, laterStopDispatched=${laterStopDispatched}, ` +
+                `notifications=${JSON.stringify(harness.notifications)}`,
+            }
+      }),
+  },
+  {
+    name: "OMP edit result details drive hashline and apply_patch file.changed paths",
+    run: async () =>
+      await withIsolatedProject(true, async (projectDir) => {
+        writeProjectHooks(
+          projectDir,
+          `hooks:
+  - event: file.changed
+    conditions:
+      - matchesAnyPath: "src/hashline.ts"
+    actions:
+      - notify: "hashline-changed"
+  - event: file.changed
+    conditions:
+      - matchesAnyPath: "src/patched.ts"
+    actions:
+      - notify: "apply-patch-changed"
+`,
+        )
+
+        const harness = new FakePiHarness(projectDir, "session-1", "omp")
+        harness.register()
+        const hashlineInput = { input: "[src/stale.ts#A1B2]\nSWAP 1.=1:\n+updated" }
+        await harness.toolCall("edit", "omp-hashline", hashlineInput)
+        await harness.toolResult("edit", "omp-hashline", hashlineInput, {
+          diff: "",
+          path: path.join(projectDir, "src", "hashline.ts"),
+          op: "update",
+        })
+
+        const applyPatchInput = {
+          input: "*** Begin Patch\n*** Update File: src/stale.ts\n@@\n*** End Patch",
+        }
+        await harness.toolCall("edit", "omp-apply-patch", applyPatchInput)
+        await harness.toolResult("edit", "omp-apply-patch", applyPatchInput, {
+          diff: "",
+          perFileResults: [
+            {
+              path: path.join(projectDir, "src", "patched.ts"),
+              op: "update",
+              diff: "",
+            },
+          ],
+        })
+
+        const expected = JSON.stringify(["hashline-changed", "apply-patch-changed"])
+        return JSON.stringify(harness.notifications) === expected
+          ? { ok: true }
+          : { ok: false, detail: `notifications=${JSON.stringify(harness.notifications)}` }
+      }),
+  },
+  {
+    name: "late child tool_result keeps source lineage after the manager switches",
+    run: async () =>
+      await withIsolatedProject(true, async (projectDir) => {
+        writeProjectHooks(
+          projectDir,
+          `hooks:
+  - event: tool.after.read
+    scope: child
+    actions:
+      - notify: "child-matched"
+  - event: tool.after.read
+    scope: main
+    actions:
+      - notify: "main-matched"
+`,
+        )
+        const rootSessionFile = path.join(projectDir, "root-session.jsonl")
+        writeFileSync(
+          rootSessionFile,
+          `${JSON.stringify({ type: "session", id: "root-session", timestamp: "", cwd: projectDir })}\n`,
+          "utf8",
+        )
+
+        const harness = new FakePiHarness(projectDir, "child-session", "omp")
+        harness.parentSession = rootSessionFile
+        harness.register()
+        await harness.toolCall("read", "late-child-read", { path: path.join(projectDir, "src", "file.ts") })
+
+        harness.replaceSession("replacement-session")
+        await harness.sessionSwitch("resume")
+        await harness.toolResult("read", "late-child-read", { path: path.join(projectDir, "src", "file.ts") })
+
+        return harness.notifications.join(",") === "child-matched"
+          ? { ok: true }
+          : { ok: false, detail: `notifications=${JSON.stringify(harness.notifications)}` }
+      }),
+  },
+  {
+    name: "legacy Pi tool_result input is preserved unchanged",
+    run: async () => {
+      const input = { path: "/repo/src/pi.ts", oldText: "before", newText: "after" }
+      const mapped = mapToolResultToAfterInput(
+        { toolName: "edit", toolCallId: "pi-1", input } as unknown as ToolResultMapperEvent,
+        "session-pi",
+      )
+      return mapped.tool === "edit" &&
+          mapped.callID === "pi-1" &&
+          mapped.sessionID === "session-pi" &&
+          mapped.args === input
+        ? { ok: true }
+        : { ok: false, detail: JSON.stringify(mapped) }
+    },
+  },
+  {
+    name: "OMP single-file edit details authoritatively override hashline payload path",
+    run: async () => {
+      const mapped = mapToolResultToAfterInput(
+        {
+          toolName: "edit",
+          toolCallId: "omp-hashline-mapper",
+          input: { input: "[stale.ts#A1B2]\nSWAP 1.=1:\n+updated" },
+          details: { diff: "", path: "/repo/src/actual.ts", op: "update" },
+        } as unknown as ToolResultMapperEvent,
+        "session-omp",
+      )
+      const changes = getToolFileChanges(mapped.tool, mapped.args ?? {})
+      return changes.length === 1 && changes[0].operation === "modify" && changes[0].path === "/repo/src/actual.ts"
+        ? { ok: true }
+        : { ok: false, detail: JSON.stringify({ mapped, changes }) }
+    },
+  },
+  {
+    name: "OMP multi-file apply_patch details preserve successful result operations",
+    run: async () => {
+      const mapped = mapToolResultToAfterInput(
+        {
+          toolName: "edit",
+          toolCallId: "omp-apply-patch-mapper",
+          input: { input: "*** Begin Patch\n*** Update File: stale.ts\n@@\n*** End Patch" },
+          details: {
+            diff: "",
+            perFileResults: [
+              { path: "/repo/src/new.ts", op: "create", diff: "" },
+              {
+                path: "/repo/src/to.ts",
+                sourcePath: "/repo/src/from.ts",
+                op: "update",
+                move: "/repo/src/to.ts",
+                diff: "",
+              },
+              { path: "/repo/src/failed.ts", op: "update", diff: "", isError: true },
+            ],
+          },
+        } as unknown as ToolResultMapperEvent,
+        "session-omp",
+      )
+      const changes = getToolFileChanges(mapped.tool, mapped.args ?? {})
+      const summary = changes.map((change) =>
+        change.operation === "rename"
+          ? `rename:${change.fromPath}->${change.toPath}`
+          : `${change.operation}:${change.path}`,
+      )
+      const expected = ["create:/repo/src/new.ts", "rename:/repo/src/from.ts->/repo/src/to.ts"]
+      return JSON.stringify(summary) === JSON.stringify(expected)
+        ? { ok: true }
+        : { ok: false, detail: JSON.stringify({ mapped, summary }) }
+    },
   },
   {
     name: "registers the hook diagnostics message renderer",

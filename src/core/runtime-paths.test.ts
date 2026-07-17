@@ -1,3 +1,16 @@
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  utimesSync,
+  writeFileSync,
+} from "node:fs"
+import os from "node:os"
+import path from "node:path"
+
+import { loadDiscoveredHooksSnapshot } from "./load-hooks.js"
 import { buildPathMatchContext, createHooksRuntime } from "./runtime.js"
 import type { BashExecutionRequest, BashHookResult } from "./bash-types.js"
 import type { HookAction, HookMap, HostAdapter } from "./types.js"
@@ -70,6 +83,25 @@ function createDelayedNotifyHost(records: string[], delayMs: number): HostAdapte
     confirm: async () => true,
     setStatus: () => {},
   }
+}
+
+let watchedFileTimestamp = Date.now()
+
+function writeWatchedFile(filePath: string, content: string): void {
+  mkdirSync(path.dirname(filePath), { recursive: true })
+  writeFileSync(filePath, content, "utf8")
+  watchedFileTimestamp += 1_000
+  const modified = new Date(watchedFileTimestamp)
+  utimesSync(filePath, modified, modified)
+}
+
+function notificationHooks(message: string, id = "runtime-reload"): string {
+  return `hooks:
+  - id: ${id}
+    event: session.created
+    actions:
+      - notify: ${JSON.stringify(message)}
+`
 }
 
 const cases: Case[] = [
@@ -402,6 +434,372 @@ const cases: Case[] = [
       return seenCommands.length === 2
         ? { ok: true }
         : { ok: false, detail: `seenCommands=${JSON.stringify(seenCommands)}` }
+    },
+  },
+  {
+    name: "runtime caches discovery for empty and populated configs while reloading every watched source",
+    run: async () => {
+      const sandbox = mkdtempSync(path.join(os.tmpdir(), "pi-hooks-runtime-watch-"))
+      const homeDir = path.join(sandbox, "home")
+      const agentDir = path.join(homeDir, ".pi", "agent")
+      const projectDir = path.join(sandbox, "repo")
+      const globalPath = path.join(agentDir, "hook", "hooks.yaml")
+      const importedPath = path.join(projectDir, ".pi", "hook", "imported.yaml")
+      const projectPath = path.join(projectDir, ".pi", "hook", "hooks.yaml")
+      const trustPath = path.join(agentDir, "trusted-projects.json")
+      mkdirSync(projectDir, { recursive: true })
+
+      const records: string[] = []
+      let gitResolverCalls = 0
+      let discoveryExistsCalls = 0
+      let discoveryReadCalls = 0
+      let eventNumber = 0
+
+      try {
+        const runtime = createHooksRuntime(createFakeHost(records), {
+          directory: projectDir,
+          configDiscovery: {
+            homeDir,
+            profile: Object.freeze({ kind: "pi", agentDir }),
+            exists: (filePath) => {
+              discoveryExistsCalls += 1
+              return existsSync(filePath)
+            },
+            readFile: (filePath) => {
+              discoveryReadCalls += 1
+              return readFileSync(filePath, "utf8")
+            },
+            resolveGitWorktreeRoot: () => {
+              gitResolverCalls += 1
+              return projectDir
+            },
+          },
+        })
+        const dispatchCreated = async (): Promise<void> => {
+          eventNumber += 1
+          await runtime.event({
+            event: {
+              type: "session.created",
+              properties: { info: { id: `runtime-watch-${eventNumber}` } },
+            },
+          })
+        }
+        const counts = (): string =>
+          `${gitResolverCalls}|${discoveryExistsCalls}|${discoveryReadCalls}`
+
+        const emptyCounts = counts()
+        await dispatchCreated()
+        await dispatchCreated()
+        if (counts() !== emptyCounts || records.length !== 0) {
+          return {
+            ok: false,
+            detail: `empty cache miss counts=${counts()} baseline=${emptyCounts} records=${JSON.stringify(records)}`,
+          }
+        }
+
+        writeWatchedFile(globalPath, notificationHooks("global-new"))
+        await dispatchCreated()
+        if (records.at(-1) !== "global-new") {
+          return { ok: false, detail: `new global config not loaded records=${JSON.stringify(records)}` }
+        }
+
+        const populatedCounts = counts()
+        await dispatchCreated()
+        await dispatchCreated()
+        if (counts() !== populatedCounts || records.slice(-3).join(",") !== "global-new,global-new,global-new") {
+          return {
+            ok: false,
+            detail: `populated cache miss counts=${counts()} baseline=${populatedCounts} records=${JSON.stringify(records)}`,
+          }
+        }
+
+        writeWatchedFile(globalPath, notificationHooks("global-edited"))
+        await dispatchCreated()
+        if (records.at(-1) !== "global-edited") {
+          return { ok: false, detail: `global edit not loaded records=${JSON.stringify(records)}` }
+        }
+
+
+        rmSync(globalPath, { force: true })
+        const beforeGlobalRemoval = records.length
+        await dispatchCreated()
+        if (records.length !== beforeGlobalRemoval) {
+          return { ok: false, detail: `removed global config remained active records=${JSON.stringify(records)}` }
+        }
+
+        writeWatchedFile(projectPath, notificationHooks("project-trusted"))
+        const beforeUntrustedProject = records.length
+        await dispatchCreated()
+        if (records.length !== beforeUntrustedProject) {
+          return { ok: false, detail: `untrusted project config became active records=${JSON.stringify(records)}` }
+        }
+
+        writeWatchedFile(trustPath, `${JSON.stringify([projectDir])}\n`)
+        await dispatchCreated()
+        if (records.at(-1) !== "project-trusted") {
+          return { ok: false, detail: `trust addition not loaded records=${JSON.stringify(records)}` }
+        }
+
+        writeFileSync(importedPath, notificationHooks("import-v1"), "utf8")
+        writeWatchedFile(projectPath, `imports:
+  - ./imported.yaml
+hooks: []
+`)
+        await dispatchCreated()
+        if (records.at(-1) !== "import-v1") {
+          return { ok: false, detail: `import not loaded records=${JSON.stringify(records)}` }
+        }
+
+        writeFileSync(importedPath, notificationHooks("import-v2"), "utf8")
+        await dispatchCreated()
+        if (records.at(-1) !== "import-v2") {
+          return { ok: false, detail: `import edit not loaded records=${JSON.stringify(records)}` }
+        }
+
+        writeWatchedFile(trustPath, "[]\n")
+        const beforeTrustRemoval = records.length
+        await dispatchCreated()
+        if (records.length !== beforeTrustRemoval) {
+          return { ok: false, detail: `trust removal did not unload project hooks records=${JSON.stringify(records)}` }
+        }
+
+        return gitResolverCalls > 0 && discoveryExistsCalls > 0 && discoveryReadCalls > 0
+          ? { ok: true }
+          : {
+              ok: false,
+              detail: `discovery instrumentation was not exercised counts=${counts()}`,
+            }
+      } finally {
+        rmSync(sandbox, { recursive: true, force: true })
+      }
+    },
+  },
+  {
+    name: "invalid reload removes hooks from a project whose trust was revoked",
+    run: async () => {
+      const sandbox = mkdtempSync(path.join(os.tmpdir(), "pi-hooks-runtime-invalid-revocation-"))
+      const homeDir = path.join(sandbox, "home")
+      const agentDir = path.join(homeDir, ".pi", "agent")
+      const projectDir = path.join(sandbox, "repo")
+      const globalPath = path.join(agentDir, "hook", "hooks.yaml")
+      const projectPath = path.join(projectDir, ".pi", "hook", "hooks.yaml")
+      const trustPath = path.join(agentDir, "trusted-projects.json")
+
+      try {
+        mkdirSync(projectDir, { recursive: true })
+        writeWatchedFile(trustPath, `${JSON.stringify([projectDir])}\n`)
+        writeWatchedFile(globalPath, notificationHooks("global-good", "global-hook"))
+        writeWatchedFile(projectPath, notificationHooks("project-trusted", "project-hook"))
+
+        const records: string[] = []
+        const runtime = createHooksRuntime(createFakeHost(records), {
+          directory: projectDir,
+          configDiscovery: {
+            homeDir,
+            profile: Object.freeze({ kind: "pi", agentDir }),
+            resolveGitWorktreeRoot: () => projectDir,
+          },
+        })
+        let dispatchNumber = 0
+        const dispatchCreated = async (): Promise<void> => {
+          dispatchNumber += 1
+          await runtime.event({
+            event: {
+              type: "session.created",
+              properties: { info: { id: `invalid-revocation-${dispatchNumber}` } },
+            },
+          })
+        }
+
+        await dispatchCreated()
+        writeWatchedFile(globalPath, `hooks:
+  - id: global-broken
+    event: not.a.real.event
+    actions:
+      - notify: should-not-run
+`)
+        await dispatchCreated()
+        writeWatchedFile(trustPath, "[]\n")
+        await dispatchCreated()
+
+        const expected = ["global-good", "project-trusted", "global-good", "project-trusted", "global-good"]
+        return JSON.stringify(records) === JSON.stringify(expected)
+          ? { ok: true }
+          : { ok: false, detail: `records=${JSON.stringify(records)} expected=${JSON.stringify(expected)}` }
+      } finally {
+        rmSync(sandbox, { recursive: true, force: true })
+      }
+    },
+  },
+  {
+    name: "runtime watches preloaded imports and detects rapid same-size rewrites",
+    run: async () => {
+      const sandbox = mkdtempSync(path.join(os.tmpdir(), "pi-hooks-runtime-preloaded-import-"))
+      const homeDir = path.join(sandbox, "home")
+      const agentDir = path.join(homeDir, ".pi", "agent")
+      const projectDir = path.join(sandbox, "repo")
+      const projectPath = path.join(projectDir, ".pi", "hook", "hooks.yaml")
+      const importedPath = path.join(projectDir, ".pi", "hook", "imported.yaml")
+      const trustPath = path.join(agentDir, "trusted-projects.json")
+      const profile = Object.freeze({ kind: "pi" as const, agentDir })
+      const configDiscovery = {
+        homeDir,
+        profile,
+        resolveGitWorktreeRoot: () => projectDir,
+      }
+
+      try {
+        mkdirSync(projectDir, { recursive: true })
+        writeWatchedFile(trustPath, `${JSON.stringify([projectDir])}\n`)
+        writeWatchedFile(projectPath, `imports:
+  - ./imported.yaml
+hooks: []
+`)
+        writeFileSync(importedPath, notificationHooks("preloaded-v1"), "utf8")
+
+        const initial = loadDiscoveredHooksSnapshot({
+          ...configDiscovery,
+          projectDir,
+        })
+        const records: string[] = []
+        const runtime = createHooksRuntime(createFakeHost(records), {
+          directory: projectDir,
+          hooks: initial.hooks,
+          initialSignature: initial.signature,
+          initialFiles: initial.files,
+          initialWatchPaths: initial.watchPaths,
+          reloadDiscoveredHooks: true,
+          configDiscovery,
+        })
+
+        await runtime.event({
+          event: { type: "session.created", properties: { info: { id: "preloaded-v1" } } },
+        })
+        writeFileSync(importedPath, notificationHooks("preloaded-v2"), "utf8")
+        await runtime.event({
+          event: { type: "session.created", properties: { info: { id: "preloaded-v2" } } },
+        })
+
+        return JSON.stringify(records) === JSON.stringify(["preloaded-v1", "preloaded-v2"])
+          ? { ok: true }
+          : { ok: false, detail: `records=${JSON.stringify(records)} initialFiles=${JSON.stringify(initial.files)}` }
+      } finally {
+        rmSync(sandbox, { recursive: true, force: true })
+      }
+    },
+  },
+  {
+    name: "runtime reloads when a child is added to an imported directory",
+    run: async () => {
+      const sandbox = mkdtempSync(path.join(os.tmpdir(), "pi-hooks-runtime-import-directory-"))
+      const homeDir = path.join(sandbox, "home")
+      const agentDir = path.join(homeDir, ".pi", "agent")
+      const projectDir = path.join(sandbox, "repo")
+      const hookDir = path.join(projectDir, ".pi", "hook")
+      const projectPath = path.join(hookDir, "hooks.yaml")
+      const importedDir = path.join(hookDir, "fragments")
+      const trustPath = path.join(agentDir, "trusted-projects.json")
+
+      try {
+        mkdirSync(importedDir, { recursive: true })
+        writeWatchedFile(trustPath, `${JSON.stringify([projectDir])}\n`)
+        writeWatchedFile(projectPath, `imports:
+  - ./fragments
+hooks: []
+`)
+        const configDiscovery = {
+          homeDir,
+          profile: Object.freeze({ kind: "pi" as const, agentDir }),
+          resolveGitWorktreeRoot: () => projectDir,
+        }
+        const initial = loadDiscoveredHooksSnapshot({ ...configDiscovery, projectDir })
+        const importedDirWatchPath = path.join(path.dirname(initial.files[0] ?? projectPath), "fragments")
+        if (!initial.watchPaths.includes(importedDirWatchPath) || initial.files.includes(importedDirWatchPath)) {
+          return {
+            ok: false,
+            detail: `directory manifest files=${JSON.stringify(initial.files)} watchPaths=${JSON.stringify(initial.watchPaths)}`,
+          }
+        }
+
+        const records: string[] = []
+        const runtime = createHooksRuntime(createFakeHost(records), {
+          directory: projectDir,
+          hooks: initial.hooks,
+          initialSignature: initial.signature,
+          initialFiles: initial.files,
+          initialWatchPaths: initial.watchPaths,
+          reloadDiscoveredHooks: true,
+          configDiscovery,
+        })
+
+        await runtime.event({
+          event: { type: "session.created", properties: { info: { id: "directory-before-add" } } },
+        })
+        writeWatchedFile(path.join(importedDir, "new-hook.yaml"), notificationHooks("directory-child"))
+        await runtime.event({
+          event: { type: "session.created", properties: { info: { id: "directory-after-add" } } },
+        })
+
+        return JSON.stringify(records) === JSON.stringify(["directory-child"])
+          ? { ok: true }
+          : { ok: false, detail: `records=${JSON.stringify(records)}` }
+      } finally {
+        rmSync(sandbox, { recursive: true, force: true })
+      }
+    },
+  },
+  {
+    name: "runtime reloads when a missing relative import is created",
+    run: async () => {
+      const sandbox = mkdtempSync(path.join(os.tmpdir(), "pi-hooks-runtime-missing-import-"))
+      const homeDir = path.join(sandbox, "home")
+      const agentDir = path.join(homeDir, ".pi", "agent")
+      const projectDir = path.join(sandbox, "repo")
+      const hookDir = path.join(projectDir, ".pi", "hook")
+      const projectPath = path.join(hookDir, "hooks.yaml")
+      const missingPath = path.join(hookDir, "later.yaml")
+      const trustPath = path.join(agentDir, "trusted-projects.json")
+
+      try {
+        writeWatchedFile(trustPath, `${JSON.stringify([projectDir])}\n`)
+        writeWatchedFile(projectPath, `imports:
+  - ./later.yaml
+hooks: []
+`)
+        const configDiscovery = {
+          homeDir,
+          profile: Object.freeze({ kind: "pi" as const, agentDir }),
+          resolveGitWorktreeRoot: () => projectDir,
+        }
+        const initial = loadDiscoveredHooksSnapshot({ ...configDiscovery, projectDir })
+        const missingWatchPath = path.join(path.dirname(initial.files[0] ?? projectPath), "later.yaml")
+        if (!initial.watchPaths.includes(missingWatchPath) || initial.files.includes(missingWatchPath)) {
+          return {
+            ok: false,
+            detail: `missing manifest files=${JSON.stringify(initial.files)} watchPaths=${JSON.stringify(initial.watchPaths)}`,
+          }
+        }
+
+        const records: string[] = []
+        const runtime = createHooksRuntime(createFakeHost(records), {
+          directory: projectDir,
+          configDiscovery,
+        })
+
+        await runtime.event({
+          event: { type: "session.created", properties: { info: { id: "missing-before-create" } } },
+        })
+        writeWatchedFile(missingPath, notificationHooks("missing-created"))
+        await runtime.event({
+          event: { type: "session.created", properties: { info: { id: "missing-after-create" } } },
+        })
+
+        return JSON.stringify(records) === JSON.stringify(["missing-created"])
+          ? { ok: true }
+          : { ok: false, detail: `records=${JSON.stringify(records)}` }
+      } finally {
+        rmSync(sandbox, { recursive: true, force: true })
+      }
     },
   },
 ]

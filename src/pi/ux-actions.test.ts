@@ -13,8 +13,15 @@
  *   npx --yes tsx src/pi/ux-actions.test.ts
  */
 
+import {
+  __resetHookHostProfileForTests,
+  configureHookHostProfile,
+} from "../core/host-profile.js"
 import { parseHooksFile } from "../core/load-hooks.js"
-import { createHooksRuntime } from "../core/runtime.js"
+import {
+  createHooksRuntime,
+  OMP_SYNCHRONOUS_BASH_BUDGET_MS,
+} from "../core/runtime.js"
 import type { BashExecutionRequest, BashHookResult } from "../core/bash-types.js"
 import type {
   HookAction,
@@ -433,6 +440,108 @@ const runtimeCases: RuntimeCase[] = [
           calls.join("|") === "notify:hi|confirm:continue?|setStatus:hook#1:busy"
         ? { ok: true }
         : { ok: false, detail: `notify=${JSON.stringify(notify)}, approved=${String(approved)}, status=${JSON.stringify(status)}, calls=${JSON.stringify(calls)}` }
+    },
+  },
+  {
+    name: "Pi adapter keeps the two-argument confirm ABI without a deadline",
+    run: async () => {
+      __resetHookHostProfileForTests()
+      try {
+        let confirmArgs: unknown[] = []
+        const pi = { sendUserMessage: () => {} } as unknown as Parameters<typeof createHostAdapter>[0]
+        const host = createHostAdapter(
+          pi,
+          "/tmp",
+          () => undefined,
+          () => ({
+            hasUI: true,
+            ui: {
+              confirm: (...args: unknown[]) => {
+                confirmArgs = args
+                return Promise.resolve(true)
+              },
+            },
+          } as never),
+          {
+            scheduleDeadline: () => {
+              throw new Error("Pi confirmation must not schedule an OMP deadline")
+            },
+          },
+        )
+
+        const approved = await host.confirm?.({ title: "Approve", message: "continue?" })
+        return approved === true &&
+            confirmArgs.length === 2 &&
+            confirmArgs[0] === "Approve" &&
+            confirmArgs[1] === "continue?"
+          ? { ok: true }
+          : { ok: false, detail: `approved=${String(approved)}, args=${JSON.stringify(confirmArgs)}` }
+      } finally {
+        __resetHookHostProfileForTests()
+      }
+    },
+  },
+  {
+    name: "OMP adapter denies a never-resolving confirmation at the remaining dispatch deadline",
+    run: async () => {
+      __resetHookHostProfileForTests()
+      configureHookHostProfile({ kind: "omp", agentDir: "/tmp/.omp/agent" })
+      try {
+        const remainingBudget = OMP_SYNCHRONOUS_BASH_BUDGET_MS - 15_000
+        let scheduledDelay: number | undefined
+        let receivedOptions: { timeout?: number; signal?: AbortSignal } | undefined
+        let cancelled = false
+        const pi = { sendUserMessage: () => {} } as unknown as Parameters<typeof createHostAdapter>[0]
+        const host = createHostAdapter(
+          pi,
+          "/tmp",
+          () => undefined,
+          () => ({
+            hasUI: true,
+            ui: {
+              confirm: (
+                _title: string,
+                _message: string,
+                options: { timeout?: number; signal?: AbortSignal },
+              ) => {
+                receivedOptions = options
+                return new Promise<boolean>(() => {})
+              },
+            },
+          } as never),
+          {
+            scheduleDeadline: (callback, delayMs) => {
+              scheduledDelay = delayMs
+              queueMicrotask(callback)
+              return () => {
+                cancelled = true
+              }
+            },
+          },
+        )
+
+        const approved = await host.confirm?.({
+          title: "Approve",
+          message: "continue?",
+          timeout: remainingBudget,
+        })
+        return approved === false &&
+            scheduledDelay === remainingBudget &&
+            receivedOptions?.timeout === remainingBudget &&
+            receivedOptions.signal?.aborted === true &&
+            cancelled
+          ? { ok: true }
+          : {
+              ok: false,
+              detail: `approved=${String(approved)}, delay=${String(scheduledDelay)}, options=${JSON.stringify({
+                timeout: receivedOptions?.timeout,
+                aborted: receivedOptions?.signal?.aborted,
+                cancelled,
+              })}`,
+            }
+      } finally {
+        __resetHookHostProfileForTests()
+      }
     },
   },
   {

@@ -12,7 +12,9 @@ import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-a
 
 import { executeBashHook } from "../core/bash-executor.js";
 import type { BashExecutionRequest, BashHookResult } from "../core/bash-types.js";
+import { getHookHostProfile } from "../core/host-profile.js";
 import { getPiHooksLogger } from "../core/logger.js";
+import { OMP_SYNCHRONOUS_BASH_BUDGET_MS } from "../core/runtime.js";
 import type { HookNotifyLevel, HostAdapter, HostDeliveryResult } from "../core/types.js";
 import { getRootSessionId } from "./session-lineage.js";
 
@@ -27,13 +29,31 @@ import { getRootSessionId } from "./session-lineage.js";
  */
 export type ReadonlySessionManager = ExtensionContext["sessionManager"];
 
+export interface HostAdapterOptions {
+  readonly scheduleDeadline?: (callback: () => void, delayMs: number) => () => void;
+}
+
+interface OmpConfirmationUi {
+  confirm(
+    title: string,
+    message: string,
+    options: { readonly timeout: number; readonly signal: AbortSignal },
+  ): boolean | Promise<boolean>;
+}
+
 export function createHostAdapter(
   pi: ExtensionAPI,
   projectDir: string,
   getSessionManager: () => ReadonlySessionManager | undefined,
   getContext: () => ExtensionContext | undefined,
+  options: HostAdapterOptions = {},
 ): HostAdapter {
   const logger = getPiHooksLogger();
+  const isOmp = getHookHostProfile().kind === "omp";
+  const scheduleDeadline = options.scheduleDeadline ?? ((callback: () => void, delayMs: number): (() => void) => {
+    const timer = setTimeout(callback, delayMs);
+    return () => clearTimeout(timer);
+  });
   // Once-per-missing-capability warning flags. We log a single warning per
   // process lifetime instead of spamming on every hook invocation when the
   // host's UI surface is absent (ctx.hasUI is false) or ctx has not yet been
@@ -169,7 +189,7 @@ export function createHostAdapter(
         throw new Error(`ui.notify failed: ${message}`);
       }
     },
-    confirm: async (options: { title?: string; message: string }): Promise<boolean> => {
+    confirm: async (request: { title?: string; message: string; timeout?: number }): Promise<boolean> => {
       const ctx = getContext();
       if (!ctx?.hasUI || typeof ctx.ui?.confirm !== "function") {
         if (!warnedNoConfirm) {
@@ -191,19 +211,38 @@ export function createHostAdapter(
         return process.env.PI_YAML_HOOKS_CONFIRM_AUTO_APPROVE === "1";
       }
       try {
-        // PI's confirm takes (title, message) as positional args; title is
-        // required on the PI side, so we synthesize a neutral default when
-        // the YAML omits it.
-        const approved = await ctx.ui.confirm(options.title ?? "Confirm", options.message);
+        const title = request.title ?? "Confirm";
+        // Pi's confirm ABI remains the original two positional arguments.
+        // OMP 17 accepts a structural third options argument; its signal
+        // closes the dialog when our deadline wins, while the local race
+        // guarantees a fail-closed result even if the host ignores it.
+        const ompTimeout = Math.min(
+          request.timeout ?? OMP_SYNCHRONOUS_BASH_BUDGET_MS,
+          OMP_SYNCHRONOUS_BASH_BUDGET_MS,
+        );
+        let approved: boolean;
+        if (!isOmp) {
+          approved = await ctx.ui.confirm(title, request.message);
+        } else if (ompTimeout <= 0) {
+          approved = false;
+        } else {
+          approved = await confirmOmpWithDeadline(
+            ctx.ui as unknown as OmpConfirmationUi,
+            title,
+            request.message,
+            ompTimeout,
+            scheduleDeadline,
+          );
+        }
         logger.info("host_confirm", "Completed UI confirmation request.", {
           cwd: projectDir,
-          details: { title: options.title ?? "Confirm", message: options.message, approved },
+          details: { title, message: request.message, approved, ...(isOmp ? { timeout: ompTimeout } : {}) },
         });
         return approved;
       } catch (error) {
         logger.error("host_confirm", "UI confirmation failed.", {
           cwd: projectDir,
-          details: { title: options.title ?? "Confirm", message: options.message, error: error instanceof Error ? error.message : String(error) },
+          details: { title: request.title ?? "Confirm", message: request.message, error: error instanceof Error ? error.message : String(error) },
         });
         debugLog(`ui.confirm failed: ${error instanceof Error ? error.message : String(error)}`);
         // Errors from the UI surface (dismissed, aborted) fall through as
@@ -258,6 +297,38 @@ export function createHostAdapter(
       }
     },
   };
+}
+
+async function confirmOmpWithDeadline(
+  ui: OmpConfirmationUi,
+  title: string,
+  message: string,
+  timeout: number,
+  scheduleDeadline: NonNullable<HostAdapterOptions["scheduleDeadline"]>,
+): Promise<boolean> {
+  const abortController = new AbortController();
+  const confirmation = Promise.resolve().then(() =>
+    ui.confirm(title, message, {
+      timeout,
+      signal: abortController.signal,
+    }),
+  );
+  let cancelDeadline = (): void => {};
+  const deadline = new Promise<boolean>((resolve) => {
+    cancelDeadline = scheduleDeadline(() => {
+      abortController.abort();
+      resolve(false);
+    }, timeout);
+  });
+
+  try {
+    // Promise.race installs fulfillment and rejection handlers on the
+    // confirmation promise, so a host that settles after the deadline cannot
+    // create an unhandled rejection or change the already-denied result.
+    return await Promise.race([confirmation, deadline]);
+  } finally {
+    cancelDeadline();
+  }
 }
 
 /**

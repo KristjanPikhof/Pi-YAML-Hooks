@@ -4,12 +4,17 @@ import path from "node:path"
 import { execFileSync } from "node:child_process"
 
 import { getPiHooksLogger } from "./logger.js"
+import {
+  getConfiguredHookHostProfile,
+  type HookHostProfile,
+} from "./host-profile.js"
 
 export interface HookConfigDiscoveryOptions {
   readonly projectDir?: string
   readonly platform?: string
   readonly homeDir?: string
   readonly appDataDir?: string
+  readonly profile?: HookHostProfile
   readonly exists?: (filePath: string) => boolean
   readonly readFile?: (filePath: string) => string
   readonly realpath?: (filePath: string) => string
@@ -28,6 +33,10 @@ export interface DiscoveredHookConfigPath {
   readonly filePath: string
 }
 
+export interface HookConfigWatchPaths {
+  readonly paths: readonly string[]
+}
+
 export interface ProjectHookResolution {
   readonly cwd: string
   readonly anchorDir: string
@@ -35,63 +44,58 @@ export interface ProjectHookResolution {
   readonly canonicalAnchorDir: string
   readonly worktreeRoot?: string
   readonly discoveredProjectRoot?: string
+  readonly trustFilePath: string
   readonly projectConfigPath?: string
   readonly trusted: boolean
 }
 
 /**
- * Resolve the primary global and project config paths. Only PI-native
- * locations are considered:
- * - global: ~/.pi/agent/hook/hooks.yaml, then ~/.pi/agent/hooks.yaml
- * - project: <projectDir>/.pi/hook/hooks.yaml, then <projectDir>/.pi/hooks.yaml
+ * Resolve the primary global and project config paths for the active host.
+ * Pi keeps its existing `.pi` locations. OMP uses its active agent directory
+ * for global config and checks native `.omp` project locations before
+ * trust-gated legacy Pi project fallbacks.
  */
 export function resolveHookConfigPaths(options: HookConfigDiscoveryOptions = {}): HookConfigPaths {
   const exists = options.exists ?? existsSync
   const platform = options.platform ?? process.platform
   const homeDir = options.homeDir ?? resolveHomeDir()
   const appDataDir = options.appDataDir ?? process.env.APPDATA
+  const profile = resolveDiscoveryProfile(options, homeDir)
   const project = resolveProjectHookResolution(options)
 
   return {
-    global: resolveGlobalConfigPath(exists, platform, homeDir, appDataDir),
+    global: resolveGlobalConfigPath(exists, platform, homeDir, appDataDir, profile),
     project: project?.projectConfigPath,
   }
 }
 
 /**
- * Discover all existing PI-native config files in precedence order.
+ * Discover at most one global and one project config file. Global comes
+ * before project so the project file can override the global one.
  *
- * Global comes before project so the project file can override the global one
- * (preserving original layering semantics).
- *
- * Project hook files are gated by an explicit trust list — a repo cannot drop
- * in `.pi/hook/hooks.yaml` or `.pi/hooks.yaml` and silently get arbitrary
- * `bash:` execution just
- * because someone `cd`'d into it. Trust is established by either:
- *   - Setting `PI_YAML_HOOKS_TRUST_PROJECT=1` for the process, or
- *   - Adding the absolute project directory to ~/.pi/agent/trusted-projects.json
- *     (a JSON array of absolute paths, e.g. ["/Users/me/code/myproj"]).
- * Untrusted project files are skipped with a one-time warning.
+ * Project hook files are gated by the active host's trust list. A legacy
+ * `.pi` fallback discovered while OMP is active still requires OMP trust.
  */
 export function discoverHookConfigEntries(options: HookConfigDiscoveryOptions = {}): DiscoveredHookConfigPath[] {
   const exists = options.exists ?? existsSync
   const platform = options.platform ?? process.platform
   const homeDir = options.homeDir ?? resolveHomeDir()
   const appDataDir = options.appDataDir ?? process.env.APPDATA
+  const profile = resolveDiscoveryProfile(options, homeDir)
   const project = resolveProjectHookResolution(options)
 
   const entries: DiscoveredHookConfigPath[] = []
-  const globalPath = pickFirstExisting(globalCandidatePaths(platform, homeDir, appDataDir), exists)
+  const globalPath = pickFirstExisting(globalCandidatePaths(platform, homeDir, appDataDir, profile), exists)
   if (globalPath) {
     entries.push({ scope: "global", filePath: globalPath })
   }
 
   if (project?.projectConfigPath) {
-      if (project.trusted) {
-        entries.push({ scope: "project", filePath: project.projectConfigPath })
-      } else {
-        warnUntrustedProjectOnce(project.anchorDir, project.projectConfigPath)
-      }
+    if (project.trusted) {
+      entries.push({ scope: "project", filePath: project.projectConfigPath })
+    } else {
+      warnUntrustedProjectOnce(project.anchorDir, project.projectConfigPath, project.trustFilePath)
+    }
   }
 
   return entries
@@ -99,6 +103,35 @@ export function discoverHookConfigEntries(options: HookConfigDiscoveryOptions = 
 
 export function discoverHookConfigPaths(options: HookConfigDiscoveryOptions = {}): string[] {
   return discoverHookConfigEntries(options).map((entry) => entry.filePath)
+}
+
+/**
+ * Resolve the complete, stable set of filesystem paths that can affect hook
+ * discovery for one host profile and cwd. Callers can stat this set between
+ * events and defer the synchronous project/git discovery work until one of
+ * the paths changes.
+ */
+export function resolveHookConfigWatchPaths(
+  options: HookConfigDiscoveryOptions = {},
+): HookConfigWatchPaths {
+  const platform = options.platform ?? process.platform
+  const homeDir = options.homeDir ?? resolveHomeDir()
+  const appDataDir = options.appDataDir ?? process.env.APPDATA
+  const profile = resolveDiscoveryProfile(options, homeDir)
+  const paths = globalCandidatePaths(platform, homeDir, appDataDir, profile)
+  paths.push(resolveTrustedProjectsFilePath({ homeDir, profile }))
+
+  if (!options.projectDir) {
+    return { paths: uniquePaths(paths) }
+  }
+
+  const project = resolveProjectHookResolution(options)!
+  for (const dir of ancestorDirs(project.canonicalCwd, project.canonicalAnchorDir)) {
+    paths.push(...projectCandidatePaths(dir, profile.kind))
+    paths.push(path.join(dir, ".git"))
+  }
+
+  return { paths: uniquePaths(paths) }
 }
 
 const MAX_WARNED_UNTRUSTED_PROJECTS = 128
@@ -120,18 +153,18 @@ function rememberWarnedUntrustedProject(projectDir: string): boolean {
   return true
 }
 
-function warnUntrustedProjectOnce(projectDir: string, candidate: string): void {
+function warnUntrustedProjectOnce(projectDir: string, candidate: string, trustFilePath: string): void {
   if (!rememberWarnedUntrustedProject(projectDir)) return
   const message =
     `[pi-yaml-hooks] Skipping untrusted project hooks at ${candidate}.\n` +
     `         To trust this project, either:\n` +
     `           - set PI_YAML_HOOKS_TRUST_PROJECT=1 for this session, or\n` +
-    `           - add ${JSON.stringify(projectDir)} to ~/.pi/agent/trusted-projects.json`
+    `           - add ${JSON.stringify(projectDir)} to ${trustFilePath}`
   // eslint-disable-next-line no-console
   console.warn(message)
   getPiHooksLogger().warn("project_untrusted", "Skipping untrusted project hooks.", {
     cwd: projectDir,
-    details: { projectDir, candidate },
+    details: { projectDir, candidate, trustFilePath },
   })
 }
 
@@ -158,17 +191,19 @@ export function resolveProjectHookResolution(options: HookConfigDiscoveryOptions
 
   const exists = options.exists ?? existsSync
   const homeDir = options.homeDir ?? resolveHomeDir()
+  const profile = resolveDiscoveryProfile(options, homeDir)
   const readFile = options.readFile ?? ((filePath: string) => readFileSync(filePath, "utf8"))
   const realpath = options.realpath ?? defaultRealpath
   const cwd = path.resolve(projectDir)
   const canonicalCwd = canonicalizePath(cwd, realpath)
   const worktreeRoot = resolveWorktreeRoot(cwd, options.resolveGitWorktreeRoot, realpath)
-  const discoveredProjectRoot = findNearestProjectRoot(cwd, worktreeRoot, exists, realpath)
+  const discoveredProjectRoot = findNearestProjectRoot(canonicalCwd, worktreeRoot, exists, profile.kind)
   const projectConfigPath = discoveredProjectRoot
-    ? pickFirstExisting(projectCandidatePaths(discoveredProjectRoot), exists)
+    ? pickFirstExisting(projectCandidatePaths(discoveredProjectRoot, profile.kind), exists)
     : undefined
   const anchorDir = worktreeRoot ?? discoveredProjectRoot ?? cwd
   const canonicalAnchorDir = canonicalizePath(anchorDir, realpath)
+  const trustFilePath = resolveTrustedProjectsFilePath({ homeDir, profile })
 
   return {
     cwd,
@@ -177,8 +212,9 @@ export function resolveProjectHookResolution(options: HookConfigDiscoveryOptions
     canonicalAnchorDir,
     ...(worktreeRoot ? { worktreeRoot } : {}),
     ...(discoveredProjectRoot ? { discoveredProjectRoot } : {}),
+    trustFilePath,
     ...(projectConfigPath ? { projectConfigPath } : {}),
-    trusted: isProjectTrusted(canonicalAnchorDir, homeDir, readFile, realpath, exists),
+    trusted: isProjectTrusted(canonicalAnchorDir, trustFilePath, readFile, realpath, exists),
   }
 }
 
@@ -200,8 +236,8 @@ export function __resetTrustListCacheForTests(): void {
 
 function fingerprintTrustFile(trustFile: string): string {
   try {
-    const stat = statSync(trustFile)
-    return `${stat.mtimeMs}|${stat.size}`
+    const stat = statSync(trustFile, { bigint: true })
+    return `${stat.mtimeNs}|${stat.ctimeNs}|${stat.size}|${stat.ino}|${stat.mode}`
   } catch {
     return "missing"
   }
@@ -209,7 +245,7 @@ function fingerprintTrustFile(trustFile: string): string {
 
 function isProjectTrusted(
   canonicalAnchorDir: string,
-  homeDir: string,
+  trustFile: string,
   readFile: (filePath: string) => string,
   realpath: (filePath: string) => string,
   exists: (filePath: string) => boolean,
@@ -218,7 +254,6 @@ function isProjectTrusted(
     warnTrustBypassOnce(canonicalAnchorDir)
     return true
   }
-  const trustFile = path.join(homeDir, ".pi", "agent", "trusted-projects.json")
   // Honour the injected `exists` so tests with virtual filesystems remain
   // deterministic — `existsSync` would leak through to the host filesystem.
   if (!exists(trustFile)) return false
@@ -257,22 +292,24 @@ function resolveGlobalConfigPath(
   platform: string,
   homeDir: string,
   appDataDir: string | undefined,
+  profile: HookHostProfile,
 ): string {
-  const candidates = globalCandidatePaths(platform, homeDir, appDataDir)
+  const candidates = globalCandidatePaths(platform, homeDir, appDataDir, profile)
   return pickFirstExisting(candidates, exists) ?? candidates[0]
 }
 
-function globalCandidatePaths(platform: string, homeDir: string, appDataDir: string | undefined): string[] {
-  const candidates: string[] = [
-    // PI-native preferred global config: ~/.pi/agent/hook/hooks.yaml
-    path.join(homeDir, ".pi", "agent", "hook", "hooks.yaml"),
-    // PI-native flat global config: ~/.pi/agent/hooks.yaml
-    path.join(homeDir, ".pi", "agent", "hooks.yaml"),
+function globalCandidatePaths(
+  platform: string,
+  homeDir: string,
+  appDataDir: string | undefined,
+  profile: HookHostProfile,
+): string[] {
+  const candidates = [
+    path.join(profile.agentDir, "hook", "hooks.yaml"),
+    path.join(profile.agentDir, "hooks.yaml"),
   ]
 
-  // PI-native on Windows: %APPDATA%/pi/agent/hook/hooks.yaml, then
-  // %APPDATA%/pi/agent/hooks.yaml
-  if (platform === "win32" && appDataDir) {
+  if (profile.kind === "pi" && platform === "win32" && appDataDir) {
     candidates.push(path.join(appDataDir, "pi", "agent", "hook", "hooks.yaml"))
     candidates.push(path.join(appDataDir, "pi", "agent", "hooks.yaml"))
   }
@@ -280,23 +317,28 @@ function globalCandidatePaths(platform: string, homeDir: string, appDataDir: str
   return candidates
 }
 
-function projectCandidatePaths(projectDir: string): string[] {
-  return [
-    // PI-native preferred project config: <projectDir>/.pi/hook/hooks.yaml
+function projectCandidatePaths(projectDir: string, hostKind: HookHostProfile["kind"]): string[] {
+  const piCandidates = [
     path.join(projectDir, ".pi", "hook", "hooks.yaml"),
-    // PI-native flat project config: <projectDir>/.pi/hooks.yaml
     path.join(projectDir, ".pi", "hooks.yaml"),
   ]
+  return hostKind === "omp"
+    ? [
+        path.join(projectDir, ".omp", "hook", "hooks.yaml"),
+        path.join(projectDir, ".omp", "hooks.yaml"),
+        ...piCandidates,
+      ]
+    : piCandidates
 }
 
 function findNearestProjectRoot(
-  cwd: string,
-  worktreeRoot: string | undefined,
+  canonicalCwd: string,
+  canonicalWorktreeRoot: string | undefined,
   exists: (filePath: string) => boolean,
-  realpath: (filePath: string) => string,
+  hostKind: HookHostProfile["kind"],
 ): string | undefined {
-  for (const dir of ancestorDirs(cwd, worktreeRoot, realpath)) {
-    if (pickFirstExisting(projectCandidatePaths(dir), exists)) {
+  for (const dir of ancestorDirs(canonicalCwd, canonicalWorktreeRoot)) {
+    if (pickFirstExisting(projectCandidatePaths(dir, hostKind), exists)) {
       return dir
     }
   }
@@ -304,13 +346,12 @@ function findNearestProjectRoot(
   return undefined
 }
 
-function* ancestorDirs(cwd: string, stopDir: string | undefined, realpath: (filePath: string) => string): Iterable<string> {
-  const canonicalStopDir = stopDir ? canonicalizePath(stopDir, realpath) : undefined
-  let current = path.resolve(cwd)
+function* ancestorDirs(canonicalCwd: string, canonicalStopDir?: string): Iterable<string> {
+  let current = path.resolve(canonicalCwd)
 
   while (true) {
     yield current
-    if (canonicalStopDir && canonicalizePath(current, realpath) === canonicalStopDir) {
+    if (current === canonicalStopDir) {
       return
     }
     const parent = path.dirname(current)
@@ -364,6 +405,37 @@ function pickFirstExisting(
     }
   }
   return undefined
+}
+
+function uniquePaths(paths: readonly string[]): string[] {
+  const seen = new Set<string>()
+  const unique: string[] = []
+  for (const filePath of paths) {
+    if (!seen.has(filePath)) {
+      seen.add(filePath)
+      unique.push(filePath)
+    }
+  }
+  return unique
+}
+
+export function resolveTrustedProjectsFilePath(
+  options: Pick<HookConfigDiscoveryOptions, "homeDir" | "profile"> = {},
+): string {
+  const homeDir = options.homeDir ?? resolveHomeDir()
+  const profile = resolveDiscoveryProfile(options, homeDir)
+  return path.join(profile.agentDir, "trusted-projects.json")
+}
+
+function resolveDiscoveryProfile(
+  options: Pick<HookConfigDiscoveryOptions, "profile">,
+  homeDir: string,
+): HookHostProfile {
+  return (
+    options.profile ??
+    getConfiguredHookHostProfile() ??
+    Object.freeze({ kind: "pi", agentDir: path.resolve(homeDir, ".pi", "agent") })
+  )
 }
 
 function resolveHomeDir(): string {

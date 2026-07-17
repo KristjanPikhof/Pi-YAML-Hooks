@@ -1,0 +1,5 @@
+hooks:
+  - id: omp-smoke-invalid-command-action
+    event: session.idle
+    actions:
+      - command: "/unsupported-command-action"

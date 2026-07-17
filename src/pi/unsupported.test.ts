@@ -1,13 +1,15 @@
 // Side-effect import: registers the PI HookPolicy with the core loader.
 // P2 #22 separated core/load-hooks from src/pi/*; standalone tests that
 // exercise PI diagnostics through `parseHooksFile` must opt the policy in.
-import "./unsupported.js"
+import type { HookPolicy } from "../core/types.js"
 import { parseHooksFile } from "../core/load-hooks.js"
+import { ompHookPolicy } from "./unsupported.js"
 
 interface Case {
   readonly name: string
   readonly yaml: string
   readonly check: (result: ReturnType<typeof parseHooksFile>) => { ok: boolean; detail?: string }
+  readonly policy?: HookPolicy
 }
 
 const cases: Case[] = [
@@ -128,6 +130,68 @@ const cases: Case[] = [
         : { ok: true }
     },
   },
+  {
+    name: "tool.before.glob → no advisory under OMP policy",
+    yaml: `hooks:
+  - event: tool.before.glob
+    actions:
+      - bash: "echo hi"
+`,
+    policy: ompHookPolicy,
+    check: (result) => {
+      const advisories = result.advisories ?? []
+      const hasUnexpected = advisories.some((advisory) => advisory.includes("This tool name will never match"))
+      return hasUnexpected
+        ? { ok: false, detail: `unexpected advisory for OMP built-in: ${JSON.stringify(advisories)}` }
+        : { ok: true }
+    },
+  },
+  {
+    name: "unknown tool name → host-aware advisory under OMP policy",
+    yaml: `hooks:
+  - event: tool.after.write_file
+    actions:
+      - bash: "echo hi"
+`,
+    policy: ompHookPolicy,
+    check: (result) => {
+      const advisories = result.advisories ?? []
+      const hasOmpAdvisory = advisories.some(
+        (advisory) => advisory.includes("OMP built-ins include") && advisory.includes("This tool name will never match"),
+      )
+      return hasOmpAdvisory
+        ? { ok: true }
+        : { ok: false, detail: `missing OMP advisory: ${JSON.stringify(advisories)}` }
+    },
+  },
+  {
+    name: "command, runIn, and tool-action diagnostics remain under OMP policy",
+    yaml: `hooks:
+  - event: session.idle
+    actions:
+      - command: "/deploy"
+  - event: session.idle
+    runIn: main
+    actions:
+      - tool:
+          name: echo
+`,
+    policy: ompHookPolicy,
+    check: (result) => {
+      const messages = result.errors
+        .filter((error) => error.code === "unsupported_on_pi")
+        .map((error) => error.message)
+      const advisories = result.advisories ?? []
+      const commandError = messages.some((message) => message.includes("command: actions are not supported on PI"))
+      const runInError = messages.some((message) => message.includes("runIn: main is only supported for bash actions on PI"))
+      const toolAdvisory = advisories.some((advisory) =>
+        advisory.includes("tool: actions run as current-session prompts"),
+      )
+      return commandError && runInError && toolAdvisory
+        ? { ok: true }
+        : { ok: false, detail: JSON.stringify({ messages, advisories }) }
+    },
+  },
 ]
 
 export function main(): number {
@@ -138,7 +202,7 @@ export function main(): number {
   console.info = () => {}
   try {
     for (const c of cases) {
-      const result = parseHooksFile("/virtual/hooks.yaml", c.yaml)
+      const result = parseHooksFile("/virtual/hooks.yaml", c.yaml, c.policy ? { policy: c.policy } : {})
       const outcome = c.check(result)
       if (outcome.ok) {
         originalInfo(`PASS  ${c.name}`)

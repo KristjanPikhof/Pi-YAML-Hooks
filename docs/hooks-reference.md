@@ -1,6 +1,6 @@
 # Hooks reference
 
-This document describes the current `pi-yaml-hooks` behavior as implemented in this repository.
+This document describes the current `pi-yaml-hooks` behavior on Pi and OMP as implemented and runtime-tested in this repository.
 
 ## Contents
 
@@ -9,10 +9,10 @@ This document describes the current `pi-yaml-hooks` behavior as implemented in t
 - [Optional `user_bash` interception](#optional-user_bash-interception)
 - [`imports`](#imports)
 - [Hook fields](#hook-fields)
-- [Path conditions](#path-conditions)
+- [Conditions](#conditions)
 - [Actions](#actions)
 - [Bash environment variables](#bash-environment-variables)
-- [PI compatibility smoke-check checklist](#pi-compatibility-smoke-check-checklist)
+- [Dual-host compatibility checks](#dual-host-compatibility-checks)
 - [Unsupported and advisory cases](#unsupported-and-advisory-cases)
 - [Debug logging](#debug-logging)
 
@@ -40,9 +40,9 @@ Each action entry must define exactly one action key.
 
 ## `/hooks` command autocomplete
 
-On PI versions that expose `ctx.ui.addAutocompleteProvider`, `pi-yaml-hooks` registers a guarded autocomplete provider for the built-in `/hooks-*` commands in the TUI editor (`ctx.mode === "tui"`, or older SDKs with no `mode`). The provider is capability-detected at runtime, so RPC/headless contexts and older supported PI versions continue to load without this TUI-only feature.
+On hosts that expose `ctx.ui.addAutocompleteProvider`, `pi-yaml-hooks` registers a guarded autocomplete provider for the built-in `/hooks-*` commands in the TUI editor (`ctx.mode === "tui"`, or older Pi SDKs with no `mode`). The provider is capability-detected, so RPC/headless contexts and supported hosts without this TUI-only surface continue to load.
 
-Autocomplete suggestions are deterministic and intentionally lightweight: command names are static; event names use the supported event list; config paths and the current log path are resolved when the provider builds suggestions. Hook ID suggestions are loaded lazily from the current global/project snapshot and memoized by snapshot signature, so edits to root or imported hook files refresh suggestions after the next snapshot change.
+Autocomplete suggestions are deterministic and intentionally lightweight. Command names are static; event names use the supported event list; config paths and the current log path come from the active Pi or OMP host profile. Hook ID suggestions load lazily from the current global/project snapshot and are memoized by snapshot signature, so edits to root or imported hook files refresh suggestions after the next snapshot change.
 
 Useful completions include:
 
@@ -54,15 +54,15 @@ Useful completions include:
 
 ## Agent-start awareness
 
-At agent start, `pi-yaml-hooks` appends a short hook-awareness note to the system prompt. It summarizes the loaded hook count, current project trust state, and the main PI-specific limitations that matter while authoring or debugging hooks.
+At agent start, `pi-yaml-hooks` appends a short hook-awareness note to the system prompt. It summarizes the active Pi or OMP host, loaded hook count, selected config paths, project trust state, and limitations that matter while authoring or debugging hooks.
 
-This prompt injection is part of the current compatibility surface for Pi 0.79 and the package's Pi host peer metadata (`*`) on the `@earendil-works` scope.
+This is registered through the host's `before_agent_start` event. It is not a YAML hook event.
 
 Set `PI_YAML_HOOKS_PROMPT_AWARENESS=0` to disable this prompt injection.
 
 ## Optional `user_bash` interception
 
-Set `PI_YAML_HOOKS_ENABLE_USER_BASH=1` to run human `!` / `!!` shell commands through `tool.before.bash` hooks before PI executes them.
+Set `PI_YAML_HOOKS_ENABLE_USER_BASH=1` to run human `!` / `!!` shell commands through `tool.before.bash` hooks before Pi or OMP executes them.
 
 - this mode is opt-in and disabled by default
 - it applies only pre-bash safety hooks
@@ -88,7 +88,7 @@ Enabling this feature expands the trust surface: hooks in trusted projects can o
 
 ### Trust expansion
 
-Trust on PI is anchored at the repo or worktree anchor, not at every imported file. Once that anchor is trusted, all of the project root's `imports:` are loaded transitively under that same trust decision. Three safety rails keep that expansion narrow:
+Trust is anchored at the repo or worktree anchor, not at every imported file. Once that anchor is trusted in the active host's trust store, all of the project root's `imports:` are loaded transitively under that same trust decision. Three safety rails keep that expansion narrow:
 
 1. The global hooks file (which always loads) cannot pull in additional files unless `PI_YAML_HOOKS_ALLOW_GLOBAL_IMPORTS=1` is set, so a global hook cannot silently extend its own footprint.
 2. Bare-specifier imports that resolve through `node_modules` are gated behind `PI_YAML_HOOKS_ALLOW_PACKAGE_IMPORTS=1`, so an arbitrary npm dependency cannot register hooks just by being installed.
@@ -117,45 +117,34 @@ Without overrides, hooks from both files stay active.
 | `id` | no | string | Stable hook name used by later-file overrides. Strongly recommended for any hook you may replace or disable later. |
 | `event` | yes | string | One of the supported hook events listed below. |
 | `actions` | yes | array | Non-empty list of action objects. Actions run in order. |
-| `action` | no | `stop` | Accepted only on `tool.before.*` hooks. On PI it does not add much beyond the normal pre-tool block behavior. |
+| `action` | no | `stop` | Accepted only on `tool.before.*` hooks. It does not add much beyond the normal pre-tool block behavior. |
 | `conditions` | no | array | Additional filters. All conditions must pass. |
 | `scope` | no | `all`, `main`, `child` | Filters which session lineage the hook itself runs in. Defaults to `all`. |
-| `runIn` | no | `current`, `main` | Compatibility field for action targeting. Defaults to `current`. On PI, non-`bash` actions (i.e. `tool`, `notify`, `confirm`, `setStatus`) with `runIn: main` are rejected at load time and the hook is dropped. See the PI-specific notes below before relying on it. |
+| `runIn` | no | `current`, `main` | Compatibility field for action targeting. Defaults to `current`. Non-`bash` actions (`tool`, `notify`, `confirm`, `setStatus`) with `runIn: main` are rejected at load time and the hook is dropped. See the host notes below before relying on it. |
 | `async` | no | boolean or object | Queues the hook for background execution. `true` keeps serialized per-event behavior. `{ group?, concurrency? }` lets hooks share a named async queue with optional bounded concurrency. Only allowed on non-`tool.before` hooks, not on `session.idle`, and only for `bash`-only hooks. |
 | `override` | no | string | Replaces a previously loaded hook with the given `id`. |
 | `disable` | no | boolean | When used with `override`, removes the targeted earlier hook instead of replacing it. |
 
-## Supported events
+## Host event and action mapping
 
-### Tool events
+The YAML surface is host-independent. The adapter translates Pi and OMP events into the same runtime contract:
 
-| Event | When it fires | Can block? |
-|---|---|---|
-| `tool.before.*` | Before every tool call | yes |
-| `tool.before.<name>` | Before a specific tool call | yes |
-| `tool.after.*` | After every tool call | no |
-| `tool.after.<name>` | After a specific tool call | no |
+| YAML event or action | Pi source or target | OMP source or target | Exact adapter behavior |
+|---|---|---|---|
+| `tool.before.*`, `tool.before.<name>` | `tool_call` | `tool_call` | Dispatches before the named tool. A blocking result is returned to the host, so this is the only event family where `action: stop`, exit code `2`, or a rejected `confirm` can block the tool. |
+| `tool.after.*`, `tool.after.<name>` | `tool_result` | `tool_result` | Dispatches after the named tool. The adapter retains the session ID recorded at `tool_call` so an after-hook is not silently routed to a replacement session. |
+| `file.changed` | Synthesized after `tool_result` | Synthesized after `tool_result` | Not a host event. It fires after `tool.after.*` for recognized mutations described below. Human `user_bash` commands never synthesize it. |
+| `session.created` | `session_start` only when `reason` is `startup` or `new` | `session_start` when `reason` is absent, `startup`, or `new`; also `session_switch` when `reason` is `new` | Emits once for the current session ID. Resume and fork events are excluded on both hosts. OMP startup and new-session signals are deduplicated, so no resume/fork created-event claim is implied. |
+| `session.idle` | `agent_settled`; `agent_end` is the compatibility path | `agent_end`, after `session_stop` control handlers finish | Requires the same live session, `isIdle()`, and no pending messages. Pi deduplicates `agent_end`/`agent_settled`. OMP waits until stop handlers have settled, so a queued continuation, `agent_start`, or replacement session suppresses the candidate; a later terminal `agent_end` can re-arm it. Accumulated file changes are consumed only after a successful idle dispatch. |
+| `session.deleted` | `session_before_switch` or `session_shutdown` | `session_before_switch` or `session_shutdown` | Best-effort and intentionally lossy. Duplicate switch/shutdown signals for one session are collapsed. If the host supplies `reason`, the adapter forwards that string verbatim on the internal envelope and records it in debug dispatch telemetry. Treat it as opaque: values such as `quit`, `reload`, `new`, `resume`, and `fork` are observations, not a closed enum, and matching is unaffected. |
+| opt-in human `user_bash` | `user_bash` | `user_bash` | With `PI_YAML_HOOKS_ENABLE_USER_BASH=1`, maps only to `tool.before.bash`. It does not produce `tool.after.*` or `file.changed`. |
+| agent-start awareness | `before_agent_start` | `before_agent_start` | Appends the hook-awareness text to the existing system prompt unless `PI_YAML_HOOKS_PROMPT_AWARENESS` disables it. This is adapter behavior, not a YAML event. |
+| `tool:` action | `pi.sendUserMessage(..., { deliverAs: "followUp" })` | Same extension API surface | Pi or OMP receives a follow-up prompt in the current matching session. The action does not execute a tool and cannot target another session. A replaced or stale session degrades without leaking the prompt into the new session. |
+| `notify:` action | `ctx.ui.notify` | `ctx.ui.notify` | Runs only when the current context reports UI and exposes the method. `success` maps to `info`. Without UI it degrades, warns once, and does not throw. |
+| `confirm:` action | `ctx.ui.confirm` | `ctx.ui.confirm` | Uses `Confirm` when the title is omitted. Without UI it denies by default, unless `PI_YAML_HOOKS_CONFIRM_AUTO_APPROVE=1` explicitly opts in. Rejection blocks only a `tool.before.*` hook. |
+| `setStatus:` action | `ctx.ui.setStatus` | `ctx.ui.setStatus` | Writes a per-hook status key when the method is available. Without UI it degrades, warns once, and does not throw. |
 
-On stock PI, built-in tool names are:
-
-- `bash`
-- `read`
-- `edit`
-- `write`
-- `grep`
-- `find`
-- `ls`
-
-Custom tool names can also match if the host emits them.
-
-### Session and file events
-
-| Event | When it fires | Notes |
-|---|---|---|
-| `file.changed` | After recognized file mutations | Synthesized by `pi-yaml-hooks`; see below for exact sources |
-| `session.created` | On PI startup or a genuinely new session | Does not fire on resume, reload, or fork re-entry |
-| `session.idle` | When no retry, compaction retry, or queued continuation remains on capable hosts | Falls back to `agent_end` behavior on older Pi; includes accumulated file changes since the last successful idle dispatch |
-| `session.deleted` | On shutdown and before session switches | Best-effort and lossy by design; PI may provide a `reason` (`quit`, `reload`, `new`, `resume`, or `fork`), which is forwarded on the envelope when available |
+Tool names come from the host event. Built-in tools are not examples or a guaranteed closed set. Wildcard events match custom tool names too.
 
 ### Exact `file.changed` behavior
 
@@ -282,11 +271,11 @@ actions:
         path: README.md
 ```
 
-Exact PI behavior:
+Exact Pi and OMP behavior:
 
 - this does not imperatively execute the tool
-- it sends a follow-up message into the current PI session saying to use that tool with those arguments
-- cross-session targeting is not available on PI
+- Pi or OMP receives a follow-up prompt in the current matching session asking it to use that tool with those arguments
+- cross-session targeting is not available
 
 ### `notify`
 
@@ -313,7 +302,7 @@ Levels:
 - `warning`
 - `error`
 
-On PI, `success` is mapped to `info` because the UI API does not expose a separate success level. Notifications run whenever the current context reports `ctx.hasUI` and exposes `ctx.ui.notify`, including RPC UI contexts in Pi 0.79+; no-UI/headless contexts degrade without throwing.
+On both hosts, `success` is mapped to `info` because the shared UI API does not expose a separate success level. Notifications run whenever the current context reports `ctx.hasUI` and exposes `ctx.ui.notify`; no-UI/headless contexts degrade without throwing.
 
 ### `confirm`
 
@@ -327,11 +316,11 @@ actions:
 Exact behavior:
 
 - `message` is required
-- `title` is optional; PI uses `Confirm` when omitted
+- `title` is optional; the adapter uses `Confirm` when omitted
 - if the user rejects on a `tool.before.*` hook, the tool call is blocked
 - on non-blocking events, rejection does not abort the event and later actions can still run
-- confirm runs whenever the current context reports `ctx.hasUI` and exposes `ctx.ui.confirm`, including RPC UI contexts in Pi 0.79+
-- in no-UI/headless PI, confirm denies by default unless `PI_YAML_HOOKS_CONFIRM_AUTO_APPROVE=1`
+- confirm runs whenever the current context reports `ctx.hasUI` and exposes `ctx.ui.confirm`
+- without UI, confirm denies by default unless `PI_YAML_HOOKS_CONFIRM_AUTO_APPROVE=1`
 
 ### `setStatus`
 
@@ -352,7 +341,7 @@ actions:
 
 Exact behavior:
 
-- this updates a PI status/status-bar slot when the current context reports `ctx.hasUI` and exposes `ctx.ui.setStatus`, including RPC UI contexts in Pi 0.79+
+- this updates a status/status-bar slot when the current context reports `ctx.hasUI` and exposes `ctx.ui.setStatus`
 - status entries are keyed per hook as `pi-yaml-hooks:<hook-id-or-fallback>@<source-file>`
 - when `id` is present, it contributes to a stable per-hook key without colliding with the same id reused in another file
 - when `id` is absent, pi-yaml-hooks falls back to a deterministic source-location key so hooks in the same file do not collide
@@ -526,26 +515,24 @@ These environment variables are injected into every `bash` hook:
 
 The process working directory is the current project directory.
 
-By default, bash hooks inherit the full PI process environment for backwards compatibility. Set `PI_YAML_HOOKS_ENV_ALLOWLIST` to a comma-separated list to opt into filtered inheritance. In allowlist mode, only named inherited variables are passed; `PATH` and `HOME` are not special and must be listed explicitly if a hook needs them. The PI/OPENCODE context variables above are always injected.
+By default, bash hooks inherit the full host process environment for backwards compatibility. Set `PI_YAML_HOOKS_ENV_ALLOWLIST` to a comma-separated list to opt into filtered inheritance. In allowlist mode, only named inherited variables are passed; `PATH` and `HOME` are not special and must be listed explicitly if a hook needs them. The PI/OPENCODE context variables above are always injected.
 
 Async hook lanes are bounded: each lane keeps at most `PI_YAML_HOOKS_ASYNC_MAX_PENDING` pending runs (default `1000`) and drops additional queued runs with a warning. Set `PI_YAML_HOOKS_ASYNC_WATCHDOG_MS` to a positive millisecond value to log a `watchdog_timeout` warning for a still-running async hook; it does not cancel the hook, and the lane remains occupied until it settles.
 
-## PI compatibility smoke-check checklist
+## Dual-host compatibility checks
 
-Use the repeatable runtime checklist in [`maintaining.md`](./maintaining.md) for real PI verification before widening SDK support or changing session, UI, prompt, command, or tool-event behavior. The local harness lives in [`scripts/smoke/`](../scripts/smoke/) and creates an evidence file for future release updates.
+Use the repeatable host matrix and runtime smoke gates in [`maintaining.md`](./maintaining.md) before changing event, lifecycle, UI, prompt, command, storage, or host-version claims.
 
-For a real PI 0.79-compatible run, verify these compatibility-sensitive surfaces:
+The current evidence separates compile compatibility from live runtime proof:
 
-- `before_agent_start` appends the hook-awareness note when `PI_YAML_HOOKS_PROMPT_AWARENESS` is not `0`
-- no-UI/headless mode still mentions degraded UI actions in that prompt note, while RPC UI mode can deliver `notify`, `confirm`, and `setStatus` when `ctx.hasUI` is true
-- `/hooks-status`, `/hooks-validate`, and `/hooks-reload` work; the Pi 0.80-capable TUI path persists diagnostics as custom entries outside model context, while older or non-TUI paths retain custom messages
-- `tool.before.bash`, `tool.after.read`, `tool.after.write`, and synthesized `file.changed` events reach smoke hooks
-- `tool:` actions produce a follow-up prompt in the current PI session, not imperative tool execution
-- `PI_YAML_HOOKS_ENABLE_USER_BASH=1` routes human `!` / `!!` commands through `tool.before.bash` only
-- `/new` triggers lossy cleanup via `session.deleted` and a fresh `session.created`
-- `/resume` and `/fork` do not re-fire `session.created` for an existing session re-entry
-- `/new`, `/resume`, `/fork`, and `/quit` do not double-run `session.deleted` cleanup when PI emits both `session_before_switch` and `session_shutdown`
-- Future PI minor lines (e.g. `0.80.x`) remain gated until `npm run compat:sdk-matrix:future` and the runtime smoke both pass, including the no-builtin-tools check
+- Pi compatibility remains pinned to the `0.74.0` and `0.79.3` SDK matrix. A live Pi `0.80.7` smoke passed, but that observation alone does not widen the compatibility claim.
+- OMP compile, internal-suite, package-install, RPC, and TUI smoke evidence is pinned to `17.0.1`.
+- Pi startup/new and OMP startup/new produce `session.created`; resume/fork do not.
+- OMP derives idle from the post-stop `agent_end`, after continuation-capable `session_stop` handlers have settled.
+- Both hosts prove `tool.before.bash`, `tool.after.read`, `tool.after.write`, synthesized `file.changed`, current-session `tool:` follow-up prompts, opt-in `user_bash`, UI capability degradation, and lifecycle cleanup.
+- OMP fallback tests prove a legacy `.pi` project config still requires OMP trust. Pi trust never authorizes it.
+
+The scripts and exact evidence required before widening either host claim are documented in [`maintaining.md`](./maintaining.md).
 
 ## Unsupported and advisory cases
 
@@ -553,36 +540,22 @@ For a real PI 0.79-compatible run, verify these compatibility-sensitive surfaces
 |---|---|
 | `command:` action | hard load error; hook is dropped |
 | `runIn: main` with `tool:`, `notify:`, `confirm:`, or `setStatus:` | hard load error; hook is dropped |
-| `tool.before.multiedit`, `tool.before.patch`, `tool.before.apply_patch` without matching custom tools | advisory only; they will not fire on stock PI |
-| `session.deleted` | supported but lossy |
-| `confirm:` in headless mode | deny by default |
+| `tool.before.<name>` without a host tool of that name | advisory only; it will not fire |
+| `session.deleted` | supported but lossy; reason is opaque telemetry |
+| `confirm:` without a UI capability | deny by default |
 
 ## Debug logging
 
-When you start PI with:
+When you start either host with `PI_YAML_HOOKS_DEBUG=1`, `pi-yaml-hooks` writes persistent NDJSON logs under the active agent directory:
 
-```bash
-PI_YAML_HOOKS_DEBUG=1 pi
-```
+| Host | Default log |
+|---|---|
+| Pi | `~/.pi/agent/logs/pi-yaml-hooks.ndjson` |
+| OMP default profile | `~/.omp/agent/logs/pi-yaml-hooks.ndjson` |
+| OMP named profile | `~/.omp/profiles/<profile>/agent/logs/pi-yaml-hooks.ndjson` |
 
-`pi-yaml-hooks` writes persistent NDJSON logs to:
+A non-empty `PI_YAML_HOOKS_LOG_FILE` overrides every default; an empty or whitespace-only value is treated as unset. For active profile paths, trust diagnostics, `/hooks-tail-log`, and host-aware tail commands, see [`debugging-hooks.md`](./debugging-hooks.md).
 
-```text
-~/.pi/agent/logs/pi-yaml-hooks.ndjson
-```
-
-For the full environment-variable reference (debug logging, log level, log file, stderr mirroring, and other knobs), see [`setup.md`](./setup.md#environment-variables). The easiest way to inspect the log is:
-
-```bash
-./scripts/tail-hook-log.sh
-```
-
-For focused debugging, filter by hook or event:
-
-```bash
-./scripts/tail-hook-log.sh --hook load-writer-skill-when-markdown-changes
-./scripts/tail-hook-log.sh --event session.idle
-```
 
 ## Best next steps
 

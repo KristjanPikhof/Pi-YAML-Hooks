@@ -317,7 +317,7 @@ export interface HostAdapter {
    * user approved, `false` = user rejected (treated as a blocking result
    * for pre-tool hooks, same as exit-code-2 from a bash action).
    */
-  confirm?(options: { title?: string; message: string }): boolean | Promise<boolean>
+  confirm?(options: { title?: string; message: string; timeout?: number }): boolean | Promise<boolean>
   /**
    * Set a status-bar entry for the given hookId. Pass an empty string to
    * clear; hosts without a status surface may omit this.

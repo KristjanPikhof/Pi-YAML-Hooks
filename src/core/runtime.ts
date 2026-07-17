@@ -3,7 +3,10 @@ import { statSync } from "node:fs"
 
 import { executeBashHook } from "./bash-executor.js"
 import type { BashExecutionRequest, BashHookResult } from "./bash-types.js"
-import { discoverHookConfigEntries } from "./config-paths.js"
+import {
+  resolveHookConfigWatchPaths,
+  type HookConfigDiscoveryOptions,
+} from "./config-paths.js"
 import { loadDiscoveredHooksSnapshot } from "./load-hooks.js"
 import { getPiHooksLogger } from "./logger.js"
 import { abortSession, isHostDiedError } from "./runtime/actions.js"
@@ -56,6 +59,11 @@ export interface RuntimeEventEnvelope {
   }
 }
 
+interface SynchronousBashBudget {
+  readonly deadline: number
+  readonly now: () => number
+}
+
 export interface RuntimeActionContext {
   readonly files?: readonly string[]
   readonly changes?: readonly FileChange[]
@@ -64,6 +72,7 @@ export interface RuntimeActionContext {
   readonly sourceSessionID?: string
   readonly targetSessionID?: string
   readonly pathMatchContext?: PathMatchContext
+  readonly synchronousBashBudget?: SynchronousBashBudget
 }
 
 export interface PathMatchContext {
@@ -84,6 +93,8 @@ export interface HookMatchDecision {
   readonly details?: Record<string, unknown>
 }
 
+export const OMP_SYNCHRONOUS_BASH_BUDGET_MS = 20_000
+
 type ExecuteBashHook = (request: BashExecutionRequest) => Promise<BashHookResult>
 
 export interface HooksRuntime {
@@ -103,14 +114,23 @@ export interface CreateHooksRuntimeOptions {
   readonly directory: string
   readonly hooks?: HookMap
   readonly initialSignature?: string
+  readonly initialFiles?: readonly string[]
+  readonly initialWatchPaths?: readonly string[]
   readonly reloadDiscoveredHooks?: boolean
   readonly executeBash?: ExecuteBashHook
+  readonly synchronousBashBudgetMs?: number
+  readonly now?: () => number
+  readonly configDiscovery?: Omit<HookConfigDiscoveryOptions, "projectDir">
 }
 
 export function createHooksRuntime(host: HostAdapter, options: CreateHooksRuntimeOptions): HooksRuntime {
   const projectDir = options.directory
   const logger = getPiHooksLogger()
   const shouldReloadDiscoveredHooks = options.reloadDiscoveredHooks === true
+  const configDiscovery: HookConfigDiscoveryOptions = {
+    ...options.configDiscovery,
+    projectDir,
+  }
 
   let loaded = options.hooks
     ? {
@@ -118,7 +138,7 @@ export function createHooksRuntime(host: HostAdapter, options: CreateHooksRuntim
         errors: [] as HookValidationError[],
         signature: options.initialSignature ?? "manual",
       }
-    : loadDiscoveredHooksSnapshot({ projectDir })
+    : loadDiscoveredHooksSnapshot(configDiscovery)
   if (loaded.errors.length > 0) {
     console.error(formatHookLoadErrors(loaded.errors))
     logger.error("config_load", "Initial hook load reported validation errors.", {
@@ -136,20 +156,27 @@ export function createHooksRuntime(host: HostAdapter, options: CreateHooksRuntim
   let hooks = loaded.hooks
   let lastLoadedSignature = loaded.signature
   let lastReportedInvalidSignature = loaded.errors.length > 0 ? loaded.signature : undefined
-  // P1-1 fix: stat-only fingerprint computed from the most recently loaded
-  // file set so refreshHooks can short-circuit without re-entering the
-  // (heavier) load-hooks parsing path on every event. The fingerprint covers
-  // the discovered roots PLUS any imports that the previous load resolved,
-  // so editing an imported file still busts the cache. The first refresh
-  // after construction uses the file set captured by the initial discovery
-  // call above (or, for `options.hooks`, an empty set so the gate below
-  // continues to short-circuit).
-  let lastLoadedFiles: readonly string[] = options.hooks
+  // The watch set contains every config candidate, the trust store, repository
+  // topology markers, and imports resolved by the last load. It is built once
+  // and only rediscovered after a stat change, keeping git/project discovery
+  // entirely off unchanged event dispatches (including empty configurations).
+  const initiallyLoadedFiles: readonly string[] = "files" in loaded
+    ? loaded.files
+    : options.initialFiles ?? []
+  const initiallyLoadedWatchPaths: readonly string[] = "watchPaths" in loaded
+    ? loaded.watchPaths
+    : mergeUnique(initiallyLoadedFiles, options.initialWatchPaths ?? [])
+  let watchedFiles = options.hooks && !shouldReloadDiscoveredHooks
     ? []
-    : (loaded as { files?: readonly string[] }).files ?? []
-  let lastStatFingerprint = computeStatFingerprint(lastLoadedFiles)
+    : mergeUnique(resolveHookConfigWatchPaths(configDiscovery).paths, initiallyLoadedWatchPaths)
+  let lastStatFingerprint = computeStatFingerprint(watchedFiles)
   const state = new SessionStateStore()
   const runBashHook: ExecuteBashHook = options.executeBash ?? ((request) => host.runBash(request))
+  const now = options.now ?? Date.now
+  const createSynchronousBashBudget = (): SynchronousBashBudget | undefined =>
+    options.synchronousBashBudgetMs === undefined
+      ? undefined
+      : { deadline: now() + options.synchronousBashBudgetMs, now }
   const dispatchStates = new Map<string, DispatchState>()
   const asyncQueues = new Map<string, AsyncQueueState>()
   const actionRecursionGuards = new AsyncLocalStorage<Set<string>>()
@@ -221,32 +248,29 @@ export function createHooksRuntime(host: HostAdapter, options: CreateHooksRuntim
       return hooks
     }
 
-    // P1-1 fix: compute a cheap stat fingerprint over the previously loaded
-    // file set plus the currently discovered roots. If nothing has changed
-    // we skip the YAML parse + import expansion entirely. Discovered roots
-    // are included so a newly added (or removed) hooks.yaml still triggers
-    // a real reload — `statSync` returns "missing" for absent paths, which
-    // changes the fingerprint as expected.
-    const discoveredEntries = discoverHookConfigEntries({ projectDir })
-    const discoveredFiles = discoveredEntries.map((entry) => entry.filePath)
-    const fingerprintFiles = mergeUnique(lastLoadedFiles, discoveredFiles)
-    const nextStatFingerprint = computeStatFingerprint(fingerprintFiles)
-    if (nextStatFingerprint === lastStatFingerprint && lastLoadedFiles.length > 0) {
+    const nextStatFingerprint = computeStatFingerprint(watchedFiles)
+    if (nextStatFingerprint === lastStatFingerprint) {
       return hooks
     }
 
-    const nextLoaded = loadDiscoveredHooksSnapshot({ projectDir })
-    lastLoadedFiles = nextLoaded.files
-    lastStatFingerprint = computeStatFingerprint(mergeUnique(nextLoaded.files, discoveredFiles))
+    const nextWatchPaths = resolveHookConfigWatchPaths(configDiscovery).paths
+    const nextLoaded = loadDiscoveredHooksSnapshot(configDiscovery)
+    watchedFiles = mergeUnique(nextWatchPaths, nextLoaded.watchPaths)
+    lastStatFingerprint = computeStatFingerprint(watchedFiles)
     if (nextLoaded.signature === lastLoadedSignature) {
       return hooks
     }
 
     lastLoadedSignature = nextLoaded.signature
     if (nextLoaded.errors.length > 0) {
+      const retainedHooks = retainHooksFromAuthorizedFiles(hooks, new Set(nextLoaded.files))
+      if (retainedHooks !== hooks) {
+        hooks = retainedHooks
+        globMatcherCache = createGlobMatcherCache(nextLoaded.signature)
+      }
       if (lastReportedInvalidSignature !== nextLoaded.signature) {
         console.error(formatHookReloadErrors(nextLoaded.errors))
-        logger.error("config_reload", "Hook reload failed; keeping last known good hooks.", {
+        logger.error("config_reload", "Hook reload failed; keeping last known good hooks from authorized sources.", {
           cwd: projectDir,
           details: {
             signature: nextLoaded.signature,
@@ -289,6 +313,7 @@ export function createHooksRuntime(host: HostAdapter, options: CreateHooksRuntim
       eventInput: ToolExecuteBeforeInput,
       eventOutput: ToolExecuteBeforeOutput,
     ): Promise<void> => {
+      const synchronousBashBudget = createSynchronousBashBudget()
       const activeHooks = refreshHooks()
       const sessionID = eventInput.sessionID
       if (!sessionID) {
@@ -308,6 +333,7 @@ export function createHooksRuntime(host: HostAdapter, options: CreateHooksRuntim
       const result = await invokeDispatchToolHooks(activeHooks, "before", eventInput.tool, sessionID, {
         toolName: eventInput.tool,
         toolArgs,
+        synchronousBashBudget,
       })
 
       if (result.blocked) {
@@ -338,6 +364,7 @@ export function createHooksRuntime(host: HostAdapter, options: CreateHooksRuntim
       eventInput: ToolExecuteAfterInput,
       _eventOutput?: unknown,
     ): Promise<void> => {
+      const synchronousBashBudget = createSynchronousBashBudget()
       const activeHooks = refreshHooks()
       const sessionID = eventInput.sessionID
       if (!sessionID) {
@@ -365,6 +392,7 @@ export function createHooksRuntime(host: HostAdapter, options: CreateHooksRuntim
           changes,
           toolName: eventInput.tool,
           toolArgs,
+          synchronousBashBudget,
         })
       }
 
@@ -373,6 +401,7 @@ export function createHooksRuntime(host: HostAdapter, options: CreateHooksRuntim
         changes,
         toolName: eventInput.tool,
         toolArgs,
+        synchronousBashBudget,
       })
 
       logger.debug("dispatch_end", "Finished post-tool dispatch.", {
@@ -388,6 +417,7 @@ export function createHooksRuntime(host: HostAdapter, options: CreateHooksRuntim
       eventInput: ToolExecuteBeforeInput,
       eventOutput: ToolExecuteBeforeOutput,
     ): Promise<void> => {
+      const synchronousBashBudget = createSynchronousBashBudget()
       const activeHooks = refreshHooks()
       const sessionID = eventInput.sessionID
       if (!sessionID) {
@@ -398,6 +428,7 @@ export function createHooksRuntime(host: HostAdapter, options: CreateHooksRuntim
       const result = await invokeDispatchToolHooks(activeHooks, "before", eventInput.tool, sessionID, {
         toolName: eventInput.tool,
         toolArgs,
+        synchronousBashBudget,
       })
 
       if (result.blocked) {
@@ -409,6 +440,7 @@ export function createHooksRuntime(host: HostAdapter, options: CreateHooksRuntim
     },
 
     event: async ({ event }: RuntimeEventEnvelope): Promise<void> => {
+      const synchronousBashBudget = createSynchronousBashBudget()
       const activeHooks = refreshHooks()
       const properties = event.properties ?? {}
 
@@ -432,7 +464,7 @@ export function createHooksRuntime(host: HostAdapter, options: CreateHooksRuntim
           sessionId: sessionID,
           details: { parentID: parentID ?? null },
         })
-        await invokeDispatchHooks(activeHooks, "session.created", sessionID, {})
+        await invokeDispatchHooks(activeHooks, "session.created", sessionID, { synchronousBashBudget })
         return
       }
 
@@ -458,7 +490,7 @@ export function createHooksRuntime(host: HostAdapter, options: CreateHooksRuntim
           sessionId: sessionID,
           ...(deletedReason ? { details: { reason: deletedReason } } : {}),
         })
-        await invokeDispatchHooks(activeHooks, "session.deleted", sessionID, {})
+        await invokeDispatchHooks(activeHooks, "session.deleted", sessionID, { synchronousBashBudget })
         return
       }
 
@@ -479,7 +511,7 @@ export function createHooksRuntime(host: HostAdapter, options: CreateHooksRuntim
         state.beginIdleDispatch(sessionID, changes)
 
         try {
-          await invokeDispatchHooks(activeHooks, "session.idle", sessionID, { files, changes })
+          await invokeDispatchHooks(activeHooks, "session.idle", sessionID, { files, changes, synchronousBashBudget })
           state.consumeFileChanges(sessionID, changes)
           logger.debug("idle_changes_consumed", "Consumed idle changes after dispatch.", {
             cwd: projectDir,
@@ -535,10 +567,29 @@ export function createHooksRuntime(host: HostAdapter, options: CreateHooksRuntim
 
 
 
-// P1-1 helper: cheap stat-based fingerprint shared by the runtime-side
-// refreshHooks short-circuit. Returns a stable string that changes whenever
-// any of the listed files' mtime/size changes, or whenever a file appears
-// or disappears. Mirrors the shape used by load-hooks' own snapshot cache.
+function retainHooksFromAuthorizedFiles(hooks: HookMap, authorizedFiles: ReadonlySet<string>): HookMap {
+  let retainedHooks: HookMap | undefined
+
+  for (const [event, eventHooks] of hooks) {
+    if (eventHooks.every((hook) => authorizedFiles.has(hook.source.filePath))) {
+      continue
+    }
+    const retainedEventHooks = eventHooks.filter((hook) => authorizedFiles.has(hook.source.filePath))
+
+    retainedHooks ??= new Map(hooks)
+    if (retainedEventHooks.length > 0) {
+      retainedHooks.set(event, retainedEventHooks)
+    } else {
+      retainedHooks.delete(event)
+    }
+  }
+
+  return retainedHooks ?? hooks
+}
+
+// Cheap stat-only fingerprint for the runtime refresh gate. Nanosecond mtime
+// and ctime distinguish rapid same-size rewrites that can share millisecond
+// timestamps, while inode/mode cover atomic replacement and metadata changes.
 function computeStatFingerprint(files: readonly string[]): string {
   if (files.length === 0) {
     return ""
@@ -546,8 +597,8 @@ function computeStatFingerprint(files: readonly string[]): string {
   const parts: string[] = []
   for (const filePath of files) {
     try {
-      const stat = statSync(filePath)
-      parts.push(`${filePath}|${stat.mtimeMs}|${stat.size}`)
+      const stat = statSync(filePath, { bigint: true })
+      parts.push(`${filePath}|${stat.mtimeNs}|${stat.ctimeNs}|${stat.size}|${stat.ino}|${stat.mode}`)
     } catch {
       parts.push(`${filePath}|missing`)
     }

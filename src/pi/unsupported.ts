@@ -9,13 +9,15 @@ import type {
 import { setActiveHookPolicy } from "../core/load-hooks.js"
 
 /**
- * PI-specific diagnostics for hook configurations loaded from OpenCode-compatible
- * hooks.yaml files. Some YAML features are unsupported on PI (or behave
- * differently) — we surface them either as hard errors (block the load) or as
- * advisories (load succeeds, user is informed).
+ * Host compatibility diagnostics for hook configurations loaded from
+ * OpenCode-compatible hooks.yaml files. Some YAML features are unsupported by
+ * the PI-compatible extension API (or behave differently), while tool-name
+ * availability depends on the selected host.
  */
 
 export type UnsupportedDiagnostics = HookPolicyDiagnostics
+
+export type UnsupportedDiagnosticsHost = "pi" | "omp"
 
 const COMMAND_ACTION_ERROR =
   "command: actions are not supported on PI. PI exposes no API to invoke slash commands from event handlers. Remove this action or use bash instead."
@@ -29,24 +31,67 @@ const RUN_IN_MAIN_NON_BASH_ERROR =
 const SCOPE_CHILD_ADVISORY =
   "scope: child filters via session ancestry (parentSession). Fires only in child sessions."
 
-const TOOL_NAME_NEVER_MATCH_ADVISORY =
+const PI_TOOL_NAME_NEVER_MATCH_ADVISORY =
   "PI built-ins are bash, read, edit, write, grep, find, ls. This tool name will never match unless you install a matching custom tool."
 
-// P3-4: switch from a hard-coded deny-list (multiedit, patch, apply_patch)
-// to an allow-list of PI's known built-in tools. Anything outside this set
-// (and outside the wildcard "*") earns the "never match" advisory. The list
-// is intentionally conservative — these are the tool names that pi-yaml-hooks
-// has been observed dispatching against in PI runtime traces. Adding new
-// PI built-ins here is a doc-only change.
-const PI_BUILTIN_TOOLS: ReadonlySet<string> = new Set<string>([
-  "bash",
-  "read",
-  "edit",
-  "write",
-  "grep",
-  "find",
-  "ls",
-])
+const OMP_TOOL_NAME_NEVER_MATCH_ADVISORY =
+  "OMP built-ins include read, bash, edit, ast_grep, ast_edit, ask, debug, eval, github, glob, grep, lsp, inspect_image, browser, checkpoint, rewind, task, hub, todo, web_search, write, memory_edit, retain, recall, reflect, learn, manage_skill, yield, and goal. This tool name will never match unless you install a matching custom tool."
+
+interface ToolNameDiagnosticsPolicy {
+  readonly builtinTools: Readonly<Record<string, true>>
+  readonly neverMatchAdvisory: string
+}
+
+const PI_TOOL_NAME_POLICY: ToolNameDiagnosticsPolicy = {
+  builtinTools: {
+    bash: true,
+    read: true,
+    edit: true,
+    write: true,
+    grep: true,
+    find: true,
+    ls: true,
+  },
+  neverMatchAdvisory: PI_TOOL_NAME_NEVER_MATCH_ADVISORY,
+}
+
+// OMP 17.0.1 built-ins, including its hidden but tool-addressable yield and goal
+// tools. Keep this separate from PI's conservative allow-list: adding OMP names
+// to PI would suppress useful warnings for hooks that can never fire there.
+const OMP_TOOL_NAME_POLICY: ToolNameDiagnosticsPolicy = {
+  builtinTools: {
+    read: true,
+    bash: true,
+    edit: true,
+    ast_grep: true,
+    ast_edit: true,
+    ask: true,
+    debug: true,
+    eval: true,
+    github: true,
+    glob: true,
+    grep: true,
+    lsp: true,
+    inspect_image: true,
+    browser: true,
+    checkpoint: true,
+    rewind: true,
+    task: true,
+    hub: true,
+    todo: true,
+    web_search: true,
+    write: true,
+    memory_edit: true,
+    retain: true,
+    recall: true,
+    reflect: true,
+    learn: true,
+    manage_skill: true,
+    yield: true,
+    goal: true,
+  },
+  neverMatchAdvisory: OMP_TOOL_NAME_NEVER_MATCH_ADVISORY,
+}
 
 function prefixWithSource(hook: HookConfig, message: string): string {
   const src = hook.source
@@ -119,14 +164,17 @@ export function diagnoseScopeChild(hook: HookConfig): string[] {
 }
 
 /**
- * tool.before.<name> / tool.after.<name> where <name> is anything outside the
- * PI_BUILTIN_TOOLS allow-list (and not the "*" wildcard) → advisory; will
- * never match on PI. P3-4 flipped this from a deny-list of three known
- * OpenCode tools to a positive allow-list so users see the warning for any
- * unknown tool name (typos like `tool.before.write_file`, OpenCode-only
- * names, hypothetical PI extensions that have not landed).
+ * tool.before.<name> / tool.after.<name> where <name> is outside the active
+ * host's built-in allow-list (and not the "*" wildcard) → advisory. Custom
+ * tools remain possible, so this is deliberately advisory rather than an error.
+ *
+ * The host is explicit instead of treating OMP's larger tool set as valid on
+ * PI, where those names would never match without a custom tool.
  */
-export function diagnoseUnsupportedToolNameEvents(hook: HookConfig): string[] {
+export function diagnoseUnsupportedToolNameEvents(
+  hook: HookConfig,
+  host: UnsupportedDiagnosticsHost = "pi",
+): string[] {
   const event: HookEvent = hook.event
   if (typeof event !== "string") {
     return []
@@ -139,31 +187,38 @@ export function diagnoseUnsupportedToolNameEvents(hook: HookConfig): string[] {
   if (toolName === "*") {
     return []
   }
-  if (PI_BUILTIN_TOOLS.has(toolName)) {
+  const policy = host === "omp" ? OMP_TOOL_NAME_POLICY : PI_TOOL_NAME_POLICY
+  if (policy.builtinTools[toolName] === true) {
     return []
   }
-  return [prefixWithSource(hook, TOOL_NAME_NEVER_MATCH_ADVISORY)]
+  return [prefixWithSource(hook, policy.neverMatchAdvisory)]
 }
 
 /**
- * Collect PI-specific diagnostics across every hook in the given map.
+ * Collect compatibility diagnostics across every hook in the given map.
  * Errors are intended to be appended to ParsedHooksFile.errors (load-blocking).
  * Advisories are intended to be surfaced via console.info and/or a new
  * `advisories` field on ParsedHooksFile (load succeeds).
+ *
+ * Importing this module installs PI's policy for the default entry point. OMP's
+ * entry point explicitly selects ompHookPolicy after successful host
+ * registration, keeping OMP-only tool names out of PI's allow-list.
  */
-// PI policy registered with the host-agnostic core loader. P2 #22: the loader
-// no longer imports from `src/pi/*`, so callers that want PI's
-// "unsupported on PI" diagnostics must side-effect-import this module. The
-// production entry point (src/index.ts) does so unconditionally; PI test
-// files that load `parseHooksFile` directly should also import this module
-// to install the policy.
-export const piHookPolicy: HookPolicy = {
-  diagnose: (hookMap: HookMap): HookPolicyDiagnostics => collectUnsupportedDiagnostics(hookMap),
+export function createUnsupportedHookPolicy(host: UnsupportedDiagnosticsHost): HookPolicy {
+  return {
+    diagnose: (hookMap: HookMap): HookPolicyDiagnostics => collectUnsupportedDiagnostics(hookMap, host),
+  }
 }
+
+export const piHookPolicy: HookPolicy = createUnsupportedHookPolicy("pi")
+export const ompHookPolicy: HookPolicy = createUnsupportedHookPolicy("omp")
 
 setActiveHookPolicy(piHookPolicy)
 
-export function collectUnsupportedDiagnostics(hookMap: HookMap): UnsupportedDiagnostics {
+export function collectUnsupportedDiagnostics(
+  hookMap: HookMap,
+  host: UnsupportedDiagnosticsHost = "pi",
+): UnsupportedDiagnostics {
   const errors: string[] = []
   const advisories: string[] = []
   const invalidHooks = new Set<HookConfig>()
@@ -180,7 +235,7 @@ export function collectUnsupportedDiagnostics(hookMap: HookMap): UnsupportedDiag
 
       advisories.push(...diagnoseToolActions(hook))
       advisories.push(...diagnoseScopeChild(hook))
-      advisories.push(...diagnoseUnsupportedToolNameEvents(hook))
+      advisories.push(...diagnoseUnsupportedToolNameEvents(hook, host))
     }
   }
 

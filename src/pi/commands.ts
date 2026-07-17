@@ -6,6 +6,7 @@ import {
   mkdirSync,
   openSync,
   readFileSync,
+  lstatSync,
   realpathSync,
   renameSync,
   rmSync,
@@ -13,7 +14,6 @@ import {
   writeFileSync,
   writeSync,
 } from "node:fs"
-import os from "node:os"
 import path from "node:path"
 import { fileURLToPath } from "node:url"
 
@@ -21,9 +21,11 @@ import type { ExtensionAPI, ExtensionCommandContext } from "@earendil-works/pi-c
 
 import { getPiHooksLogFilePath } from "../core/logger.js"
 import {
-  resolveProjectHookResolution,
   resolveHookConfigPaths,
+  resolveProjectHookResolution,
+  resolveTrustedProjectsFilePath,
 } from "../core/config-paths.js"
+import { getHookHostProfile } from "../core/host-profile.js"
 import {
   formatHookLoadSummary,
   loadDiscoveredHooksSnapshot,
@@ -42,6 +44,7 @@ export function registerCommands(pi: ExtensionAPI): void {
         `Active summary: ${formatHookLoadSummary({ sources: status.active.sources })}`,
         `Global config: ${formatStatusPath(status.paths.global)}`,
         `Project config: ${formatStatusPath(status.projectStatusPath)}`,
+        `Trust store: ${status.trustFilePath}`,
         `Project trusted: ${status.projectTrusted ? "yes" : "no"}`,
         `Hook log: ${status.logFilePath}`,
       ]
@@ -103,13 +106,13 @@ export function registerCommands(pi: ExtensionAPI): void {
       if (validation.project.exists && !validation.project.trusted) {
         if (validation.project.errors.length === 0) {
           lines.push(`Project hook file is valid but untrusted: ${validation.project.path}`)
-          lines.push('Run /hooks-trust to activate it without editing trusted-projects.json by hand.')
+          lines.push(`Run /hooks-trust to add this project to ${resolveTrustedProjectsFilePath()}.`)
         } else {
           lines.push(`Project hook file is untrusted and has validation errors: ${validation.project.path}`)
           lines.push(...validation.project.errors.map(formatValidationError))
         }
       } else if (!validation.project.exists) {
-        lines.push("No project hook file is present for the current repo/worktree scope.")
+        lines.push(`No project hook file is present for the current repo/worktree scope. Create ${validation.project.path}.`)
       }
 
       const level =
@@ -151,15 +154,16 @@ export function registerCommands(pi: ExtensionAPI): void {
       const projectDir = path.resolve(ctx.cwd)
       const project = resolveProjectHookResolution({ projectDir })
       if (!project?.projectConfigPath || !existsSync(project.projectConfigPath)) {
+        const projectConfigPath = project?.projectConfigPath ?? resolveNativeProjectConfigPath(projectDir)
         notifyCommand(
           ctx,
-          `No project hook file was found for ${projectDir}. Create ${project?.projectConfigPath ?? path.join(projectDir, ".pi", "hook", "hooks.yaml")} first, then run /hooks-trust again.`,
+          `No project hook file was found for ${projectDir}. Create ${projectConfigPath} first, then run /hooks-trust again.`,
           "warning",
         )
         return
       }
 
-      const trustFile = getTrustedProjectsFilePath()
+      const trustFile = resolveTrustedProjectsFilePath()
       const trustAnchor = project.canonicalAnchorDir
       const updated = updateTrustedProjectsWithLock(trustFile, trustAnchor)
       if (!updated.ok) {
@@ -173,7 +177,7 @@ export function registerCommands(pi: ExtensionAPI): void {
 
       notifyCommand(
         ctx,
-        `Trusted project hooks for ${project.anchorDir}. Run /hooks-validate or trigger another PI event to confirm the active hook set.`,
+        `Trusted project hooks for ${project.anchorDir}. Trust store: ${trustFile}. Run /hooks-validate or trigger another PI event to confirm the active hook set.`,
         "info",
       )
     },
@@ -223,7 +227,10 @@ export function registerCommands(pi: ExtensionAPI): void {
         const scriptPath = locateTailHookLogScript()
         if (scriptPath) {
           try {
-            const child = spawn("bash", [scriptPath], { detached: true, stdio: "inherit" })
+            const child = spawn("bash", [scriptPath, "--file", logFilePath], {
+              detached: true,
+              stdio: "inherit",
+            })
             child.on("error", (error) => {
               // eslint-disable-next-line no-console
               console.error(`[pi-yaml-hooks] tail-hook-log.sh failed to start: ${error.message}`)
@@ -270,6 +277,7 @@ interface HooksStatus {
   readonly paths: ReturnType<typeof resolveHookConfigPaths>
   readonly active: ReturnType<typeof loadDiscoveredHooksSnapshot>
   readonly logFilePath: string
+  readonly trustFilePath: string
 }
 
 function getHooksStatus(ctx: ExtensionCommandContext): HooksStatus {
@@ -277,9 +285,9 @@ function getHooksStatus(ctx: ExtensionCommandContext): HooksStatus {
   const paths = resolveHookConfigPaths({ projectDir })
   const active = loadDiscoveredHooksSnapshot({ projectDir })
   const project = resolveProjectHookResolution({ projectDir })
-  const projectStatusPath =
-    project?.projectConfigPath ??
-    path.join(project?.discoveredProjectRoot ?? project?.worktreeRoot ?? projectDir, ".pi", "hook", "hooks.yaml")
+  const projectStatusPath = project?.projectConfigPath ?? resolveNativeProjectConfigPath(
+    project?.discoveredProjectRoot ?? project?.worktreeRoot ?? projectDir,
+  )
   const projectConfigExists = existsSync(projectStatusPath)
   const projectTrusted = project?.trusted ?? false
 
@@ -291,6 +299,7 @@ function getHooksStatus(ctx: ExtensionCommandContext): HooksStatus {
     paths,
     active,
     logFilePath: getPiHooksLogFilePath(),
+    trustFilePath: project?.trustFilePath ?? resolveTrustedProjectsFilePath(),
   }
 }
 
@@ -307,7 +316,7 @@ function validateHooks(ctx: ExtensionCommandContext): {
   readonly project: {
     readonly exists: boolean
     readonly trusted: boolean
-    readonly path?: string
+    readonly path: string
     readonly errors: Array<{ filePath: string; path?: string; message: string }>
   }
 } {
@@ -322,10 +331,10 @@ function validateHooks(ctx: ExtensionCommandContext): {
       .filter((source) => source.scope === "global" && source.filePath === status.paths.global)
       .map((source) => source.filePath),
   )
-  const projectPath = status.paths.project
-  const projectExists = Boolean(projectPath && existsSync(projectPath))
-  const trusted = Boolean(projectPath && activeProjectRootPaths.has(projectPath))
-  const projectErrors = projectExists && projectPath ? loadHooksFile(projectPath).errors : []
+  const projectPath = status.projectStatusPath
+  const projectExists = status.projectConfigExists
+  const trusted = activeProjectRootPaths.has(projectPath)
+  const projectErrors = projectExists ? loadHooksFile(projectPath).errors : []
 
   // P2-13: bucket every error from the active discovery result by source
   // scope. A "global" error is one whose filePath was loaded as a global
@@ -383,7 +392,7 @@ function validateHooks(ctx: ExtensionCommandContext): {
     project: {
       exists: projectExists,
       trusted,
-      ...(projectPath ? { path: projectPath } : {}),
+      path: projectPath,
       errors: projectErrors,
     },
   }
@@ -402,9 +411,10 @@ function notifyCommand(
   console.info(`[pi-yaml-hooks] ${message}`)
 }
 
-function getTrustedProjectsFilePath(): string {
-  const homeDir = process.env.HOME || process.env.USERPROFILE || os.homedir()
-  return path.join(homeDir, ".pi", "agent", "trusted-projects.json")
+
+function resolveNativeProjectConfigPath(projectDir: string): string {
+  const hostDirectory = getHookHostProfile().kind === "omp" ? ".omp" : ".pi"
+  return path.join(projectDir, hostDirectory, "hook", "hooks.yaml")
 }
 
 function readTrustedProjects(filePath: string):
@@ -432,8 +442,16 @@ function updateTrustedProjectsWithLock(filePath: string, trustAnchor: string): {
     }
 
     const normalizedCurrent = new Set(current.entries.map(canonicalizeForTrust))
-    if (!normalizedCurrent.has(trustAnchor)) {
-      const nextContent = JSON.stringify([...current.entries, trustAnchor], null, 2) + "\n"
+    let isTrustFileSymlink = false
+    try {
+      isTrustFileSymlink = lstatSync(filePath).isSymbolicLink()
+    } catch {
+      // A missing trust file is created below when the anchor is absent.
+    }
+
+    if (!normalizedCurrent.has(trustAnchor) || isTrustFileSymlink) {
+      const nextEntries = normalizedCurrent.has(trustAnchor) ? current.entries : [...current.entries, trustAnchor]
+      const nextContent = JSON.stringify(nextEntries, null, 2) + "\n"
       atomicallyWriteFile(filePath, nextContent, 0o600)
     }
     return { ok: true }

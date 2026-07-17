@@ -23,7 +23,7 @@ import type {
 } from "../runtime.js"
 import { withActionRecursionGuard } from "./recursion-guard.js"
 import { sanitizeToolArgsForSerialization, type SessionStateStore } from "../session-state.js"
-import type { BashExecutionRequest, BashHookResult } from "../bash-types.js"
+import { DEFAULT_BASH_TIMEOUT, type BashExecutionRequest, type BashHookResult } from "../bash-types.js"
 import type {
   HookAction,
   HookEvent,
@@ -291,6 +291,7 @@ const handleConfirm: ActionHandler = async ({
   projectDir,
   event,
   sessionID,
+  context,
   sourceFilePath,
   hookId,
   actionType,
@@ -300,12 +301,19 @@ const handleConfirm: ActionHandler = async ({
     return { blocked: false }
   }
 
+  const remainingBudget = context.synchronousBashBudget
+    ? Math.max(0, context.synchronousBashBudget.deadline - context.synchronousBashBudget.now())
+    : undefined
+
   try {
     if (typeof host.confirm === "function") {
-      const approved = await host.confirm({
-        ...(action.confirm.title !== undefined ? { title: action.confirm.title } : {}),
-        message: action.confirm.message,
-      })
+      const approved = remainingBudget === 0
+        ? false
+        : await host.confirm({
+            ...(action.confirm.title !== undefined ? { title: action.confirm.title } : {}),
+            message: action.confirm.message,
+            ...(remainingBudget === undefined ? {} : { timeout: remainingBudget }),
+          })
       logger.info("action_result", "Confirmation action completed.", {
         cwd: projectDir,
         event,
@@ -313,7 +321,7 @@ const handleConfirm: ActionHandler = async ({
         hookId,
         hookSource: sourceFilePath,
         action: actionType,
-        details: { title: action.confirm.title, message: action.confirm.message, approved },
+        details: { title: action.confirm.title, message: action.confirm.message, approved, timeout: remainingBudget },
       })
       if (!approved) {
         return { blocked: true, blockReason: "Blocked by user via confirm action" }
@@ -437,9 +445,16 @@ const handleBash: ActionHandler = async ({
 
   const executionDirectory = projectDir
   const config = typeof action.bash === "string" ? { command: action.bash } : action.bash
+  const requestedTimeout = config.timeout ?? DEFAULT_BASH_TIMEOUT
+  const remainingBudget = context.synchronousBashBudget
+    ? Math.max(1, context.synchronousBashBudget.deadline - context.synchronousBashBudget.now())
+    : undefined
+  const timeout = remainingBudget === undefined
+    ? config.timeout
+    : Math.min(requestedTimeout, remainingBudget)
   const result = await runBashHook({
     command: config.command,
-    timeout: config.timeout,
+    timeout,
     projectDir: executionDirectory,
     context: {
       session_id: sessionID,
@@ -461,7 +476,7 @@ const handleBash: ActionHandler = async ({
     action: actionType,
     details: {
       command: config.command,
-      timeout: config.timeout,
+      timeout,
       status: result.status,
       exitCode: result.exitCode,
       blocking: result.blocking,

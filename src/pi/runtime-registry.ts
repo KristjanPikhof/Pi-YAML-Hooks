@@ -17,13 +17,22 @@
 
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 
+import { getHookHostProfile, type HookHostKind } from "../core/host-profile.js";
 import { getPiHooksLogger } from "../core/logger.js";
 import { formatHookLoadSummary, loadDiscoveredHooksSnapshot } from "../core/load-hooks.js";
-import { createHooksRuntime, type HooksRuntime } from "../core/runtime.js";
+import {
+  createHooksRuntime,
+  OMP_SYNCHRONOUS_BASH_BUDGET_MS,
+  type HooksRuntime,
+} from "../core/runtime.js";
 import { sendHookDiagnostics } from "./diagnostics.js";
 import { createHostAdapter, type ReadonlySessionManager } from "./host-adapter.js";
 
 const MAX_CWD_ENTRIES = 8;
+
+export function resolveSynchronousBashBudgetMs(hostKind: HookHostKind): number | undefined {
+  return hostKind === "omp" ? OMP_SYNCHRONOUS_BASH_BUDGET_MS : undefined;
+}
 
 export interface RuntimeRegistry {
   getRuntimeFor(cwd: string): HooksRuntime;
@@ -166,11 +175,15 @@ export function createRuntimeRegistry(pi: ExtensionAPI): RuntimeRegistry {
         cwd,
         details: { files: loaded.files, summary, sources: loaded.sources },
       });
+      const synchronousBashBudgetMs = resolveSynchronousBashBudgetMs(getHookHostProfile().kind);
       const runtime = createHooksRuntime(host, {
         directory: cwd,
         hooks: loaded.hooks,
         initialSignature: loaded.signature,
+        initialFiles: loaded.files,
+        initialWatchPaths: loaded.watchPaths,
         reloadDiscoveredHooks: true,
+        ...(synchronousBashBudgetMs === undefined ? {} : { synchronousBashBudgetMs }),
       });
       runtimes.set(cwd, runtime);
       evictIfNeeded();

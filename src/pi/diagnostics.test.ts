@@ -227,62 +227,93 @@ const cases: Case[] = [
     },
   },
   {
-    name: "registered renderer formats title, level badge, and content",
+    name: "registered renderer returns cached width-bounded rows with theme colors",
     run: () => {
       const pi = createFakePi()
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      registerHookDiagnostics(pi as any)
+      registerHookDiagnostics(pi as never)
       const renderer = pi.renderers.get(PI_YAML_HOOKS_DIAGNOSTICS_MESSAGE_TYPE) as (
-        message: { content: string; details: { title: string; level: "info" | "warning" | "error"; sections?: Array<{ label: string; lines: string[] }> } | undefined },
+        message: {
+          content: string
+          details:
+            | {
+                title: string
+                level: "info" | "warning" | "error"
+                sections?: Array<{ label: string; lines: string[] }>
+              }
+            | undefined
+        },
         opts: { expanded: boolean },
         theme: { fg: (color: string, text: string) => string; bg: (color: string, text: string) => string },
-      ) => unknown
+      ) => { render(width: number): string[]; invalidate(): void }
 
-      let textCaptured = ""
-      // Patch in a Box-like capture by stubbing the Text/Box imports through the
-      // returned object. Since the renderer uses real pi-tui Box+Text under the
-      // hood, we can't introspect the produced node directly without pulling
-      // pi-tui in. Instead, capture the final text by wrapping the theme to
-      // record what gets coloured.
       const colorCalls: string[] = []
+      const backgroundCalls: string[] = []
       const theme = {
         fg: (color: string, text: string) => {
           colorCalls.push(`${color}:${text}`)
-          return text
+          return `\x1b[33m${text}\x1b[39m`
         },
-        bg: (_color: string, text: string) => {
-          textCaptured = text
-          return text
+        bg: (color: string, text: string) => {
+          backgroundCalls.push(`${color}:${text}`)
+          return `\x1b[48;5;236m${text}\x1b[49m`
         },
       }
-
-      try {
-        renderer(
-          {
-            content: "the content",
-            details: {
-              title: "diag title",
-              level: "warning",
-              sections: [{ label: "sec", lines: ["s1", "s2"] }],
-            },
+      const component = renderer(
+        {
+          content: "content that must wrap without overflowing\nemoji: 🙂",
+          details: {
+            title: "diagnostic title",
+            level: "warning",
+            sections: [{ label: "details", lines: ["section line"] }],
           },
-          { expanded: true },
-          theme,
-        )
-      } catch (error) {
-        return { ok: false, detail: `renderer threw: ${error instanceof Error ? error.message : String(error)}` }
-      }
+        },
+        { expanded: true },
+        theme,
+      )
 
-      // Renderer should have asked the theme to colour the [WARNING] badge with
-      // the warning colour and the section label with dim.
-      const sawWarningBadge = colorCalls.some((call) => call.startsWith("warning:[WARNING]"))
-      const sawDimSectionLabel = colorCalls.some((call) => call === "dim:sec")
-      // Some pi-tui versions render the box content via theme.bg. Even if not,
-      // the colour calls already prove the renderer ran with the right inputs.
-      void textCaptured
-      return sawWarningBadge && sawDimSectionLabel
+      const wideRows = component.render(40)
+      const narrowRows = component.render(12)
+      const cachedRows = component.render(12)
+      const ansi = /\x1b\[[0-?]*[ -/]*[@-~]/g
+      const renderedText = wideRows.map((row) => row.replace(ansi, "").trimEnd()).join("\n")
+      const hasContent =
+        renderedText.includes("[WARNING] diagnostic title") &&
+        renderedText.includes("content that must wrap") &&
+        renderedText.includes("emoji: 🙂") &&
+        renderedText.includes("details") &&
+        renderedText.includes("section line")
+      const cached = cachedRows === narrowRows
+      component.invalidate()
+      const invalidatedRows = component.render(12)
+      const invalidated = invalidatedRows !== narrowRows && JSON.stringify(invalidatedRows) === JSON.stringify(narrowRows)
+      const singleColumnRows = component.render(1)
+      const bounded = [
+        { width: 40, rows: wideRows },
+        { width: 12, rows: narrowRows },
+        { width: 1, rows: singleColumnRows },
+      ].every(({ width, rows }) => rows.every((row) => row.replace(ansi, "").length <= width))
+      const themed =
+        colorCalls.includes("warning:[WARNING]") &&
+        colorCalls.includes("dim:details") &&
+        backgroundCalls.length > 0 &&
+        backgroundCalls.every((call) => call.startsWith("customMessageBg:"))
+
+      return bounded && hasContent && cached && invalidated && themed
         ? { ok: true }
-        : { ok: false, detail: `colorCalls=${JSON.stringify(colorCalls)}` }
+        : {
+            ok: false,
+            detail: JSON.stringify({
+              bounded,
+              hasContent,
+              cached,
+              invalidated,
+              themed,
+              wideRows,
+              narrowRows,
+              singleColumnRows,
+              colorCalls,
+            }),
+          }
     },
   },
   {
@@ -294,7 +325,7 @@ const cases: Case[] = [
         entry: { data: { content: string; title: string; level: "error"; sections: Array<{ label: string; lines: string[] }> } },
         opts: { expanded: boolean },
         theme: { fg: (color: string, text: string) => string; bg: (color: string, text: string) => string },
-      ) => unknown
+      ) => { render(width: number): string[]; invalidate(): void }
       const colorCalls: string[] = []
       const theme = {
         fg: (color: string, text: string) => {
@@ -304,11 +335,18 @@ const cases: Case[] = [
         bg: (_color: string, text: string) => text,
       }
 
-      renderer(
+      const component = renderer(
         { data: { content: "entry", title: "entry title", level: "error", sections: [{ label: "sec", lines: ["line"] }] } },
         { expanded: true },
         theme,
       )
+      const rows = component.render(24)
+      component.invalidate()
+      const rerenderedRows = component.render(24)
+
+      if (rows === rerenderedRows || rows.some((row) => row.length > 24)) {
+        return { ok: false, detail: JSON.stringify({ rows, rerenderedRows }) }
+      }
 
       return colorCalls.includes("error:[ERROR]") && colorCalls.includes("dim:sec")
         ? { ok: true }

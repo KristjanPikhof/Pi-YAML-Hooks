@@ -1,10 +1,16 @@
+import { statSync } from "node:fs"
 import path from "node:path"
 
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent"
 import type { AutocompleteItem, AutocompleteProvider as PiAutocompleteProvider } from "@earendil-works/pi-tui"
 
-import { resolveHookConfigPaths } from "../core/config-paths.js"
+import {
+  resolveHookConfigPaths,
+  resolveHookConfigWatchPaths,
+  resolveProjectHookResolution,
+} from "../core/config-paths.js"
 import { loadDiscoveredHooksSnapshot } from "../core/load-hooks.js"
+import { getHookHostProfile } from "../core/host-profile.js"
 import { SESSION_HOOK_EVENTS } from "../core/types.js"
 import { getPiHooksLogFilePath } from "../core/logger.js"
 
@@ -79,18 +85,16 @@ export function registerHookAutocomplete(ctx: ExtensionContext): void {
   }
 
   autocompleteRegistered = true
-  // P1-11 fix: do NOT capture a snapshot at registration time. The provider
-  // factory only captures the cwd; suggestion state is computed lazily inside
-  // `getSuggestions` and memoized by the discovery snapshot's `signature`.
-  // That way newly-edited hook files (e.g. fresh hook ids) appear without a
-  // PI restart while we still avoid re-walking the filesystem on every
-  // keystroke.
+  // Compute suggestion state lazily. A stat-only cache gate keeps synchronous
+  // config/import discovery and project/git resolution off unchanged
+  // autocomplete keystrokes while still noticing relevant file/env changes.
   addAutocompleteProvider(createHookAutocompleteProviderFactory(ctx.cwd))
 }
 
 export function resetHookAutocompleteForTests(): void {
   autocompleteRegistered = false
   cachedAutocompleteState = null
+  autocompleteInstrumentation = undefined
 }
 
 function isTuiContext(ctx: ExtensionContext): boolean {
@@ -117,25 +121,59 @@ interface HookAutocompleteState {
 
 interface CachedState {
   readonly projectDir: string
+  readonly profileIdentity: string
+  readonly envStateKey: string
   readonly signature: string
+  readonly watchedPaths: readonly string[]
+  readonly watchFingerprint: string
   readonly state: HookAutocompleteState
 }
 
 let cachedAutocompleteState: CachedState | null = null
 
+interface HookAutocompleteInstrumentation {
+  readonly onDiscovery?: () => void
+  readonly onProjectResolution?: () => void
+}
+
+let autocompleteInstrumentation: HookAutocompleteInstrumentation | undefined
+
+export function __setHookAutocompleteInstrumentationForTests(
+  instrumentation: HookAutocompleteInstrumentation | undefined,
+): void {
+  autocompleteInstrumentation = instrumentation
+}
+
 function getOrComputeAutocompleteState(cwd: string): HookAutocompleteState {
   const projectDir = path.resolve(cwd)
-  const snapshot = loadDiscoveredHooksSnapshot({ projectDir })
-  const signature = snapshot.signature
+  const profile = getHookHostProfile()
+  const profileIdentity = `${profile.kind}\0${profile.agentDir}`
+  const envStateKey = DISCOVERY_ENV_KEYS.map((key) => `${key}=${process.env[key] ?? ""}`).join("\0")
   if (
     cachedAutocompleteState &&
     cachedAutocompleteState.projectDir === projectDir &&
-    cachedAutocompleteState.signature === signature
+    cachedAutocompleteState.profileIdentity === profileIdentity &&
+    cachedAutocompleteState.envStateKey === envStateKey &&
+    computeStatFingerprint(cachedAutocompleteState.watchedPaths) === cachedAutocompleteState.watchFingerprint
   ) {
     return cachedAutocompleteState.state
   }
 
-  const paths = resolveHookConfigPaths({ projectDir })
+  autocompleteInstrumentation?.onDiscovery?.()
+  const snapshot = loadDiscoveredHooksSnapshot({ projectDir, profile })
+  const globalPath = resolveHookConfigPaths({ profile }).global
+  autocompleteInstrumentation?.onProjectResolution?.()
+  const project = resolveProjectHookResolution({ projectDir, profile })
+  const hostLabel = profile.kind === "omp" ? "OMP" : "Pi"
+  const signature = [
+    snapshot.signature,
+    profile.kind,
+    globalPath ?? "",
+    project?.projectConfigPath ?? "",
+    project?.trustFilePath ?? "",
+    project?.trusted ? "trusted" : "untrusted",
+  ].join("\0")
+
   const hookIds = new Map<string, AutocompleteItem>()
 
   for (const hooks of snapshot.hooks.values()) {
@@ -150,13 +188,21 @@ function getOrComputeAutocompleteState(cwd: string): HookAutocompleteState {
     }
   }
 
-  const configPathItems = [paths.global, paths.project]
-    .filter((filePath): filePath is string => typeof filePath === "string" && filePath.length > 0)
-    .map((filePath) => ({
-      value: filePath,
-      label: filePath,
-      description: "pi-yaml-hooks config path",
-    }))
+  const configPathItems: AutocompleteItem[] = []
+  if (globalPath) {
+    configPathItems.push({
+      value: globalPath,
+      label: globalPath,
+      description: `${hostLabel} global pi-yaml-hooks config path`,
+    })
+  }
+  if (project?.projectConfigPath) {
+    configPathItems.push({
+      value: project.projectConfigPath,
+      label: project.projectConfigPath,
+      description: `${hostLabel} project pi-yaml-hooks config path (${project.trusted ? "trusted" : "untrusted"})`,
+    })
+  }
 
   const logFilePath = getPiHooksLogFilePath()
 
@@ -177,16 +223,65 @@ function getOrComputeAutocompleteState(cwd: string): HookAutocompleteState {
     ],
   }
 
-  cachedAutocompleteState = { projectDir, signature, state }
+  const watchedPaths = mergeUniquePaths(
+    resolveHookConfigWatchPaths({ projectDir, profile }).paths,
+    snapshot.files,
+    snapshot.watchPaths,
+  )
+  cachedAutocompleteState = {
+    projectDir,
+    profileIdentity,
+    envStateKey,
+    signature,
+    watchedPaths,
+    watchFingerprint: computeStatFingerprint(watchedPaths),
+    state,
+  }
   return state
+}
+
+const DISCOVERY_ENV_KEYS = [
+  "PI_YAML_HOOKS_TRUST_PROJECT",
+  "PI_YAML_HOOKS_ALLOW_PROJECT_IMPORTS_OUTSIDE_TRUST_ANCHOR",
+  "PI_YAML_HOOKS_ALLOW_GLOBAL_IMPORTS",
+  "PI_YAML_HOOKS_ALLOW_PACKAGE_IMPORTS",
+] as const
+
+function mergeUniquePaths(...pathSets: readonly (readonly string[])[]): string[] {
+  const paths = new Set<string>()
+  for (const pathSet of pathSets) {
+    for (const filePath of pathSet) {
+      paths.add(filePath)
+    }
+  }
+  return Array.from(paths)
+}
+
+// Cheap stat-only refresh gate. Nanosecond mtime/ctime detect rapid same-size
+// rewrites; inode and mode also detect atomic replacement and metadata changes.
+function computeStatFingerprint(paths: readonly string[]): string {
+  const parts: string[] = []
+  for (const filePath of paths) {
+    try {
+      const stat = statSync(filePath, { bigint: true })
+      parts.push(`${filePath}|${stat.mtimeNs}|${stat.ctimeNs}|${stat.size}|${stat.ino}|${stat.mode}`)
+    } catch {
+      parts.push(`${filePath}|missing`)
+    }
+  }
+  return parts.join("\n")
 }
 
 function createHookAutocompleteProviderFactory(cwd: string): AutocompleteProviderFactory {
   return (current: HookAutocompleteProvider): HookAutocompleteProvider => ({
     async getSuggestions(lines, cursorLine, cursorCol, options) {
       const currentSuggestions = await current.getSuggestions(lines, cursorLine, cursorCol, options)
-      // P1-11: recompute (or reuse cached) state on every call so freshly
-      // edited hooks.yaml files become visible without a PI restart.
+      const line = lines[cursorLine] ?? ""
+      if (!line.slice(0, cursorCol).startsWith("/hooks")) {
+        return currentSuggestions
+      }
+      // P1-11: recompute (or reuse cached) state for each hook-completion
+      // request so freshly edited hooks.yaml files appear without a restart.
       const state = getOrComputeAutocompleteState(cwd)
       const hookSuggestions = getHookSuggestions(state, lines, cursorLine, cursorCol)
       if (!hookSuggestions) {

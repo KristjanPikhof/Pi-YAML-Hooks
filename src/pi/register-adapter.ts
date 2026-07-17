@@ -28,6 +28,7 @@ import type {
 
 import path from "node:path";
 import { getPiHooksLogger } from "../core/logger.js";
+import type { HookHostKind } from "../core/host-profile.js";
 import {
   buildSessionIdleEvent,
   mapToolCallToBeforeInput,
@@ -41,6 +42,7 @@ import {
   touchLruEntry,
 } from "./runtime-registry.js";
 import { installSessionLifecycleHandlers } from "./session-lifecycle.js";
+import { getRootSessionId } from "./session-lineage.js";
 import { registerUserBashInterception } from "./user-bash.js";
 
 /**
@@ -49,7 +51,7 @@ import { registerUserBashInterception } from "./user-bash.js";
  * Installs:
  * - `tool_call`    → runtime `tool.execute.before` (+ block-tool response)
  * - `tool_result`  → Phase 1 snapshot-hook + runtime `tool.execute.after`
- * - `agent_end` / `agent_settled`
+ * - `agent_end` / `agent_settled` (PI), `session_stop`-armed `agent_end` (OMP)
  *                  → runtime `session.idle` (when idle + no pending messages)
  * - `session_start`→ runtime `session.created` (on new/startup)
  * - `session_shutdown` / `session_before_switch`
@@ -60,7 +62,7 @@ import { registerUserBashInterception } from "./user-bash.js";
  *                    forward verbatim on the envelope so hook authors can
  *                    tell graceful shutdowns from session-replacement)
  */
-export function registerAdapter(pi: ExtensionAPI): void {
+export function registerAdapter(pi: ExtensionAPI, hostKind: HookHostKind = "pi"): void {
   const logger = getPiHooksLogger();
 
   if (process.platform === "win32") {
@@ -112,6 +114,12 @@ export function registerAdapter(pi: ExtensionAPI): void {
     rememberContext(ctx.cwd, ctx);
     const sessionId = safeGetSessionId(ctx.sessionManager);
     if (!sessionId) return;
+
+    // Resolve while this manager still owns sessionId. A tool_result can
+    // arrive after a session switch, when the replacement manager can no
+    // longer reveal the source session's parent chain; the lineage cache
+    // preserves scope:main|child routing for that late result.
+    getRootSessionId(sessionId, ctx.sessionManager);
 
     const runtime = getRuntimeFor(ctx.cwd);
     rememberToolCallSession(callIdsToSessionIds, event.toolCallId, sessionId);
@@ -170,26 +178,33 @@ export function registerAdapter(pi: ExtensionAPI): void {
     }
   });
 
-  // ---- agent_start / agent_end / agent_settled ----
+  // ---- host-specific idle lifecycle ----
   // Pi <=0.79 is idle at agent_end. Pi >=0.80 emits agent_settled only after
-  // retries, compaction, and queued continuations are exhausted. Register the
-  // newer event through a narrow compatibility shape so older SDK types and
-  // runtimes remain supported without version checks.
+  // retries, compaction, and queued continuations are exhausted. OMP 17 can
+  // emit agent_end on retry and continuation paths before the session has
+  // genuinely stopped, so only its session_stop event is an idle candidate.
   let sessionIdleDispatched = false;
+  let sessionIdleGeneration = 0;
 
   pi.on("agent_start", () => {
     sessionIdleDispatched = false;
+    sessionIdleGeneration += 1;
   });
 
-  const dispatchSessionIdle = async (ctx: ExtensionContext): Promise<void> => {
+  const dispatchSessionIdle = async (
+    ctx: ExtensionContext,
+    expectedSessionId?: string,
+    expectedGeneration?: number,
+  ): Promise<void> => {
+    if (expectedGeneration !== undefined && expectedGeneration !== sessionIdleGeneration) return;
     if (sessionIdleDispatched) return;
 
-    rememberContext(ctx.cwd, ctx);
     const sessionId = safeGetSessionId(ctx.sessionManager);
-    if (!sessionId) return;
+    if (!sessionId || (expectedSessionId !== undefined && sessionId !== expectedSessionId)) return;
     if (!ctx.isIdle || !ctx.isIdle()) return;
     if (ctx.hasPendingMessages && ctx.hasPendingMessages()) return;
 
+    rememberContext(ctx.cwd, ctx);
     sessionIdleDispatched = true;
     try {
       const runtime = getRuntimeFor(ctx.cwd);
@@ -199,24 +214,48 @@ export function registerAdapter(pi: ExtensionAPI): void {
     }
   };
 
-  pi.on("agent_end", async (_event, ctx: ExtensionContext): Promise<void> => {
-    await dispatchSessionIdle(ctx);
-  });
+  if (hostKind === "omp") {
+    let idleCandidate: { sessionId: string; generation: number } | undefined;
+    const sessionStopEventApi = pi as unknown as {
+      on(event: "session_stop", handler: (_event: unknown, ctx: ExtensionContext) => void): void;
+    };
+    sessionStopEventApi.on("session_stop", (_event, ctx): void => {
+      const sessionId = safeGetSessionId(ctx.sessionManager);
+      idleCandidate = sessionId
+        ? { sessionId, generation: sessionIdleGeneration }
+        : undefined;
+    });
 
-  const settledEventApi = pi as unknown as {
-    on(event: "agent_settled", handler: (_event: unknown, ctx: ExtensionContext) => Promise<void>): void;
-  };
-  settledEventApi.on("agent_settled", async (_event, ctx): Promise<void> => {
-    await dispatchSessionIdle(ctx);
-  });
+    pi.on("agent_end", async (_event, ctx: ExtensionContext): Promise<void> => {
+      const candidate = idleCandidate;
+      idleCandidate = undefined;
+      if (!candidate) return;
 
-  // ---- session_start / session_shutdown / session_before_switch ----
+      // OMP emits this agent_end only after every session_stop handler has
+      // settled and its continuation result has been queued. Retry and other
+      // nonterminal agent_end events have no armed candidate and are ignored.
+      await dispatchSessionIdle(ctx, candidate.sessionId, candidate.generation);
+    });
+  } else {
+    pi.on("agent_end", async (_event, ctx: ExtensionContext): Promise<void> => {
+      await dispatchSessionIdle(ctx);
+    });
+
+    const settledEventApi = pi as unknown as {
+      on(event: "agent_settled", handler: (_event: unknown, ctx: ExtensionContext) => Promise<void>): void;
+    };
+    settledEventApi.on("agent_settled", async (_event, ctx): Promise<void> => {
+      await dispatchSessionIdle(ctx);
+    });
+  }
+
+  // ---- session creation/deletion lifecycle ----
   installSessionLifecycleHandlers(pi, {
     getRuntimeFor,
     rememberContext,
     logger,
     reportDispatchFailure,
-  });
+  }, hostKind);
 }
 
 /** Backwards-compat alias for the Phase 1 export name. */

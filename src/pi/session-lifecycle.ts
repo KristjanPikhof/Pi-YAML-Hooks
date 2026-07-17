@@ -17,6 +17,7 @@ import type {
 } from "@earendil-works/pi-coding-agent";
 
 import type { getPiHooksLogger } from "../core/logger.js";
+import type { HookHostKind } from "../core/host-profile.js";
 import type { HooksRuntime } from "../core/runtime.js";
 import {
   buildSessionCreatedEvent,
@@ -53,6 +54,7 @@ export interface SessionLifecycleDeps {
 export function installSessionLifecycleHandlers(
   pi: ExtensionAPI,
   deps: SessionLifecycleDeps,
+  hostKind: HookHostKind = "pi",
 ): void {
   const { getRuntimeFor, rememberContext, logger, reportDispatchFailure } = deps;
 
@@ -61,24 +63,52 @@ export function installSessionLifecycleHandlers(
   // ids we have already fired session.deleted for so cleanup hooks do not
   // double-run. Entries are cleared shortly after to keep the set bounded.
   const deletedSessionIds = new Set<string>();
+  let lastLifecycleHandledOmpSessionId: string | undefined;
+  let pendingOmpSwitch:
+    | { readonly cwd: string; readonly sessionId: string; readonly reason?: string }
+    | undefined;
   function markSessionDeleted(sessionId: string): boolean {
     if (deletedSessionIds.has(sessionId)) return false;
     deletedSessionIds.add(sessionId);
+    if (lastLifecycleHandledOmpSessionId === sessionId) lastLifecycleHandledOmpSessionId = undefined;
     // Drop the marker after a few seconds — long enough to absorb the
     // before_switch/shutdown pair, short enough not to leak forever.
     setTimeout(() => deletedSessionIds.delete(sessionId), 5_000).unref?.();
     return true;
   }
 
-  // ---- session_start ----
-  // Filter to genuine session creation (new/startup). resume/reload/fork are
-  // existing sessions being re-entered; firing session.created there would
-  // overfire hooks that are meant to run once per fresh session.
-  pi.on("session_start", async (event: SessionStartEvent, ctx: ExtensionContext): Promise<void> => {
+  const dispatchSessionDeleted = async (
+    cwd: string,
+    sessionId: string,
+    reason: string | undefined,
+    details?: Record<string, unknown>,
+  ): Promise<void> => {
+    if (!markSessionDeleted(sessionId)) return;
+    try {
+      const runtime = getRuntimeFor(cwd);
+      await runtime.event(buildSessionDeletedEvent(sessionId, reason));
+    } catch (error) {
+      reportDispatchFailure(
+        logger,
+        {
+          cwd,
+          event: "session.deleted",
+          sessionId,
+          ...(details ? { details } : reason ? { details: { reason } } : {}),
+        },
+        error,
+      );
+    }
+  };
+
+  const dispatchSessionCreated = async (ctx: ExtensionContext): Promise<void> => {
     rememberContext(ctx.cwd, ctx);
-    if (event.reason !== "new" && event.reason !== "startup") return;
     const sessionId = safeGetSessionId(ctx.sessionManager);
     if (!sessionId) return;
+    if (hostKind === "omp") {
+      if (lastLifecycleHandledOmpSessionId === sessionId) return;
+      lastLifecycleHandledOmpSessionId = sessionId;
+    }
 
     // P1-3 fix: do NOT forward `header.parentSession` here. PI's
     // `parentSession` field is a FILE PATH to the parent session's JSONL
@@ -94,7 +124,62 @@ export function installSessionLifecycleHandlers(
     } catch (error) {
       reportDispatchFailure(logger, { cwd: ctx.cwd, event: "session.created", sessionId }, error);
     }
+  };
+
+  // ---- session_start ----
+  // Pi exposes explicit new/startup reasons. OMP's startup may be reasonless;
+  // explicit non-create reasons are marked handled so a following reasonless
+  // start cannot misclassify reload/resume/fork/handoff as startup.
+  pi.on("session_start", async (event: SessionStartEvent, ctx: ExtensionContext): Promise<void> => {
+    rememberContext(ctx.cwd, ctx);
+    const reason = extractReason(event);
+    if (hostKind === "pi") {
+      if (reason !== "new" && reason !== "startup") return;
+    } else if (reason !== undefined && reason !== "new" && reason !== "startup") {
+      const sessionId = safeGetSessionId(ctx.sessionManager);
+      if (sessionId) lastLifecycleHandledOmpSessionId = sessionId;
+      return;
+    }
+    await dispatchSessionCreated(ctx);
   });
+
+  if (hostKind === "omp") {
+    // OMP-only compatibility event; importing OMP runtime types here would
+    // break the Pi 0.74/0.79 SDK matrix this shared adapter must preserve.
+    const ompSessionEventApi = pi as unknown as {
+      on(
+        event: "session_switch",
+        handler: (event: { reason?: unknown }, ctx: ExtensionContext) => Promise<void>,
+      ): void;
+    };
+    ompSessionEventApi.on("session_switch", async (event, ctx): Promise<void> => {
+      rememberContext(ctx.cwd, ctx);
+      const completedSwitch = pendingOmpSwitch;
+      pendingOmpSwitch = undefined;
+      if (completedSwitch) {
+        await dispatchSessionDeleted(
+          completedSwitch.cwd,
+          completedSwitch.sessionId,
+          completedSwitch.reason,
+          {
+            trigger: "session_before_switch",
+            ...(completedSwitch.reason ? { reason: completedSwitch.reason } : {}),
+          },
+        );
+      }
+      const reason = extractReason(event);
+      if (reason === "new") {
+        await dispatchSessionCreated(ctx);
+        return;
+      }
+
+      // OMP emits session_switch after replacing its authoritative manager.
+      // Mark the replacement session handled for non-new transitions so the
+      // reasonless session_start that follows cannot create it accidentally.
+      const sessionId = safeGetSessionId(ctx.sessionManager);
+      if (sessionId) lastLifecycleHandledOmpSessionId = sessionId;
+    });
+  }
 
   // ---- session_shutdown ----
   // P1-4 fix: forward the SDK's `reason` field on the envelope so hook
@@ -106,52 +191,29 @@ export function installSessionLifecycleHandlers(
     rememberContext(ctx.cwd, ctx);
     const sessionId = safeGetSessionId(ctx.sessionManager);
     if (!sessionId) return;
-    if (!markSessionDeleted(sessionId)) return; // already fired via before_switch
-
-    const reason = extractReason(event);
-    try {
-      const runtime = getRuntimeFor(ctx.cwd);
-      await runtime.event(buildSessionDeletedEvent(sessionId, reason));
-    } catch (error) {
-      reportDispatchFailure(
-        logger,
-        {
-          cwd: ctx.cwd,
-          event: "session.deleted",
-          sessionId,
-          ...(reason ? { details: { reason } } : {}),
-        },
-        error,
-      );
-    }
+    if (pendingOmpSwitch?.sessionId === sessionId) pendingOmpSwitch = undefined;
+    await dispatchSessionDeleted(ctx.cwd, sessionId, extractReason(event));
   });
 
   // ---- session_before_switch ----
-  // P1-4 fix: forward the SDK's `reason` ("new" | "resume") on the envelope.
-  // session_shutdown also fires for the same logical transition; whichever
-  // arrives first wins (markSessionDeleted dedupes), so the reason actually
-  // delivered to hooks may be either of the two.
+  // Pi dispatches immediately and relies on the shutdown pair dedupe. OMP's
+  // aggregate can still be cancelled after this handler returns, so capture
+  // its old session and defer deletion until session_switch proves success.
   pi.on("session_before_switch", async (event: SessionBeforeSwitchEvent, ctx: ExtensionContext): Promise<void> => {
     rememberContext(ctx.cwd, ctx);
     const sessionId = safeGetSessionId(ctx.sessionManager);
     if (!sessionId) return;
-    if (!markSessionDeleted(sessionId)) return; // session_shutdown already fired
-
     const reason = extractReason(event);
-    try {
-      const runtime = getRuntimeFor(ctx.cwd);
-      await runtime.event(buildSessionDeletedEvent(sessionId, reason));
-    } catch (error) {
-      reportDispatchFailure(
-        logger,
-        {
-          cwd: ctx.cwd,
-          event: "session.deleted",
-          sessionId,
-          details: { trigger: "session_before_switch", ...(reason ? { reason } : {}) },
-        },
-        error,
-      );
+    if (hostKind === "omp") {
+      pendingOmpSwitch = { cwd: ctx.cwd, sessionId, ...(reason ? { reason } : {}) };
+      return;
     }
+
+    await dispatchSessionDeleted(
+      ctx.cwd,
+      sessionId,
+      reason,
+      { trigger: "session_before_switch", ...(reason ? { reason } : {}) },
+    );
   });
 }

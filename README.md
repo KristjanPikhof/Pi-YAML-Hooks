@@ -1,8 +1,8 @@
 # pi-yaml-hooks
 
-Run `bash` around PI tool calls, block risky commands, and post UI notifications, confirmations, and status entries from one `hooks.yaml` file. `pi-yaml-hooks` plugs into the [PI coding agent](https://www.npmjs.com/package/@earendil-works/pi-coding-agent) as a package; nothing else to wire up.
+Run `bash` around tool calls, block risky commands, and post UI notifications, confirmations, and status entries from one `hooks.yaml` file. The same `pi-yaml-hooks` package installs natively in the [Pi coding agent](https://www.npmjs.com/package/@earendil-works/pi-coding-agent) and [Oh My Pi (OMP)](https://github.com/can1357/oh-my-pi).
 
-This repo is the PI port of [OpenCode-Hooks](https://github.com/KristjanPikhof/OpenCode-Hooks). The hook model is familiar; the runtime is PI-native and the limits are explicit.
+This repo is the Pi and OMP port of [OpenCode-Hooks](https://github.com/KristjanPikhof/OpenCode-Hooks). The hook model is familiar, each host uses its native package manifest, and there is no extension path to wire manually.
 
 ## What it does
 
@@ -16,7 +16,9 @@ This repo is the PI port of [OpenCode-Hooks](https://github.com/KristjanPikhof/O
 
 ## Quick start
 
-Create a minimal global hook file so you can see the extension working right away.
+Choose the host you use. Both native installs load the same package and the same YAML.
+
+**Pi**
 
 ```bash
 pi install npm:pi-yaml-hooks
@@ -32,7 +34,29 @@ YAML
 pi
 ```
 
-Expected startup output:
+**OMP, default profile**
+
+```bash
+omp plugin install pi-yaml-hooks
+
+mkdir -p ~/.omp/agent/hook
+cat > ~/.omp/agent/hook/hooks.yaml <<'YAML'
+hooks:
+  - event: session.idle
+    actions:
+      - notify: "Agent is idle"
+YAML
+
+omp
+```
+
+In the agent, run:
+
+```text
+/hooks-status
+```
+
+The status output identifies the active global file. Startup also reports:
 
 ```text
 [pi-yaml-hooks] Loaded 1 hook (global: 1, project: 0).
@@ -49,33 +73,43 @@ If a trusted project also has project hooks, the summary includes both scopes:
 - macOS or Linux
 - Node.js `>=22.19.0`
 - `bash` on `$PATH` (override with `PI_YAML_HOOKS_BASH_EXECUTABLE`)
-- `@earendil-works/pi-coding-agent 0.79.x`
+- Pi with the verified SDK compatibility pairs described below, or OMP
+
+The Pi SDK matrix verifies the retained 0.74.0 floor and current 0.79.3 pair. The end-to-end runtime smoke was run with Pi 0.80.7 and OMP 17.0.1. These are tested versions, not a broader support claim.
 
 Windows is unsupported.
 
 ## Install
 
-The full install reference, including settings.json edits, project-local installs, npm-library import paths, and local-checkout symlinks, lives in [`docs/setup.md`](./docs/setup.md). The short version:
+Use the native package command for your host:
 
 ```bash
-pi install npm:pi-yaml-hooks         # recommended
-pi install https://github.com/KristjanPikhof/pi-yaml-hooks   # latest unreleased
-pi -e npm:pi-yaml-hooks               # one-off run, nothing written to settings
+pi install npm:pi-yaml-hooks
+omp plugin install pi-yaml-hooks
 ```
 
-Add `-l` to `pi install` to write to project settings (`.pi/settings.json`) instead of global (`~/.pi/agent/settings.json`).
+One published package contains both host manifests. Neither install needs `-e` or `--extension`, a manual extension path, a symlink, or an environment override. See [`docs/setup.md`](./docs/setup.md) for named OMP profiles, updates, removal, and local development.
+
+The existing Pi alternatives remain available:
+
+```bash
+pi install https://github.com/KristjanPikhof/pi-yaml-hooks   # latest unreleased
+pi -e npm:pi-yaml-hooks                                     # one-off run
+```
+
+Add `-l` to `pi install` to write to project settings (`.pi/settings.json`) instead of global settings (`~/.pi/agent/settings.json`).
 
 ### SDK compatibility matrix
 
-Before widening PI peer support or merging SDK-sensitive changes, run the repeatable SDK matrix:
+Before widening Pi peer support or merging SDK-sensitive changes, run:
 
 ```bash
 npm run compat:sdk-matrix
 ```
 
-The matrix checks both the legacy 0.74.0 SDK floor and the current Pi 0.79.3 SDK pair (`@earendil-works/pi-coding-agent` and `@earendil-works/pi-tui`). It creates a temporary copy of the repository, installs each SDK pair in that copy only, then runs `npm run typecheck` and `npm run test:internal` so tool/lifecycle/runtime behavior is exercised. The working checkout's `package.json`, `package-lock.json`, and normal `node_modules` are not mutated.
+The matrix checks both the legacy 0.74.0 SDK floor and the current Pi 0.79.3 SDK pair (`@earendil-works/pi-coding-agent` and `@earendil-works/pi-tui`). It creates a temporary copy of the repository, installs each SDK pair in that copy only, then runs `npm run typecheck` and `npm run test:internal`. The working checkout's `package.json`, `package-lock.json`, and normal `node_modules` are not mutated.
 
-`npm test` remains a consumer-facing no-op; use `npm run test:internal` directly in the working checkout for full validation.
+`npm test` remains a consumer-facing no-op. Use `npm run test:internal` directly in the working checkout for full validation.
 
 To preview the matrix workflow without installing anything:
 
@@ -83,29 +117,22 @@ To preview the matrix workflow without installing anything:
 npm run compat:sdk-matrix:dry-run
 ```
 
-Runtime PI behavior also has a smoke checklist for surfaces unit tests cannot fully emulate, including slash commands, custom diagnostics, UI actions, follow-up prompts, `user_bash`, session switching, and `/quit`:
+The runtime smoke checklist covers surfaces unit tests cannot fully emulate:
 
 ```bash
 scripts/smoke/pi-runtime-smoke.sh
+scripts/smoke/omp-runtime-smoke.sh
 ```
 
-Maintainer-facing details, including the smoke checklist, evidence template, and gating rules, live in [`docs/maintaining.md`](./docs/maintaining.md). Keep the generated evidence file with release notes or SDK-widening PRs.
-
-Future SDK lines (`0.80.x` and later) are gated. Try them explicitly with:
-
-```bash
-npm run compat:sdk-matrix:future
-```
-
-Do not change compatibility claims until both the future matrix and the runtime smoke pass, including the no-builtin-tools gate.
+Maintainer-facing details live in [`docs/maintaining.md`](./docs/maintaining.md). Future Pi SDK lines remain gated. Try them explicitly with `npm run compat:sdk-matrix:future`, and do not widen compatibility claims until the future matrix and runtime smoke pass.
 
 ## How it works
 
-`pi-yaml-hooks` discovers at most one global root config and one project root config. Project hooks and project-root imports load only when the repo or worktree anchor is trusted by pi-yaml-hooks (`/hooks-trust`, `trusted-projects.json`, or `PI_YAML_HOOKS_TRUST_PROJECT=1`). This hook trust is separate from Pi's project package trust and is not activated by Pi project trust alone. Global-root imports require `PI_YAML_HOOKS_ALLOW_GLOBAL_IMPORTS=1`, package imports require `PI_YAML_HOOKS_ALLOW_PACKAGE_IMPORTS=1`, and project imports outside the trust anchor require `PI_YAML_HOOKS_ALLOW_PROJECT_IMPORTS_OUTSIDE_TRUST_ANCHOR=1`. The project root is repo/worktree-aware, not exact-cwd-only.
+`pi-yaml-hooks` discovers at most one global root config and one project root config. Project hooks and project-root imports load only when the repo or worktree trust anchor is trusted through `/hooks-trust`, the active host's `trusted-projects.json`, or `PI_YAML_HOOKS_TRUST_PROJECT=1`. This hook trust is separate from host package trust. Global-root imports require `PI_YAML_HOOKS_ALLOW_GLOBAL_IMPORTS=1`, package imports require `PI_YAML_HOOKS_ALLOW_PACKAGE_IMPORTS=1`, and project imports outside the trust anchor require `PI_YAML_HOOKS_ALLOW_PROJECT_IMPORTS_OUTSIDE_TRUST_ANCHOR=1`. The project root is repo/worktree-aware, not exact-cwd-only.
 
-When an event matches, `pi-yaml-hooks` evaluates conditions and runs the configured actions. `bash` actions receive hook context JSON on stdin plus injected `PI_*` environment variables such as `PI_PROJECT_DIR`, `PI_WORKTREE_DIR`, `PI_SESSION_ID`, and `PI_GIT_COMMON_DIR`. At agent start, the extension also appends a short hook-awareness note to the system prompt so PI has the current hook and trust context while it works.
+When an event matches, `pi-yaml-hooks` evaluates conditions and runs the configured actions. `bash` actions receive hook context JSON on stdin plus injected `PI_*` environment variables such as `PI_PROJECT_DIR`, `PI_WORKTREE_DIR`, `PI_SESSION_ID`, and `PI_GIT_COMMON_DIR`. At agent start, the extension also appends a short hook-awareness note to the system prompt so the host has the current hook and trust context while it works.
 
-## Native PI surface
+## Shared Pi and OMP surface
 
 ### Events
 
@@ -114,19 +141,19 @@ When an event matches, `pi-yaml-hooks` evaluates conditions and runs the configu
 | `tool.before.*` | Before a tool call |
 | `tool.after.*` | After a tool call |
 | `file.changed` | Synthesized after recognized file mutations |
-| `session.created` | PI startup or a genuinely new session |
-| `session.idle` | Agent turn has settled with no retry, compaction retry, or queued continuation remaining on capable hosts; older Pi falls back to `agent_end` behavior |
-| `session.deleted` | Best-effort cleanup on shutdown or session switch; includes PI's reason (`quit`, `reload`, `new`, `resume`, or `fork`) when available |
+| `session.created` | Host startup or a genuinely new session; resume and fork signals are excluded |
+| `session.idle` | Agent turn has settled with no retry, compaction retry, or queued continuation remaining; older Pi falls back to `agent_end` behavior |
+| `session.deleted` | Best-effort cleanup on shutdown or session switch; forwards the host's opaque reason string when available |
 
 ### Actions
 
-| Action | PI behavior |
+| Action | Host behavior |
 |---|---|
 | `bash` | Runs a shell command with injected context |
-| `tool` | Sends a follow-up prompt into the current PI session |
-| `notify` | Shows a PI notification when `ctx.hasUI` and the UI method exist, including RPC UI contexts in Pi 0.79+ |
+| `tool` | Sends a follow-up prompt into the current Pi or OMP session |
+| `notify` | Shows a host notification when `ctx.hasUI` and the UI method exist |
 | `confirm` | Shows a confirmation dialog before a tool runs when UI exists; headless/no-UI contexts fail closed |
-| `setStatus` | Sets a PI status-bar/status entry keyed to the hook when the UI method exists |
+| `setStatus` | Sets a host status-bar/status entry keyed to the hook when the UI method exists |
 
 ### Slash commands
 
@@ -134,64 +161,56 @@ When an event matches, `pi-yaml-hooks` evaluates conditions and runs the configu
 |---|---|
 | `/hooks-status` | Active hooks, config paths, trust state, and log path |
 | `/hooks-validate` | Validation results for active hooks and skipped untrusted project hooks |
-| `/hooks-trust` | Adds the current repo/worktree anchor to `~/.pi/agent/trusted-projects.json` |
-| `/hooks-reload` | Asks PI to reload extensions; edited hooks also refresh lazily on the next relevant event |
+| `/hooks-trust` | Adds the current repo/worktree anchor to the active Pi or OMP profile's trust store |
+| `/hooks-reload` | Asks the active host to reload extensions; edited hooks also refresh lazily on the next relevant event |
 | `/hooks-tail-log` | Log path plus a ready-to-run `tail -F` command; `--follow` starts a detached live tail, and `--path` prints only the path |
 
-`/hooks-status`, `/hooks-validate`, and hook-load validation errors persist as custom entries on the Pi 0.80-capable TUI path. These entries do not enter model context. Older Pi and non-TUI paths retain the custom-message fallback.
+`/hooks-status`, `/hooks-validate`, and hook-load validation errors persist as context-free custom entries when the host exposes that surface, with a custom-message fallback on older or non-TUI hosts.
 
-PI exposes `ctx.ui.addAutocompleteProvider` in the TUI editor, so `pi-yaml-hooks` layers guarded `/hooks` autocomplete only when `ctx.mode` is `"tui"` (or absent on older SDKs) and the method exists. Suggestions include the command names plus contextual hook IDs, event names, config paths, and log-tail options where useful. Hook IDs are loaded lazily and memoized by hook-snapshot signature, not fixed at extension registration time.
+Pi and OMP expose `ctx.ui.addAutocompleteProvider` in their TUI editors. `pi-yaml-hooks` layers guarded `/hooks` autocomplete only when `ctx.mode` is `"tui"` (or absent on older SDKs) and the method exists. Suggestions include command names plus contextual hook IDs, event names, config paths, and log-tail options. Hook IDs are loaded lazily and memoized by hook-snapshot signature, not fixed at extension registration time.
 
 ## Important limitations
 
-These are the PI-specific constraints that matter most:
+These constraints apply to both hosts unless noted:
 
-- `command:` actions are unsupported on PI and are rejected at load time
-- `tool:` is prompt injection, not imperative tool execution
+- `command:` actions are unsupported and rejected at load time
+- `tool:` sends a follow-up prompt into the current host session; it does not execute a tool or target another session
 - `action: stop` only has real effect on `tool.before.*`
 - `runIn: main` is unsupported for non-`bash` actions
-- `session.deleted` is best-effort and intentionally lossy: PI fires it for shutdown and for session switches like `/new`, `/resume`, and `/fork`, and `pi-yaml-hooks` forwards PI's `reason` (`quit`, `reload`, `new`, `resume`, or `fork`) on the envelope so hooks can disambiguate
+- `session.deleted` is best-effort and intentionally lossy; duplicate switch/shutdown signals are collapsed and any host-provided reason is forwarded as an opaque string
 - `user_bash` interception is opt-in with `PI_YAML_HOOKS_ENABLE_USER_BASH=1`
 
 Keep those rules in mind when authoring hooks. They explain most surprising behavior.
 
 ### What trust grants when user_bash is enabled
 
-When `PI_YAML_HOOKS_ENABLE_USER_BASH=1` is set, every human `!` / `!!` shell command typed in PI is routed through `tool.before.bash` hooks before PI executes it. This expands the trust surface significantly:
+When `PI_YAML_HOOKS_ENABLE_USER_BASH=1` is set, every human `!` / `!!` shell command typed in Pi or OMP is routed through `tool.before.bash` hooks before the host executes it. This expands the trust surface significantly:
 
 - **Observation**: hooks receive the typed command in stdin JSON as `tool_args.command`, so a trusted-project bash hook can read the full text of every command you type.
 - **Blocking**: a `tool.before.bash` hook that exits with code `2` will prevent the command from running. A misconfigured or malicious hook can silently block commands.
 - **Exfiltration risk**: the same bash hook can forward `tool_args.command` to an external service. Only enable `PI_YAML_HOOKS_ENABLE_USER_BASH=1` if you trust every hook in every trusted project.
 
-`pi-yaml-hooks` emits a one-time stderr warning on startup listing which trusted projects will have access when this env var is set, and shows a PI UI warning on the first intercepted command when a UI is available. The warning fires once per process and names the projects currently in `~/.pi/agent/trusted-projects.json`.
+`pi-yaml-hooks` emits a one-time stderr warning on startup listing which trusted projects will have access when this env var is set, and shows a host UI warning on the first intercepted command when a UI is available. The warning fires once per process and reads projects from the active Pi or OMP profile's `trusted-projects.json`.
 
 This mode is disabled by default. Agent-generated `bash` tool calls are always intercepted regardless of this setting.
 
 ## Config paths and trust
 
-Global root config paths:
+The preferred root config paths are:
 
-1. `~/.pi/agent/hook/hooks.yaml`
-2. `~/.pi/agent/hooks.yaml`
+| Host | Global | Project |
+|---|---|---|
+| Pi | `~/.pi/agent/hook/hooks.yaml` | `<project>/.pi/hook/hooks.yaml` |
+| OMP default profile | `~/.omp/agent/hook/hooks.yaml` | `<project>/.omp/hook/hooks.yaml` |
+| OMP named profile | `~/.omp/profiles/<profile>/agent/hook/hooks.yaml` | `<project>/.omp/hook/hooks.yaml` |
 
-Project root config paths:
+The same YAML works in every listed location. Each host loads at most one global root and one project root. OMP global discovery stays inside the active profile's agent directory. Project discovery walks upward from the working directory; within each directory, native `.omp` candidates precede trust-gated legacy `.pi` candidates. A nearer `.pi` file therefore wins over a parent directory's `.omp` file.
 
-1. `<project>/.pi/hook/hooks.yaml`
-2. `<project>/.pi/hooks.yaml`
+Project hooks are gated by pi-yaml-hooks trust because they can run arbitrary `bash` with your user permissions. Trust is evaluated against the repo or worktree trust anchor, not an arbitrary nested directory string. `trusted-projects.json` entries must be absolute paths; relative entries such as `.` are ignored.
 
-Project hooks are gated by trust because they can run arbitrary `bash` with your user permissions. Trust is evaluated against the repo or worktree anchor, not an arbitrary nested directory string. `trusted-projects.json` entries must be absolute paths; relative entries such as `.` are ignored.
+Run `/hooks-trust` in the active host to trust the current project. Pi writes `~/.pi/agent/trusted-projects.json`. OMP writes the active profile's trust store, either `~/.omp/agent/trusted-projects.json` or `~/.omp/profiles/<profile>/agent/trusted-projects.json`. OMP does not inherit Pi trust, including when OMP loads a legacy `.pi` project config.
 
-Two ways to trust a project:
-
-```bash
-PI_YAML_HOOKS_TRUST_PROJECT=1 pi
-```
-
-or use the built-in command:
-
-```text
-/hooks-trust
-```
+The temporary `PI_YAML_HOOKS_TRUST_PROJECT=1` opt-in remains available on both hosts. All `PI_YAML_HOOKS_*` environment variable names are retained for compatibility.
 
 ## Examples
 
