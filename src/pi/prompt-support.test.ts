@@ -384,7 +384,7 @@ const cases: Case[] = [
         const sp = (result as { systemPrompt?: string } | undefined)?.systemPrompt
         if (typeof sp !== "string") return { ok: false, detail: JSON.stringify(result) }
         const ok =
-          sp.includes("tool actions inject a follow-up prompt into the current PI session only") &&
+          sp.includes("tool actions inject a follow-up prompt into the current Pi session only") &&
           sp.includes("they cannot target other sessions")
         return ok ? { ok: true } : { ok: false, detail: sp }
       }),
