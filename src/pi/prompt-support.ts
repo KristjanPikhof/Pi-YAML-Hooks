@@ -19,13 +19,15 @@ const PROMPT_AWARENESS_DISABLE_ENV = "PI_YAML_HOOKS_PROMPT_AWARENESS"
 
 export function registerPromptSupport(api: PiExtensionAPI | OmpExtensionAPI): void {
   const profile = getHookHostProfile()
-    ;(api as OmpExtensionAPI).on("before_agent_start", handleOmpBeforeAgentStart)
+  if (profile.kind === "omp") {
+    const omp = api as OmpExtensionAPI
+    omp.on("before_agent_start", handleOmpBeforeAgentStart)
     return
   }
 
-  ;(api as PiExtensionAPI).on("before_agent_start", handlePiBeforeAgentStart)
+  const pi = api as PiExtensionAPI
+  pi.on("before_agent_start", handlePiBeforeAgentStart)
 }
-
 
 function handlePiBeforeAgentStart(
   event: PiBeforeAgentStartEvent,
@@ -40,7 +42,6 @@ function handlePiBeforeAgentStart(
     systemPrompt: `${event.systemPrompt.trimEnd()}\n\n${systemPrompt}`,
   }
 }
-
 
 function handleOmpBeforeAgentStart(
   event: OmpBeforeAgentStartEvent,
