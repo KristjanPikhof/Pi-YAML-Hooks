@@ -23,7 +23,7 @@ import type {
 } from "../runtime.js"
 import { withActionRecursionGuard } from "./recursion-guard.js"
 import { sanitizeToolArgsForSerialization, type SessionStateStore } from "../session-state.js"
-import type { BashExecutionRequest, BashHookResult } from "../bash-types.js"
+import { DEFAULT_BASH_TIMEOUT, type BashExecutionRequest, type BashHookResult } from "../bash-types.js"
 import type {
   HookAction,
   HookEvent,
@@ -437,9 +437,16 @@ const handleBash: ActionHandler = async ({
 
   const executionDirectory = projectDir
   const config = typeof action.bash === "string" ? { command: action.bash } : action.bash
+  const requestedTimeout = config.timeout ?? DEFAULT_BASH_TIMEOUT
+  const remainingBudget = context.synchronousBashBudget
+    ? Math.max(1, context.synchronousBashBudget.deadline - context.synchronousBashBudget.now())
+    : undefined
+  const timeout = remainingBudget === undefined
+    ? config.timeout
+    : Math.min(requestedTimeout, remainingBudget)
   const result = await runBashHook({
     command: config.command,
-    timeout: config.timeout,
+    timeout,
     projectDir: executionDirectory,
     context: {
       session_id: sessionID,
@@ -461,7 +468,7 @@ const handleBash: ActionHandler = async ({
     action: actionType,
     details: {
       command: config.command,
-      timeout: config.timeout,
+      timeout,
       status: result.status,
       exitCode: result.exitCode,
       blocking: result.blocking,

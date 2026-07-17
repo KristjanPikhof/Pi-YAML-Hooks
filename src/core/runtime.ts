@@ -59,6 +59,11 @@ export interface RuntimeEventEnvelope {
   }
 }
 
+interface SynchronousBashBudget {
+  readonly deadline: number
+  readonly now: () => number
+}
+
 export interface RuntimeActionContext {
   readonly files?: readonly string[]
   readonly changes?: readonly FileChange[]
@@ -67,6 +72,7 @@ export interface RuntimeActionContext {
   readonly sourceSessionID?: string
   readonly targetSessionID?: string
   readonly pathMatchContext?: PathMatchContext
+  readonly synchronousBashBudget?: SynchronousBashBudget
 }
 
 export interface PathMatchContext {
@@ -110,6 +116,8 @@ export interface CreateHooksRuntimeOptions {
   readonly initialWatchPaths?: readonly string[]
   readonly reloadDiscoveredHooks?: boolean
   readonly executeBash?: ExecuteBashHook
+  readonly synchronousBashBudgetMs?: number
+  readonly now?: () => number
   readonly configDiscovery?: Omit<HookConfigDiscoveryOptions, "projectDir">
 }
 
@@ -162,6 +170,11 @@ export function createHooksRuntime(host: HostAdapter, options: CreateHooksRuntim
   let lastStatFingerprint = computeStatFingerprint(watchedFiles)
   const state = new SessionStateStore()
   const runBashHook: ExecuteBashHook = options.executeBash ?? ((request) => host.runBash(request))
+  const now = options.now ?? Date.now
+  const createSynchronousBashBudget = (): SynchronousBashBudget | undefined =>
+    options.synchronousBashBudgetMs === undefined
+      ? undefined
+      : { deadline: now() + options.synchronousBashBudgetMs, now }
   const dispatchStates = new Map<string, DispatchState>()
   const asyncQueues = new Map<string, AsyncQueueState>()
   const actionRecursionGuards = new AsyncLocalStorage<Set<string>>()
@@ -298,6 +311,7 @@ export function createHooksRuntime(host: HostAdapter, options: CreateHooksRuntim
       eventInput: ToolExecuteBeforeInput,
       eventOutput: ToolExecuteBeforeOutput,
     ): Promise<void> => {
+      const synchronousBashBudget = createSynchronousBashBudget()
       const activeHooks = refreshHooks()
       const sessionID = eventInput.sessionID
       if (!sessionID) {
@@ -317,6 +331,7 @@ export function createHooksRuntime(host: HostAdapter, options: CreateHooksRuntim
       const result = await invokeDispatchToolHooks(activeHooks, "before", eventInput.tool, sessionID, {
         toolName: eventInput.tool,
         toolArgs,
+        synchronousBashBudget,
       })
 
       if (result.blocked) {
@@ -347,6 +362,7 @@ export function createHooksRuntime(host: HostAdapter, options: CreateHooksRuntim
       eventInput: ToolExecuteAfterInput,
       _eventOutput?: unknown,
     ): Promise<void> => {
+      const synchronousBashBudget = createSynchronousBashBudget()
       const activeHooks = refreshHooks()
       const sessionID = eventInput.sessionID
       if (!sessionID) {
@@ -374,6 +390,7 @@ export function createHooksRuntime(host: HostAdapter, options: CreateHooksRuntim
           changes,
           toolName: eventInput.tool,
           toolArgs,
+          synchronousBashBudget,
         })
       }
 
@@ -382,6 +399,7 @@ export function createHooksRuntime(host: HostAdapter, options: CreateHooksRuntim
         changes,
         toolName: eventInput.tool,
         toolArgs,
+        synchronousBashBudget,
       })
 
       logger.debug("dispatch_end", "Finished post-tool dispatch.", {
@@ -397,6 +415,7 @@ export function createHooksRuntime(host: HostAdapter, options: CreateHooksRuntim
       eventInput: ToolExecuteBeforeInput,
       eventOutput: ToolExecuteBeforeOutput,
     ): Promise<void> => {
+      const synchronousBashBudget = createSynchronousBashBudget()
       const activeHooks = refreshHooks()
       const sessionID = eventInput.sessionID
       if (!sessionID) {
@@ -407,6 +426,7 @@ export function createHooksRuntime(host: HostAdapter, options: CreateHooksRuntim
       const result = await invokeDispatchToolHooks(activeHooks, "before", eventInput.tool, sessionID, {
         toolName: eventInput.tool,
         toolArgs,
+        synchronousBashBudget,
       })
 
       if (result.blocked) {
@@ -418,6 +438,7 @@ export function createHooksRuntime(host: HostAdapter, options: CreateHooksRuntim
     },
 
     event: async ({ event }: RuntimeEventEnvelope): Promise<void> => {
+      const synchronousBashBudget = createSynchronousBashBudget()
       const activeHooks = refreshHooks()
       const properties = event.properties ?? {}
 
@@ -441,7 +462,7 @@ export function createHooksRuntime(host: HostAdapter, options: CreateHooksRuntim
           sessionId: sessionID,
           details: { parentID: parentID ?? null },
         })
-        await invokeDispatchHooks(activeHooks, "session.created", sessionID, {})
+        await invokeDispatchHooks(activeHooks, "session.created", sessionID, { synchronousBashBudget })
         return
       }
 
@@ -467,7 +488,7 @@ export function createHooksRuntime(host: HostAdapter, options: CreateHooksRuntim
           sessionId: sessionID,
           ...(deletedReason ? { details: { reason: deletedReason } } : {}),
         })
-        await invokeDispatchHooks(activeHooks, "session.deleted", sessionID, {})
+        await invokeDispatchHooks(activeHooks, "session.deleted", sessionID, { synchronousBashBudget })
         return
       }
 
@@ -488,7 +509,7 @@ export function createHooksRuntime(host: HostAdapter, options: CreateHooksRuntim
         state.beginIdleDispatch(sessionID, changes)
 
         try {
-          await invokeDispatchHooks(activeHooks, "session.idle", sessionID, { files, changes })
+          await invokeDispatchHooks(activeHooks, "session.idle", sessionID, { files, changes, synchronousBashBudget })
           state.consumeFileChanges(sessionID, changes)
           logger.debug("idle_changes_consumed", "Consumed idle changes after dispatch.", {
             cwd: projectDir,
