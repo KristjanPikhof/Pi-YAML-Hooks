@@ -125,7 +125,7 @@ export function resolveHookConfigWatchPaths(
     return { paths: uniquePaths(paths) }
   }
 
-  const project = resolveProjectHookResolution(options)
+  const project = resolveProjectHookResolution(options)!
   for (const dir of ancestorDirs(project.canonicalCwd, project.canonicalAnchorDir)) {
     paths.push(...projectCandidatePaths(dir, profile.kind))
     paths.push(path.join(dir, ".git"))
