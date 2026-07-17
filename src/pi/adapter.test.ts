@@ -221,6 +221,7 @@ class FakePiHarness {
   }
 
   async agentEnd(): Promise<void> {
+    if (!this.handlers.has("agent_end")) return
     await this.emit("agent_end")
   }
 
@@ -552,7 +553,7 @@ const cases: Case[] = [
       }),
   },
   {
-    name: "OMP agent_end evaluates idle only after session_stop continuation handlers settle",
+    name: "OMP retry agent_end does not dispatch idle while genuine session_stop does",
     run: async () =>
       await withIsolatedProject(true, async (projectDir) => {
         writeProjectHooks(
@@ -566,44 +567,73 @@ const cases: Case[] = [
 
         const harness = new FakePiHarness(projectDir, "session-1", "omp")
         harness.register()
-        const order: string[] = []
+
+        await harness.agentStart()
+        await harness.agentEnd()
+        await sleep(0)
+        const retrySuppressed = harness.notifications.length === 0
+
+        await harness.sessionStop()
+        const deferred = harness.notifications.length === 0
+        await sleep(0)
+        const genuineStopDispatched = harness.notifications.join(",") === "idle"
+
+        return retrySuppressed && deferred && genuineStopDispatched
+          ? { ok: true }
+          : {
+              ok: false,
+              detail:
+                `retrySuppressed=${retrySuppressed}, deferred=${deferred}, ` +
+                `genuineStopDispatched=${genuineStopDispatched}, notifications=${JSON.stringify(harness.notifications)}`,
+            }
+      }),
+  },
+  {
+    name: "OMP deferred session_stop idle is suppressed by queued continuation or agent_start",
+    run: async () =>
+      await withIsolatedProject(true, async (projectDir) => {
+        writeProjectHooks(
+          projectDir,
+          `hooks:
+  - event: session.idle
+    actions:
+      - notify: "idle"
+`,
+        )
+
+        const harness = new FakePiHarness(projectDir, "session-1", "omp")
+        harness.register()
+        let queueContinuation = true
         const sessionStopHandlers = harness.handlers.get("session_stop") ?? []
-        sessionStopHandlers.push(async () => {
-          await Promise.resolve()
-          harness.pendingMessages = true
-          order.push("session_stop:settled")
+        sessionStopHandlers.push(() => {
+          if (queueContinuation) harness.pendingMessages = true
         })
         harness.handlers.set("session_stop", sessionStopHandlers)
 
         await harness.agentStart()
         await harness.sessionStop()
-        const noEarlyIdle = harness.notifications.length === 0 &&
-          order.join(",") === "session_stop:settled"
-        await harness.agentEnd()
+        await sleep(0)
         const continuationSuppressed = harness.notifications.length === 0
 
+        queueContinuation = false
         harness.pendingMessages = false
-        harness.idle = false
-        await harness.agentEnd()
-        const busySuppressed = harness.notifications.length === 0
-
-        harness.idle = true
-        await harness.agentEnd()
-        await harness.agentEnd()
-        const oneShot = harness.notifications.join(",") === "idle"
-
         await harness.agentStart()
-        await harness.agentEnd()
-        const rearmed = harness.notifications.join(",") === "idle,idle"
+        await harness.sessionStop()
+        await harness.agentStart()
+        await sleep(0)
+        const restartedSuppressed = harness.notifications.length === 0
 
-        return noEarlyIdle && continuationSuppressed && busySuppressed && oneShot && rearmed
+        await harness.sessionStop()
+        await sleep(0)
+        const laterStopDispatched = harness.notifications.join(",") === "idle"
+
+        return continuationSuppressed && restartedSuppressed && laterStopDispatched
           ? { ok: true }
           : {
               ok: false,
               detail:
-                `noEarly=${noEarlyIdle}, continuation=${continuationSuppressed}, busy=${busySuppressed}, ` +
-                `oneShot=${oneShot}, rearmed=${rearmed}, order=${JSON.stringify(order)}, ` +
-                `notifications=${JSON.stringify(harness.notifications)}`,
+                `continuationSuppressed=${continuationSuppressed}, restartedSuppressed=${restartedSuppressed}, ` +
+                `laterStopDispatched=${laterStopDispatched}, notifications=${JSON.stringify(harness.notifications)}`,
             }
       }),
   },
