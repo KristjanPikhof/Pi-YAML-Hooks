@@ -489,26 +489,20 @@ const assertNoNewIdle = async (phase) => {
 
 for (const handler of handlers.get("agent_start") ?? []) await handler({}, ctx);
 for (const handler of handlers.get("session_stop") ?? []) await handler({}, ctx);
-await assertNoNewIdle("session_stop");
+for (const handler of handlers.get("session_shutdown") ?? []) await handler({ reason: "quit" }, ctx);
+await assertNoNewIdle("session stop/shutdown control phase");
 pendingMessages = false;
 for (const handler of handlers.get("agent_end") ?? []) await handler({}, ctx);
 await assertNoNewIdle("non-idle agent_end");
 idle = true;
 for (const handler of handlers.get("agent_end") ?? []) await handler({}, ctx);
-const immediateIdleCount = readEventRows().filter((row) => row.event === "session.idle").length;
-if (immediateIdleCount !== idleCountBefore) throw new Error("OMP session.idle was not deferred to a macrotask");
-const deadline = Date.now() + 5000;
-while (Date.now() < deadline) {
-  const rows = readEventRows();
-  if (rows.filter((row) => row.event === "session.idle").length > idleCountBefore) {
-    if (!notifications.includes("omp smoke deferred idle")) throw new Error("deferred idle notify action missing");
-    if (!statuses.includes("omp smoke deferred idle")) throw new Error("deferred idle setStatus action missing");
-    appendFileSync(eventFile, `${JSON.stringify({ evidence: "deferred-macrotask", session: "deferred-idle-session" })}\n`);
-    process.exit(0);
-  }
-  await new Promise((resolve) => setTimeout(resolve, 25));
+const finalIdleCount = readEventRows().filter((row) => row.event === "session.idle").length;
+if (finalIdleCount !== idleCountBefore + 1) {
+  throw new Error(`OMP final idle agent_end did not dispatch exactly once: before=${idleCountBefore} after=${finalIdleCount}`);
 }
-throw new Error("timed out waiting for installed OMP adapter deferred idle dispatch after final agent_end");
+if (!notifications.includes("omp smoke deferred idle")) throw new Error("authoritative idle notify action missing");
+if (!statuses.includes("omp smoke deferred idle")) throw new Error("authoritative idle setStatus action missing");
+appendFileSync(eventFile, `${JSON.stringify({ evidence: "deferred-macrotask", session: "deferred-idle-session" })}\n`);
 IDLE
 [[ -d "$ROOT_DIR/node_modules/@earendil-works/pi-tui" ]] || fail "local pi-tui dependency is unavailable for the deferred-idle harness"
 mkdir -p "$PLUGIN_DIR/node_modules/@earendil-works"
@@ -654,8 +648,8 @@ printf 'Paths: profile=%s plugin=%s global=%s project=%s trust=%s log=%s\n' \
 printf 'Event trace: %s\n' "$EVENT_TRACE"
 printf 'TUI trace: %s\n' "$TUI_EVIDENCE"
 printf 'A23 PASS: isolated HOME/profile, packed HTTP install, native manifest discovery, and OMP trust\n'
-printf 'A24 PASS: commands, valid/invalid config, paths, UI RPC, lifecycle, deferred idle, user_bash, and reload\n'
-printf 'A25 PASS: assertion-driven RPC headless degradation plus tmux PTY autocomplete/lazy refresh; no real model call\n'
+printf 'A24 PASS: commands, valid/invalid config, paths, UI RPC, lifecycle, authoritative idle, user_bash, and reload\n'
+printf 'A25 PASS: assertion-driven RPC headless degradation, packed-entry before_agent_start array ABI, and tmux PTY autocomplete/lazy refresh; no real model call\n'
 
 cleanup
 trap - EXIT INT TERM
