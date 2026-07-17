@@ -29,7 +29,7 @@ Project trust is stored as absolute canonical repo/worktree anchors. Use these c
 - `/hooks-validate` reports validation errors for the selected paths without replacing the last-known-good hook set with an invalid config.
 - `/hooks-trust` writes only the active host's trust store, using an atomic mode-`0600` replacement on POSIX.
 
-OMP considers legacy `.pi` project candidates only when no native `.omp` candidate wins. A legacy project file still requires the repo/worktree anchor in the active OMP trust store. `~/.pi/agent/trusted-projects.json` never authorizes OMP project hooks, and `/hooks-trust` under OMP does not create or update Pi trust state.
+OMP checks native `.omp` project candidates before legacy `.pi` candidates within each directory while walking upward; the first directory containing either form wins. A legacy project file still requires the repo/worktree anchor in the active OMP trust store. `~/.pi/agent/trusted-projects.json` never authorizes OMP project hooks, and `/hooks-trust` under OMP does not create or update Pi trust state.
 
 Malformed or missing trust files fail closed. The warning names the active trust store, and a malformed file is left unchanged. `PI_YAML_HOOKS_TRUST_PROJECT=1` is an explicit per-process bypass and logs a trust-boundary warning.
 

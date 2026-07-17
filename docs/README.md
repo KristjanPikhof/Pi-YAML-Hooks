@@ -32,7 +32,7 @@ These are the details that matter most when authoring hooks in Pi or OMP:
 - The Pi SDK compatibility matrix retains 0.74.0 and 0.79.3. Runtime smoke testing used Pi 0.80.7 and OMP 17.0.1; this does not claim support for a wider version range.
 - Only one global root config and one project root config are discovered.
 - Project-root imports require pi-yaml-hooks project-hook trust. Host package trust is separate and does not activate project hooks here. Global-root imports require `PI_YAML_HOOKS_ALLOW_GLOBAL_IMPORTS=1`; package imports require `PI_YAML_HOOKS_ALLOW_PACKAGE_IMPORTS=1`; project imports outside the trust anchor require `PI_YAML_HOOKS_ALLOW_PROJECT_IMPORTS_OUTSIDE_TRUST_ANCHOR=1`.
-- OMP uses the active profile's agent directory and separate trust store. Global discovery stays inside that agent directory. For project config, native `.omp` wins before a legacy `.pi` fallback, and the fallback still requires OMP trust.
+- OMP uses the active profile's agent directory and separate trust store. Global discovery stays inside that agent directory. Project discovery checks native `.omp` before legacy `.pi` within each directory while walking upward; a legacy fallback still requires OMP trust.
 - Later files stay compatible with the same explicit `override:` / `disable:` behavior by `id`.
 - Project hook files are ignored until the repo or worktree trust anchor is trusted through `/hooks-trust`, the active host's `trusted-projects.json`, or `PI_YAML_HOOKS_TRUST_PROJECT=1`.
 - `command:` actions are rejected at load time.

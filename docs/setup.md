@@ -239,7 +239,7 @@ Project:
 3. `<project>/.pi/hook/hooks.yaml`
 4. `<project>/.pi/hooks.yaml`
 
-OMP's project-level `.pi` entries are legacy fallbacks. A native `.omp` project candidate wins before a legacy candidate, and only one project file loads. Global discovery stays inside the active OMP profile's agent directory.
+OMP's project-level `.pi` entries are legacy fallbacks. Project discovery walks upward from the working directory and checks `.omp` before `.pi` within each directory, so a nearer `.pi` file wins over a parent directory's `.omp` file. Only one project file loads. Global discovery stays inside the active OMP profile's agent directory.
 
 Windows is not a supported runtime, even if some internal path discovery code recognizes Windows-style locations.
 
