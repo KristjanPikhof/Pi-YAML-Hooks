@@ -724,6 +724,11 @@ hooks: []
         const records: string[] = []
         const runtime = createHooksRuntime(createFakeHost(records), {
           directory: projectDir,
+          hooks: initial.hooks,
+          initialSignature: initial.signature,
+          initialFiles: initial.files,
+          initialWatchPaths: initial.watchPaths,
+          reloadDiscoveredHooks: true,
           configDiscovery,
         })
 

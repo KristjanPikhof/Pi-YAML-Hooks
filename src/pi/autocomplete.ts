@@ -9,7 +9,7 @@ import {
   resolveHookConfigWatchPaths,
   resolveProjectHookResolution,
 } from "../core/config-paths.js"
-import { loadDiscoveredHooksSnapshot, type HookLoadSnapshot } from "../core/load-hooks.js"
+import { loadDiscoveredHooksSnapshot } from "../core/load-hooks.js"
 import { getHookHostProfile } from "../core/host-profile.js"
 import { SESSION_HOOK_EVENTS } from "../core/types.js"
 import { getPiHooksLogFilePath } from "../core/logger.js"
@@ -226,7 +226,7 @@ function getOrComputeAutocompleteState(cwd: string): HookAutocompleteState {
   const watchedPaths = mergeUniquePaths(
     resolveHookConfigWatchPaths({ projectDir, profile }).paths,
     snapshot.files,
-    getSnapshotWatchPaths(snapshot),
+    snapshot.watchPaths,
   )
   cachedAutocompleteState = {
     projectDir,
@@ -246,17 +246,6 @@ const DISCOVERY_ENV_KEYS = [
   "PI_YAML_HOOKS_ALLOW_GLOBAL_IMPORTS",
   "PI_YAML_HOOKS_ALLOW_PACKAGE_IMPORTS",
 ] as const
-
-
-function getSnapshotWatchPaths(snapshot: HookLoadSnapshot): readonly string[] {
-  if (!("watchPaths" in snapshot)) {
-    return []
-  }
-  const { watchPaths } = snapshot
-  return Array.isArray(watchPaths) && watchPaths.every((filePath) => typeof filePath === "string")
-    ? watchPaths
-    : []
-}
 
 function mergeUniquePaths(...pathSets: readonly (readonly string[])[]): string[] {
   const paths = new Set<string>()

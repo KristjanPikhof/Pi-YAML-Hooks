@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs"
+import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs"
 import os from "node:os"
 import path from "node:path"
 
@@ -113,6 +113,9 @@ async function withSandbox<T>(run: (projectDir: string, homeDir: string) => Prom
   process.env.HOME = homeDir
   process.env.USERPROFILE = homeDir
   process.env.PI_YAML_HOOKS_TRUST_PROJECT = "1"
+  delete process.env.PI_YAML_HOOKS_ALLOW_GLOBAL_IMPORTS
+  delete process.env.PI_YAML_HOOKS_ALLOW_PACKAGE_IMPORTS
+  delete process.env.PI_YAML_HOOKS_ALLOW_PROJECT_IMPORTS_OUTSIDE_TRUST_ANCHOR
   __resetHookHostProfileForTests()
   resetPiHooksLoggerForTests()
   resetHookAutocompleteForTests()
@@ -514,7 +517,7 @@ hooks: []
         const suggestions = await provider.getSuggestions([input], 0, input.length, { signal: signal() })
         const items = suggestions?.items ?? []
         const globalPath = path.join(homeDir, ".pi", "agent", "hook", "hooks.yaml")
-        const projectPath = path.join(projectDir, ".pi", "hook", "hooks.yaml")
+        const projectPath = path.join(realpathSync(projectDir), ".pi", "hook", "hooks.yaml")
         const globalItem = items.find((item) => item.value === globalPath)
         const projectItem = items.find((item) => item.value === projectPath)
         const ok =
@@ -531,7 +534,7 @@ hooks: []
         const agentDir = path.join(homeDir, ".omp", "agent", "profiles", "work")
         const profile = configureHookHostProfile({ kind: "omp", agentDir })
         const globalPath = path.join(profile.agentDir, "hook", "hooks.yaml")
-        const projectPath = path.join(projectDir, ".omp", "hook", "hooks.yaml")
+        const projectPath = path.join(realpathSync(projectDir), ".omp", "hook", "hooks.yaml")
         writeHooksFile(globalPath, "hooks: []\n")
         writeHooksFile(projectPath, "hooks: []\n")
         const ctx = makeContext({ projectDir, hasUI: true, expose: true })
@@ -556,9 +559,10 @@ hooks: []
         const agentDir = path.join(homeDir, ".omp", "agent")
         const profile = configureHookHostProfile({ kind: "omp", agentDir })
         const fallbackGlobal = path.join(homeDir, ".pi", "agent", "hook", "hooks.yaml")
-        const fallbackProject = path.join(projectDir, ".pi", "hook", "hooks.yaml")
+        const canonicalProjectDir = realpathSync(projectDir)
+        const fallbackProject = path.join(canonicalProjectDir, ".pi", "hook", "hooks.yaml")
         const nativeGlobal = path.join(profile.agentDir, "hook", "hooks.yaml")
-        const nativeProject = path.join(projectDir, ".omp", "hook", "hooks.yaml")
+        const nativeProject = path.join(canonicalProjectDir, ".omp", "hook", "hooks.yaml")
         writeHooksFile(fallbackGlobal, "hooks: []\n")
         writeHooksFile(fallbackProject, "hooks: []\n")
         const ctx = makeContext({ projectDir, hasUI: true, expose: true })
@@ -596,7 +600,7 @@ hooks: []
         const initial = await provider.getSuggestions([input], 0, input.length, { signal: signal() })
         process.env.PI_YAML_HOOKS_TRUST_PROJECT = "1"
         const refreshed = await provider.getSuggestions([input], 0, input.length, { signal: signal() })
-        const projectPath = path.join(projectDir, ".pi", "hook", "hooks.yaml")
+        const projectPath = path.join(realpathSync(projectDir), ".pi", "hook", "hooks.yaml")
         const initialItem = initial?.items.find((item) => item.value === projectPath)
         const refreshedItem = refreshed?.items.find((item) => item.value === projectPath)
         const ok =
