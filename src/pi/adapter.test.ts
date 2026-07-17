@@ -5,8 +5,10 @@ import { fileURLToPath, pathToFileURL } from "node:url"
 
 import { __resetHookHostProfileForTests } from "../core/host-profile.js"
 import { resetPiHooksLoggerForTests } from "../core/logger.js"
+import { getToolFileChanges } from "../core/tool-paths.js"
 import { __testing__ as adapterTesting } from "./adapter.js"
 import { resetHookAutocompleteForTests } from "./autocomplete.js"
+import { mapToolResultToAfterInput } from "./event-mappers.js"
 
 const currentDir = path.dirname(fileURLToPath(import.meta.url))
 const extensionEntrypointPath = currentDir.endsWith(`${path.sep}dist${path.sep}pi`)
@@ -28,6 +30,7 @@ interface Case {
 }
 
 type PiHandler = (event: unknown, ctx: unknown) => Promise<unknown> | unknown
+type ToolResultMapperEvent = Parameters<typeof mapToolResultToAfterInput>[0]
 type CommandHandler = (args: string, ctx: unknown) => Promise<void>
 type AutocompleteItem = { value: string; label: string; description?: string }
 type AutocompleteProvider = {
@@ -654,6 +657,77 @@ const cases: Case[] = [
           ? { ok: true }
           : { ok: false, detail: `notifications=${JSON.stringify(harness.notifications)}` }
       }),
+  },
+  {
+    name: "legacy Pi tool_result input is preserved unchanged",
+    run: async () => {
+      const input = { path: "/repo/src/pi.ts", oldText: "before", newText: "after" }
+      const mapped = mapToolResultToAfterInput(
+        { toolName: "edit", toolCallId: "pi-1", input } as unknown as ToolResultMapperEvent,
+        "session-pi",
+      )
+      return mapped.tool === "edit" &&
+          mapped.callID === "pi-1" &&
+          mapped.sessionID === "session-pi" &&
+          mapped.args === input
+        ? { ok: true }
+        : { ok: false, detail: JSON.stringify(mapped) }
+    },
+  },
+  {
+    name: "OMP single-file edit details authoritatively override hashline payload path",
+    run: async () => {
+      const mapped = mapToolResultToAfterInput(
+        {
+          toolName: "edit",
+          toolCallId: "omp-hashline-mapper",
+          input: { input: "[stale.ts#A1B2]\nSWAP 1.=1:\n+updated" },
+          details: { diff: "", path: "/repo/src/actual.ts", op: "update" },
+        } as unknown as ToolResultMapperEvent,
+        "session-omp",
+      )
+      const changes = getToolFileChanges(mapped.tool, mapped.args ?? {})
+      return changes.length === 1 && changes[0].operation === "modify" && changes[0].path === "/repo/src/actual.ts"
+        ? { ok: true }
+        : { ok: false, detail: JSON.stringify({ mapped, changes }) }
+    },
+  },
+  {
+    name: "OMP multi-file apply_patch details preserve successful result operations",
+    run: async () => {
+      const mapped = mapToolResultToAfterInput(
+        {
+          toolName: "edit",
+          toolCallId: "omp-apply-patch-mapper",
+          input: { input: "*** Begin Patch\n*** Update File: stale.ts\n@@\n*** End Patch" },
+          details: {
+            diff: "",
+            perFileResults: [
+              { path: "/repo/src/new.ts", op: "create", diff: "" },
+              {
+                path: "/repo/src/to.ts",
+                sourcePath: "/repo/src/from.ts",
+                op: "update",
+                move: "/repo/src/to.ts",
+                diff: "",
+              },
+              { path: "/repo/src/failed.ts", op: "update", diff: "", isError: true },
+            ],
+          },
+        } as unknown as ToolResultMapperEvent,
+        "session-omp",
+      )
+      const changes = getToolFileChanges(mapped.tool, mapped.args ?? {})
+      const summary = changes.map((change) =>
+        change.operation === "rename"
+          ? `rename:${change.fromPath}->${change.toPath}`
+          : `${change.operation}:${change.path}`,
+      )
+      const expected = ["create:/repo/src/new.ts", "rename:/repo/src/from.ts->/repo/src/to.ts"]
+      return JSON.stringify(summary) === JSON.stringify(expected)
+        ? { ok: true }
+        : { ok: false, detail: JSON.stringify({ mapped, summary }) }
+    },
   },
   {
     name: "registers the hook diagnostics message renderer",
