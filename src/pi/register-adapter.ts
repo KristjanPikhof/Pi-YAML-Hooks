@@ -50,7 +50,7 @@ import { registerUserBashInterception } from "./user-bash.js";
  * Installs:
  * - `tool_call`    → runtime `tool.execute.before` (+ block-tool response)
  * - `tool_result`  → Phase 1 snapshot-hook + runtime `tool.execute.after`
- * - `agent_end` / `agent_settled`
+ * - `agent_end` / `agent_settled` (PI), deferred `session_stop` (OMP)
  *                  → runtime `session.idle` (when idle + no pending messages)
  * - `session_start`→ runtime `session.created` (on new/startup)
  * - `session_shutdown` / `session_before_switch`
@@ -173,9 +173,9 @@ export function registerAdapter(pi: ExtensionAPI, hostKind: HookHostKind = "pi")
 
   // ---- host-specific idle lifecycle ----
   // Pi <=0.79 is idle at agent_end. Pi >=0.80 emits agent_settled only after
-  // retries, compaction, and queued continuations are exhausted. OMP 17 emits
-  // its extension-facing agent_end only after all session_stop handlers have
-  // settled, so continuation eligibility is authoritative at agent_end.
+  // retries, compaction, and queued continuations are exhausted. OMP 17 can
+  // emit agent_end on retry and continuation paths before the session has
+  // genuinely stopped, so only its session_stop event is an idle candidate.
   let sessionIdleDispatched = false;
   let sessionIdleGeneration = 0;
 
@@ -208,11 +208,21 @@ export function registerAdapter(pi: ExtensionAPI, hostKind: HookHostKind = "pi")
   };
 
   if (hostKind === "omp") {
-    pi.on("agent_end", async (_event, ctx: ExtensionContext): Promise<void> => {
+    const sessionStopEventApi = pi as unknown as {
+      on(event: "session_stop", handler: (_event: unknown, ctx: ExtensionContext) => void): void;
+    };
+    sessionStopEventApi.on("session_stop", (_event, ctx): void => {
       const expectedSessionId = safeGetSessionId(ctx.sessionManager);
       if (!expectedSessionId) return;
       const expectedGeneration = sessionIdleGeneration;
-      await dispatchSessionIdle(ctx, expectedSessionId, expectedGeneration);
+
+      // OMP awaits session_stop handlers sequentially, then consumes any
+      // continuation result. Yield a macrotask instead of awaiting here so
+      // queued continuation state or a new agent_start can invalidate this
+      // captured stop before it is treated as authoritative idle.
+      setTimeout(() => {
+        void dispatchSessionIdle(ctx, expectedSessionId, expectedGeneration);
+      }, 0);
     });
   } else {
     pi.on("agent_end", async (_event, ctx: ExtensionContext): Promise<void> => {
