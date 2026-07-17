@@ -76,8 +76,44 @@ type OmpEditToolResult = ToolResultEvent & {
   };
 };
 
+type OmpWriteToolResult = ToolResultEvent & {
+  readonly isError?: unknown;
+  readonly details?: {
+    readonly resolvedPath?: unknown;
+  };
+};
+
+const URI_LIKE_PATH_RE = /^[A-Za-z][A-Za-z0-9+.-]*:\/\//;
+
 function normalizeToolResultArgs(event: ToolResultEvent): Record<string, unknown> {
   const args = (event.input ?? {}) as Record<string, unknown>;
+  if (event.toolName === "write") {
+    const ompEvent = event as OmpWriteToolResult;
+    const resolvedPath = ompEvent.details?.resolvedPath;
+    if (
+      typeof resolvedPath === "string" &&
+      resolvedPath.trim().length > 0 &&
+      !URI_LIKE_PATH_RE.test(resolvedPath)
+    ) {
+      return withAuthoritativeOmpMutationArgs(args, { path: resolvedPath });
+    }
+
+    const requestedPath =
+      typeof args.filePath === "string" && args.filePath.trim().length > 0
+        ? args.filePath
+        : typeof args.file_path === "string" && args.file_path.trim().length > 0
+          ? args.file_path
+          : typeof args.path === "string" && args.path.trim().length > 0
+            ? args.path
+            : typeof args.file === "string" && args.file.trim().length > 0
+              ? args.file
+              : undefined;
+    if (ompEvent.isError === true || (requestedPath !== undefined && URI_LIKE_PATH_RE.test(requestedPath))) {
+      return withAuthoritativeOmpMutationArgs(args, { edits: [] });
+    }
+
+    return args;
+  }
   if (event.toolName !== "edit") return args;
 
   const ompEvent = event as OmpEditToolResult;
@@ -90,7 +126,7 @@ function normalizeToolResultArgs(event: ToolResultEvent): Record<string, unknown
       .filter((entry) => entry.isError !== true)
       .map(normalizeOmpEditDetail)
       .filter((entry): entry is Record<string, unknown> => entry !== undefined);
-    return withAuthoritativeOmpEdits(args, edits);
+    return withAuthoritativeOmpMutationArgs(args, { edits });
   }
 
   const hasAppliedEvidence =
@@ -98,7 +134,7 @@ function normalizeToolResultArgs(event: ToolResultEvent): Record<string, unknown
     typeof details.oldText === "string" ||
     typeof details.newText === "string";
   if (ompEvent.isError === true && !hasAppliedEvidence) {
-    return withAuthoritativeOmpEdits(args, []);
+    return withAuthoritativeOmpMutationArgs(args, { edits: [] });
   }
 
   const normalizedDetail = normalizeOmpEditDetail(details);
@@ -106,14 +142,14 @@ function normalizeToolResultArgs(event: ToolResultEvent): Record<string, unknown
 }
 
 /**
- * OMP per-file results describe what actually reached disk, so requested
- * mutation paths must not survive alongside them. In particular, an empty
- * successful set must remain a non-empty args envelope (`{ edits: [] }`) so
- * the runtime neither parses the raw request nor falls back to pending args.
+ * OMP result details describe what actually reached disk, so requested
+ * mutation paths must not survive alongside authoritative results. An empty
+ * successful set must also remain a non-empty args envelope (`{ edits: [] }`)
+ * so the runtime neither parses the raw request nor falls back to pending args.
  */
-function withAuthoritativeOmpEdits(
+function withAuthoritativeOmpMutationArgs(
   args: Record<string, unknown>,
-  edits: readonly Record<string, unknown>[],
+  authoritativeArgs: Record<string, unknown>,
 ): Record<string, unknown> {
   const {
     edits: _requestedEdits,
@@ -130,7 +166,7 @@ function withAuthoritativeOmpEdits(
     ...safeArgs
   } = args;
 
-  return { ...safeArgs, edits };
+  return { ...safeArgs, ...authoritativeArgs };
 }
 
 function normalizeOmpEditDetail(detail: OmpEditResultDetail): Record<string, unknown> | undefined {
