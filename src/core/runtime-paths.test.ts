@@ -10,6 +10,7 @@ import {
 import os from "node:os"
 import path from "node:path"
 
+import { loadDiscoveredHooksSnapshot } from "./load-hooks.js"
 import { buildPathMatchContext, createHooksRuntime } from "./runtime.js"
 import type { BashExecutionRequest, BashHookResult } from "./bash-types.js"
 import type { HookAction, HookMap, HostAdapter } from "./types.js"
@@ -568,6 +569,62 @@ hooks: []
               ok: false,
               detail: `discovery instrumentation was not exercised counts=${counts()}`,
             }
+      } finally {
+        rmSync(sandbox, { recursive: true, force: true })
+      }
+    },
+  },
+  {
+    name: "runtime watches preloaded imports and detects rapid same-size rewrites",
+    run: async () => {
+      const sandbox = mkdtempSync(path.join(os.tmpdir(), "pi-hooks-runtime-preloaded-import-"))
+      const homeDir = path.join(sandbox, "home")
+      const agentDir = path.join(homeDir, ".pi", "agent")
+      const projectDir = path.join(sandbox, "repo")
+      const projectPath = path.join(projectDir, ".pi", "hook", "hooks.yaml")
+      const importedPath = path.join(projectDir, ".pi", "hook", "imported.yaml")
+      const trustPath = path.join(agentDir, "trusted-projects.json")
+      const profile = Object.freeze({ kind: "pi" as const, agentDir })
+      const configDiscovery = {
+        homeDir,
+        profile,
+        resolveGitWorktreeRoot: () => projectDir,
+      }
+
+      try {
+        mkdirSync(projectDir, { recursive: true })
+        writeWatchedFile(trustPath, `${JSON.stringify([projectDir])}\n`)
+        writeWatchedFile(projectPath, `imports:
+  - ./imported.yaml
+hooks: []
+`)
+        writeFileSync(importedPath, notificationHooks("preloaded-v1"), "utf8")
+
+        const initial = loadDiscoveredHooksSnapshot({
+          ...configDiscovery,
+          projectDir,
+        })
+        const records: string[] = []
+        const runtime = createHooksRuntime(createFakeHost(records), {
+          directory: projectDir,
+          hooks: initial.hooks,
+          initialSignature: initial.signature,
+          initialFiles: initial.files,
+          reloadDiscoveredHooks: true,
+          configDiscovery,
+        })
+
+        await runtime.event({
+          event: { type: "session.created", properties: { info: { id: "preloaded-v1" } } },
+        })
+        writeFileSync(importedPath, notificationHooks("preloaded-v2"), "utf8")
+        await runtime.event({
+          event: { type: "session.created", properties: { info: { id: "preloaded-v2" } } },
+        })
+
+        return JSON.stringify(records) === JSON.stringify(["preloaded-v1", "preloaded-v2"])
+          ? { ok: true }
+          : { ok: false, detail: `records=${JSON.stringify(records)} initialFiles=${JSON.stringify(initial.files)}` }
       } finally {
         rmSync(sandbox, { recursive: true, force: true })
       }
