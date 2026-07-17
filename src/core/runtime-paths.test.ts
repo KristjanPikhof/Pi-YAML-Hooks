@@ -707,15 +707,24 @@ hooks: []
   - ./fragments
 hooks: []
 `)
+        const configDiscovery = {
+          homeDir,
+          profile: Object.freeze({ kind: "pi" as const, agentDir }),
+          resolveGitWorktreeRoot: () => projectDir,
+        }
+        const initial = loadDiscoveredHooksSnapshot({ ...configDiscovery, projectDir })
+        const importedDirWatchPath = path.join(path.dirname(initial.files[0] ?? projectPath), "fragments")
+        if (!initial.watchPaths.includes(importedDirWatchPath) || initial.files.includes(importedDirWatchPath)) {
+          return {
+            ok: false,
+            detail: `directory manifest files=${JSON.stringify(initial.files)} watchPaths=${JSON.stringify(initial.watchPaths)}`,
+          }
+        }
 
         const records: string[] = []
         const runtime = createHooksRuntime(createFakeHost(records), {
           directory: projectDir,
-          configDiscovery: {
-            homeDir,
-            profile: Object.freeze({ kind: "pi", agentDir }),
-            resolveGitWorktreeRoot: () => projectDir,
-          },
+          configDiscovery,
         })
 
         await runtime.event({
@@ -752,15 +761,24 @@ hooks: []
   - ./later.yaml
 hooks: []
 `)
+        const configDiscovery = {
+          homeDir,
+          profile: Object.freeze({ kind: "pi" as const, agentDir }),
+          resolveGitWorktreeRoot: () => projectDir,
+        }
+        const initial = loadDiscoveredHooksSnapshot({ ...configDiscovery, projectDir })
+        const missingWatchPath = path.join(path.dirname(initial.files[0] ?? projectPath), "later.yaml")
+        if (!initial.watchPaths.includes(missingWatchPath) || initial.files.includes(missingWatchPath)) {
+          return {
+            ok: false,
+            detail: `missing manifest files=${JSON.stringify(initial.files)} watchPaths=${JSON.stringify(initial.watchPaths)}`,
+          }
+        }
 
         const records: string[] = []
         const runtime = createHooksRuntime(createFakeHost(records), {
           directory: projectDir,
-          configDiscovery: {
-            homeDir,
-            profile: Object.freeze({ kind: "pi", agentDir }),
-            resolveGitWorktreeRoot: () => projectDir,
-          },
+          configDiscovery,
         })
 
         await runtime.event({
