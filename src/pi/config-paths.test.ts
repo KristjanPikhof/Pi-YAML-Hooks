@@ -9,6 +9,7 @@ import {
   discoverHookConfigEntries,
   resolveHookConfigPaths,
   resolveTrustedProjectsFilePath,
+  resolveHookConfigWatchPaths,
   resolveProjectHookResolution,
 } from "../core/config-paths.js"
 import {
@@ -526,6 +527,58 @@ const cases: Case[] = [
         return ok ? { ok: true } : { ok: false, detail: JSON.stringify({ piTrustedOnly, ompTrusted, paths }) }
       } finally {
         __resetTrustListCacheForTests()
+        cleanup(sandbox)
+      }
+    },
+  },
+  {
+    name: "watch paths cover host candidates, cwd ancestors, trust, and repository markers",
+    run: () => {
+      const sandbox = createSandbox("watch-paths")
+      const homeDir = path.join(sandbox, "home")
+      const worktreeRoot = path.join(sandbox, "repo")
+      const cwd = path.join(worktreeRoot, "packages", "app")
+      const profile = createHookHostProfile({ kind: "omp", agentDir: path.join(homeDir, ".omp", "agent") })
+      mkdirSync(cwd, { recursive: true })
+
+      let gitResolverCalls = 0
+      try {
+        const actual = resolveHookConfigWatchPaths({
+          projectDir: cwd,
+          homeDir,
+          profile,
+          resolveGitWorktreeRoot: () => {
+            gitResolverCalls += 1
+            return worktreeRoot
+          },
+        }).paths
+
+        const expected = [
+          path.join(profile.agentDir, "hook", "hooks.yaml"),
+          path.join(profile.agentDir, "hooks.yaml"),
+          path.join(homeDir, ".pi", "agent", "hook", "hooks.yaml"),
+          path.join(homeDir, ".pi", "agent", "hooks.yaml"),
+          path.join(profile.agentDir, "trusted-projects.json"),
+        ]
+        for (const dir of [cwd, path.dirname(cwd), worktreeRoot]) {
+          expected.push(
+            path.join(dir, ".omp", "hook", "hooks.yaml"),
+            path.join(dir, ".omp", "hooks.yaml"),
+            path.join(dir, ".pi", "hook", "hooks.yaml"),
+            path.join(dir, ".pi", "hooks.yaml"),
+            path.join(dir, ".git"),
+          )
+        }
+
+        const outsideWorktree = path.join(sandbox, ".pi", "hook", "hooks.yaml")
+        const ok =
+          gitResolverCalls === 1 &&
+          JSON.stringify(actual) === JSON.stringify(expected) &&
+          !actual.includes(outsideWorktree)
+        return ok
+          ? { ok: true }
+          : { ok: false, detail: JSON.stringify({ gitResolverCalls, actual, expected, outsideWorktree }) }
+      } finally {
         cleanup(sandbox)
       }
     },
