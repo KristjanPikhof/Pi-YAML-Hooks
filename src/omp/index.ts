@@ -1,6 +1,10 @@
+import path from "node:path"
+
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent"
 
 import { registerHooksExtension } from "../index.js"
+import { setActiveHookPolicy } from "../core/load-hooks.js"
+import { ompHookPolicy } from "../pi/unsupported.js"
 
 interface OmpAgentDirCapability {
   readonly pi: {
@@ -28,8 +32,13 @@ export default function ompHooksExtension(input: unknown): void {
   if (typeof agentDir !== "string" || agentDir.trim().length === 0) {
     throw new Error("OMP extension requires pi.pi.getAgentDir() to return a non-empty string agentDir.")
   }
+  if (!path.isAbsolute(agentDir)) {
+    throw new Error("OMP extension requires pi.pi.getAgentDir() to return an absolute agentDir path.")
+  }
+
 
   registerHooksExtension(pi, { kind: "omp", agentDir })
+  setActiveHookPolicy(ompHookPolicy)
 }
 
 function requireOmpExtensionApi(input: unknown): ExtensionAPI & OmpAgentDirCapability {

@@ -95,7 +95,7 @@ async function invokeBeforeAgentStart(
   pi: FakePi,
   projectDir: string,
   hasUI = true,
-  basePrompt = "base system prompt",
+  basePrompt: string | string[] = "base system prompt",
   mode?: string,
 ): Promise<unknown> {
   const handlers = pi.handlers.get("before_agent_start") ?? []
@@ -162,7 +162,7 @@ const cases: Case[] = [
       }),
   },
   {
-    name: "reports selected OMP native paths and trust state",
+    name: "appends OMP awareness as a new system-prompt block without mutating host input",
     run: async () =>
       await withSandbox({ trusted: true }, async (projectDir, homeDir) => {
         const agentDir = path.join(homeDir, ".omp", "agent", "profiles", "work")
@@ -173,15 +173,23 @@ const cases: Case[] = [
         writeHooksFile(projectPath, "hooks: []\n")
         const pi = createFakePi()
         registerPromptSupport(pi as never)
-        const result = await invokeBeforeAgentStart(pi, projectDir)
-        const sp = (result as { systemPrompt?: string } | undefined)?.systemPrompt
+        const hostPrompt = ["base system prompt", "project instructions"]
+        const originalHostPrompt = [...hostPrompt]
+        const result = await invokeBeforeAgentStart(pi, projectDir, true, hostPrompt)
+        const sp = (result as { systemPrompt?: string[] } | undefined)?.systemPrompt
+        const awareness = sp?.at(-1)
         const ok =
-          typeof sp === "string" &&
-          sp.includes("- active hook host: OMP") &&
-          sp.includes(`- selected global hook config: ${globalPath}`) &&
-          sp.includes(`- project hooks are trusted and active when loaded: ${projectPath}`) &&
-          sp.includes(`- project trust list: ${path.join(profile.agentDir, "trusted-projects.json")}`)
-        return ok ? { ok: true } : { ok: false, detail: typeof sp === "string" ? sp : JSON.stringify(result) }
+          Array.isArray(sp) &&
+          sp !== hostPrompt &&
+          sp.length === hostPrompt.length + 1 &&
+          sp[0] === hostPrompt[0] &&
+          sp[1] === hostPrompt[1] &&
+          JSON.stringify(hostPrompt) === JSON.stringify(originalHostPrompt) &&
+          awareness?.includes("- active hook host: OMP") === true &&
+          awareness.includes(`- selected global hook config: ${globalPath}`) &&
+          awareness.includes(`- project hooks are trusted and active when loaded: ${projectPath}`) &&
+          awareness.includes(`- project trust list: ${path.join(profile.agentDir, "trusted-projects.json")}`)
+        return ok ? { ok: true } : { ok: false, detail: JSON.stringify({ hostPrompt, sp }) }
       }),
   },
   {
@@ -198,12 +206,12 @@ const cases: Case[] = [
         writeHooksFile(fallbackProject, "hooks: []\n")
         const pi = createFakePi()
         registerPromptSupport(pi as never)
-        const initialResult = await invokeBeforeAgentStart(pi, projectDir)
+        const initialResult = await invokeBeforeAgentStart(pi, projectDir, true, ["base system prompt"])
         writeHooksFile(nativeGlobal, "hooks: []\n")
         writeHooksFile(nativeProject, "hooks: []\n")
-        const refreshedResult = await invokeBeforeAgentStart(pi, projectDir)
-        const initial = (initialResult as { systemPrompt?: string } | undefined)?.systemPrompt
-        const refreshed = (refreshedResult as { systemPrompt?: string } | undefined)?.systemPrompt
+        const refreshedResult = await invokeBeforeAgentStart(pi, projectDir, true, ["base system prompt"])
+        const initial = (initialResult as { systemPrompt?: string[] } | undefined)?.systemPrompt?.at(-1)
+        const refreshed = (refreshedResult as { systemPrompt?: string[] } | undefined)?.systemPrompt?.at(-1)
         const ok =
           (pi.handlers.get("before_agent_start") ?? []).length === 1 &&
           initial?.includes(`- selected global hook config: ${fallbackGlobal}`) === true &&
@@ -312,6 +320,20 @@ const cases: Case[] = [
       }),
   },
   {
+    name: "keeps OMP host prompt unchanged when awareness is disabled",
+    run: async () =>
+      await withSandbox({ trusted: true, awareness: "0" }, async (projectDir, homeDir) => {
+        configureHookHostProfile({ kind: "omp", agentDir: path.join(homeDir, ".omp", "agent") })
+        const pi = createFakePi()
+        registerPromptSupport(pi as never)
+        const hostPrompt = ["base system prompt", "project instructions"]
+        const originalHostPrompt = [...hostPrompt]
+        const result = await invokeBeforeAgentStart(pi, projectDir, true, hostPrompt)
+        const ok = result === undefined && JSON.stringify(hostPrompt) === JSON.stringify(originalHostPrompt)
+        return ok ? { ok: true } : { ok: false, detail: JSON.stringify({ hostPrompt, result }) }
+      }),
+  },
+  {
     // P3-3: accept additional "off" spellings beyond literal "0".
     name: "is disabled for false / off / no / FALSE / 0 (case-insensitive)",
     run: async () => {
@@ -366,18 +388,19 @@ const cases: Case[] = [
       }),
   },
   {
-    name: "trims trailing whitespace from base system prompt before appending",
+    name: "appends Pi awareness to the system-prompt string without mutating host input",
     run: async () =>
       await withSandbox({ trusted: true }, async (projectDir) => {
         const pi = createFakePi()
         registerPromptSupport(pi as never)
-        const result = await invokeBeforeAgentStart(pi, projectDir, true, "base prompt   \n\n  ")
+        const hostPrompt = "base prompt   \n\n  "
+        const result = await invokeBeforeAgentStart(pi, projectDir, true, hostPrompt)
         const sp = (result as { systemPrompt?: string } | undefined)?.systemPrompt
         if (typeof sp !== "string") return { ok: false, detail: JSON.stringify(result) }
-        // Ensure we have exactly one blank line separating the trimmed base from the awareness block.
-        return /base prompt\n\nHook-awareness for this session:/.test(sp)
-          ? { ok: true }
-          : { ok: false, detail: JSON.stringify(sp) }
+        const ok =
+          hostPrompt === "base prompt   \n\n  " &&
+          /base prompt\n\nHook-awareness for this session:/.test(sp)
+        return ok ? { ok: true } : { ok: false, detail: JSON.stringify({ hostPrompt, sp }) }
       }),
   },
 ]
