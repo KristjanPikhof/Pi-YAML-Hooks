@@ -200,7 +200,7 @@ write_rpc_driver() {
 import fs from "node:fs";
 import { spawn } from "node:child_process";
 
-const [piBin, projectDir, transcriptPath, stderrPath, mode, sessionDir] = process.argv.slice(2);
+const [piBin, projectDir, transcriptPath, stderrPath, mode, sessionDir, eventsPath] = process.argv.slice(2);
 const transcript = fs.createWriteStream(transcriptPath, { flags: "a" });
 const stderr = fs.createWriteStream(stderrPath, { flags: "a" });
 const child = spawn(piBin, [
@@ -284,6 +284,30 @@ function rpc(type, payload = {}) {
 }
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+function countExactEvent(eventName) {
+  let text;
+  try {
+    text = fs.readFileSync(eventsPath, "utf8");
+  } catch (error) {
+    if (error?.code === "ENOENT") return 0;
+    throw error;
+  }
+  return text.trim().split("\n").filter(Boolean).reduce((count, line, index) => {
+    let row;
+    try { row = JSON.parse(line); }
+    catch (error) { throw new Error(`invalid event NDJSON row ${index + 1}: ${error.message}`); }
+    return count + (row?.event === eventName ? 1 : 0);
+  }, 0);
+}
+async function waitForNewExactEvent(eventName, previousCount, timeoutMs = 10000) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    const count = countExactEvent(eventName);
+    if (count > previousCount) return;
+    await sleep(50);
+  }
+  throw new Error(`timed out waiting for new exact ${eventName} NDJSON row after count=${previousCount}`);
+}
 async function waitUntilIdle() {
   for (let attempt = 0; attempt < 100; attempt += 1) {
     const response = await rpc("get_state");
@@ -329,8 +353,10 @@ try {
     await slash("/hooks-reload");
     await slash("/hooks-status");
     await rpc("bash", { command: "printf 'rpc-bash\\n' > .pi/hooks-smoke/rpc-bash.txt" });
+    const idleRowsBeforePrompt = countExactEvent("session.idle");
     await rpc("prompt", { message: "Run the deterministic runtime smoke tool sequence now." });
     await waitUntilIdle();
+    await waitForNewExactEvent("session.idle", idleRowsBeforePrompt);
     const newSession = await rpc("new_session");
     if (newSession.data.cancelled !== false) throw new Error(`new_session cancelled: ${JSON.stringify(newSession.data)}`);
     await sleep(500);
@@ -721,7 +747,7 @@ EOF
   local events_file="$evidence_dir/events.ndjson"
   local untrusted_rpc="$transcript_dir/untrusted-rpc.ndjson"
   local untrusted_err="$transcript_dir/untrusted-stderr.txt"
-  env "${common_env[@]}" node "$rpc_driver" "$pi_bin" "$project_dir" "$untrusted_rpc" "$untrusted_err" untrusted "$sessions_dir/untrusted"
+  env "${common_env[@]}" node "$rpc_driver" "$pi_bin" "$project_dir" "$untrusted_rpc" "$untrusted_err" untrusted "$sessions_dir/untrusted" "$events_file"
   assert_contains "$untrusted_err" "Skipping untrusted project hooks"
   assert_contains "$untrusted_rpc" "Project trusted: no"
   assert_contains "$untrusted_rpc" "Project hooks exist but are not active"
@@ -739,7 +765,7 @@ EOF
 
   local trusted_rpc="$transcript_dir/trusted-rpc.ndjson"
   local trusted_err="$transcript_dir/trusted-stderr.txt"
-  env "${common_env[@]}" node "$rpc_driver" "$pi_bin" "$project_dir" "$trusted_rpc" "$trusted_err" trusted "$sessions_dir/trusted"
+  env "${common_env[@]}" node "$rpc_driver" "$pi_bin" "$project_dir" "$trusted_rpc" "$trusted_err" trusted "$sessions_dir/trusted" "$events_file"
   assert_contains "$trusted_rpc" "Project trusted: yes"
   assert_contains "$trusted_rpc" "$global_config"
   assert_contains "$trusted_rpc" "$project_config"
@@ -812,8 +838,12 @@ function validateEventRows(rows) {
     const created = rows.findIndex((row) => row.event === "session.created" && row.session === session);
     const globalCreated = rows.findIndex((row) => row.event === "global.session.created" && row.session === session);
     const idle = rows.findIndex((row) => row.event === "session.idle" && row.session === session);
-    const deleted = rows.findIndex((row) => row.event === "session.deleted" && row.session === session);
-    return { session, globalCreated, created, idle, deleted };
+    const deletionIndexes = rows
+      .map((row, index) => row.event === "session.deleted" && row.session === session ? index : -1)
+      .filter((index) => index >= 0);
+    const deletedAfterIdle = deletionIndexes.find((index) => idle >= 0 && index > idle);
+    const deleted = deletedAfterIdle ?? deletionIndexes.find((index) => index > created) ?? -1;
+    return { session, globalCreated, created, idle, deleted, deletionIndexes };
   });
   const active = lifecycle.find(({ globalCreated, created, idle, deleted }) =>
     globalCreated >= 0 && globalCreated < created && created < idle && idle < deleted);
@@ -827,7 +857,7 @@ function validateEventRows(rows) {
   const before = orderedToolIndex("tool.before.bash", (row) => typeof row.tool_args?.command === "string");
   const afterRead = orderedToolIndex("tool.after.read", (row) => row.session === active.session);
   const afterWrite = orderedToolIndex("tool.after.write", (row) => Array.isArray(row.changes) && Array.isArray(row.files));
-  const fileChanged = orderedToolIndex("file.changed", (row) => row.session === active.session, afterWrite);
+  const fileChanged = orderedToolIndex("file.changed", (row) => row.session === active.session, before);
   if ([before, afterRead, afterWrite, fileChanged].some((index) => index < 0)) {
     throw new Error(`tool/file rows lack created-before-tools-before-idle order: ${JSON.stringify({ active, before, afterRead, afterWrite, fileChanged })}`);
   }
@@ -856,7 +886,7 @@ NODE
   cp "$INVALID_FIXTURE" "$project_config"
   local invalid_rpc="$transcript_dir/invalid-rpc.ndjson"
   local invalid_err="$transcript_dir/invalid-stderr.txt"
-  env "${common_env[@]}" node "$rpc_driver" "$pi_bin" "$project_dir" "$invalid_rpc" "$invalid_err" invalid "$sessions_dir/invalid"
+  env "${common_env[@]}" node "$rpc_driver" "$pi_bin" "$project_dir" "$invalid_rpc" "$invalid_err" invalid "$sessions_dir/invalid" "$events_file"
   assert_contains "$invalid_rpc" "Project hook errors"
   assert_contains "$invalid_rpc" "command: actions are not supported on PI"
   assert_contains "$invalid_rpc" "pi-yaml-hooks-diagnostics"
@@ -865,7 +895,7 @@ NODE
   local override_rpc="$transcript_dir/override-rpc.ndjson"
   local override_err="$transcript_dir/override-stderr.txt"
   env "${common_env[@]}" PI_YAML_HOOKS_LOG_FILE="$override_log" \
-    node "$rpc_driver" "$pi_bin" "$project_dir" "$override_rpc" "$override_err" override "$sessions_dir/override"
+    node "$rpc_driver" "$pi_bin" "$project_dir" "$override_rpc" "$override_err" override "$sessions_dir/override" "$events_file"
   assert_contains "$override_rpc" "$override_log"
   assert_contains "$override_rpc" "Active hooks are valid"
   assert_file "$override_log"
