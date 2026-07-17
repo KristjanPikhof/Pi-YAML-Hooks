@@ -539,7 +539,7 @@ const cases: Case[] = [
           return { ok: false, detail: `trust addition not loaded records=${JSON.stringify(records)}` }
         }
 
-        writeWatchedFile(importedPath, notificationHooks("import-v1"))
+        writeFileSync(importedPath, notificationHooks("import-v1"), "utf8")
         writeWatchedFile(projectPath, `imports:
   - ./imported.yaml
 hooks: []
@@ -549,7 +549,7 @@ hooks: []
           return { ok: false, detail: `import not loaded records=${JSON.stringify(records)}` }
         }
 
-        writeWatchedFile(importedPath, notificationHooks("import-v2"))
+        writeFileSync(importedPath, notificationHooks("import-v2"), "utf8")
         await dispatchCreated()
         if (records.at(-1) !== "import-v2") {
           return { ok: false, detail: `import edit not loaded records=${JSON.stringify(records)}` }

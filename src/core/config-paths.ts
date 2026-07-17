@@ -238,8 +238,8 @@ export function __resetTrustListCacheForTests(): void {
 
 function fingerprintTrustFile(trustFile: string): string {
   try {
-    const stat = statSync(trustFile)
-    return `${stat.mtimeMs}|${stat.size}`
+    const stat = statSync(trustFile, { bigint: true })
+    return `${stat.mtimeNs}|${stat.ctimeNs}|${stat.size}|${stat.ino}|${stat.mode}`
   } catch {
     return "missing"
   }

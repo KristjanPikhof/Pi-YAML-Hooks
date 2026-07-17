@@ -532,10 +532,9 @@ export function createHooksRuntime(host: HostAdapter, options: CreateHooksRuntim
 
 
 
-// P1-1 helper: cheap stat-based fingerprint shared by the runtime-side
-// refreshHooks short-circuit. Returns a stable string that changes whenever
-// any of the listed files' mtime/size changes, or whenever a file appears
-// or disappears. Mirrors the shape used by load-hooks' own snapshot cache.
+// Cheap stat-only fingerprint for the runtime refresh gate. Nanosecond mtime
+// and ctime distinguish rapid same-size rewrites that can share millisecond
+// timestamps, while inode/mode cover atomic replacement and metadata changes.
 function computeStatFingerprint(files: readonly string[]): string {
   if (files.length === 0) {
     return ""
@@ -543,8 +542,8 @@ function computeStatFingerprint(files: readonly string[]): string {
   const parts: string[] = []
   for (const filePath of files) {
     try {
-      const stat = statSync(filePath)
-      parts.push(`${filePath}|${stat.mtimeMs}|${stat.size}`)
+      const stat = statSync(filePath, { bigint: true })
+      parts.push(`${filePath}|${stat.mtimeNs}|${stat.ctimeNs}|${stat.size}|${stat.ino}|${stat.mode}`)
     } catch {
       parts.push(`${filePath}|missing`)
     }
