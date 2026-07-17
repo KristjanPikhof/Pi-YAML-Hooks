@@ -761,21 +761,95 @@ EOF
   assert_contains "$mock_requests" "$project_config"
 
   assert_file "$events_file"
-  for event_name in global.session.created session.created tool.before.bash tool.after.read tool.after.write file.changed session.idle session.deleted; do
-    assert_contains "$events_file" "\"event\":\"$event_name\""
-  done
   local event_sequence
   event_sequence="$(node --input-type=module - "$events_file" <<'NODE'
 import fs from "node:fs";
-const rows = fs.readFileSync(process.argv[2], "utf8").trim().split("\n").filter(Boolean).map((line) => JSON.parse(line));
-const sessions = (event) => rows.filter((row) => row.event === event).map((row) => row.session).filter(Boolean);
-const created = [...new Set(sessions("session.created"))];
-const idle = new Set(sessions("session.idle"));
-const deleted = new Set(sessions("session.deleted"));
-if (created.length < 2) throw new Error(`expected startup and new-session creation, got ${JSON.stringify(created)}`);
-if (!created.some((id) => idle.has(id))) throw new Error(`no created session reached idle: ${JSON.stringify({ created, idle: [...idle] })}`);
-for (const id of created) if (!deleted.has(id)) throw new Error(`created session was not deleted: ${id}`);
-process.stdout.write(`created=${created.join(",")};idle=${[...idle].join(",")};deleted=${[...deleted].join(",")}`);
+
+function parseNdjson(text, source) {
+  return text.trim().split("\n").filter(Boolean).map((line, index) => {
+    try {
+      const row = JSON.parse(line);
+      if (!row || Array.isArray(row) || typeof row !== "object") throw new Error("row is not an object");
+      return row;
+    } catch (error) {
+      throw new Error(`${source} row ${index + 1} is not valid object NDJSON: ${error.message}`);
+    }
+  });
+}
+
+function validateEventRows(rows) {
+  const requiredEvents = [
+    "global.session.created",
+    "session.created",
+    "tool.before.bash",
+    "tool.after.read",
+    "tool.after.write",
+    "file.changed",
+    "session.idle",
+    "session.deleted",
+  ];
+  for (const event of requiredEvents) {
+    if (!rows.some((row) => row.event === event)) throw new Error(`missing separate exact event row: ${event}`);
+  }
+
+  const sessionFor = (row) => typeof row.session === "string" && row.session.length > 0 ? row.session : undefined;
+  for (const row of rows.filter((candidate) =>
+    ["global.session.created", "session.created", "tool.after.read", "file.changed", "session.idle", "session.deleted"].includes(candidate.event))) {
+    if (!sessionFor(row)) throw new Error(`event row is missing session correlation: ${JSON.stringify(row)}`);
+  }
+  const beforeRows = rows.filter((row) => row.event === "tool.before.bash");
+  if (!beforeRows.some((row) => typeof row.tool_args?.command === "string")) {
+    throw new Error(`tool.before.bash rows lack structured bash tool_args: ${JSON.stringify(beforeRows)}`);
+  }
+  const afterWriteRows = rows.filter((row) => row.event === "tool.after.write");
+  if (!afterWriteRows.some((row) => Array.isArray(row.changes) && Array.isArray(row.files))) {
+    throw new Error(`tool.after.write rows lack structured changes/files: ${JSON.stringify(afterWriteRows)}`);
+  }
+
+  const createdSessions = [...new Set(rows.filter((row) => row.event === "session.created").map(sessionFor).filter(Boolean))];
+  if (createdSessions.length < 2) throw new Error(`expected startup and new-session creation, got ${JSON.stringify(createdSessions)}`);
+  const lifecycle = createdSessions.map((session) => {
+    const created = rows.findIndex((row) => row.event === "session.created" && row.session === session);
+    const globalCreated = rows.findIndex((row) => row.event === "global.session.created" && row.session === session);
+    const idle = rows.findIndex((row) => row.event === "session.idle" && row.session === session);
+    const deleted = rows.findIndex((row) => row.event === "session.deleted" && row.session === session);
+    return { session, globalCreated, created, idle, deleted };
+  });
+  const active = lifecycle.find(({ globalCreated, created, idle, deleted }) =>
+    globalCreated >= 0 && globalCreated < created && created < idle && idle < deleted);
+  if (!active) throw new Error(`no session has correlated global/create/idle/delete ordering: ${JSON.stringify(lifecycle)}`);
+  for (const { session, created, deleted } of lifecycle) {
+    if (deleted < created) throw new Error(`created session was not deleted in order: ${JSON.stringify({ session, created, deleted })}`);
+  }
+
+  const orderedToolIndex = (event, predicate = () => true, after = active.created) =>
+    rows.findIndex((row, index) => index > after && index < active.idle && row.event === event && predicate(row));
+  const before = orderedToolIndex("tool.before.bash", (row) => typeof row.tool_args?.command === "string");
+  const afterRead = orderedToolIndex("tool.after.read", (row) => row.session === active.session);
+  const afterWrite = orderedToolIndex("tool.after.write", (row) => Array.isArray(row.changes) && Array.isArray(row.files));
+  const fileChanged = orderedToolIndex("file.changed", (row) => row.session === active.session, afterWrite);
+  if ([before, afterRead, afterWrite, fileChanged].some((index) => index < 0)) {
+    throw new Error(`tool/file rows lack created-before-tools-before-idle order: ${JSON.stringify({ active, before, afterRead, afterWrite, fileChanged })}`);
+  }
+  return `session=${active.session};global=${active.globalCreated};created=${active.created};before=${before};afterRead=${afterRead};afterWrite=${afterWrite};fileChanged=${fileChanged};idle=${active.idle};deleted=${active.deleted}`;
+}
+
+let combinedRowRejected = false;
+try {
+  validateEventRows([{
+    event: "global.session.created session.created tool.before.bash tool.after.read tool.after.write file.changed session.idle session.deleted",
+    session: "combined-fake",
+    tool_args: { command: "fake" },
+    changes: [],
+    files: [],
+  }]);
+} catch {
+  combinedRowRejected = true;
+}
+if (!combinedRowRejected) throw new Error("negative self-check failed: one combined row faked distinct structured evidence");
+
+const rows = parseNdjson(fs.readFileSync(process.argv[2], "utf8"), process.argv[2]);
+process.stdout.write(`${validateEventRows(rows)};combined-row=REJECTED`);
 NODE
 )"
 
