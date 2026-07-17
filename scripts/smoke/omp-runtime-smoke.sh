@@ -20,7 +20,7 @@ EVENT_FILE="$PROJECT_DIR/.omp/hooks-smoke/events.ndjson"
 RPC_TRANSCRIPT="$SMOKE_ROOT/rpc-frames.ndjson"
 RPC_STDERR="$SMOKE_ROOT/rpc-stderr.log"
 TUI_TRANSCRIPT="$SMOKE_ROOT/tui.log"
-TMUX_BIN="/opt/homebrew/bin/tmux"
+TMUX_BIN="${TMUX_BIN:-}"
 TMUX_SOCKET="$SMOKE_ROOT/tmux.sock"
 SERVER_PID=""
 CLEANED=0
@@ -54,11 +54,19 @@ trap cleanup EXIT INT TERM
 for command in omp bun npm node; do
   command -v "$command" >/dev/null 2>&1 || fail "required command is unavailable: $command"
 done
-[[ -x "$TMUX_BIN" ]] || fail "required tmux binary is unavailable: $TMUX_BIN"
+if [[ -n "$TMUX_BIN" ]]; then
+  TMUX_BIN="$(command -v "$TMUX_BIN" 2>/dev/null)" || fail "tmux override is unavailable: ${TMUX_BIN}"
+else
+  TMUX_BIN="$(command -v tmux 2>/dev/null)" || fail "required command is unavailable: tmux (set TMUX_BIN to override)"
+fi
 
 OMP_VERSION="$(omp --version 2>&1 | sed -n '1p')"
 BUN_VERSION="$(bun --version)"
-PLUGIN_VERSION="$(node -p "require('$ROOT_DIR/package.json').version")"
+PLUGIN_VERSION="$(node --input-type=module - "$ROOT_DIR/package.json" <<'NODE'
+import { readFileSync } from "node:fs";
+process.stdout.write(JSON.parse(readFileSync(process.argv[2], "utf8")).version);
+NODE
+)"
 [[ "$OMP_VERSION" == "omp/17.0.1" ]] || fail "expected omp/17.0.1, got $OMP_VERSION"
 
 mkdir -p "$HOME_DIR" "$PROJECT_DIR/.omp/hook" "$PACK_DIR" "$AGENT_DIR/hook"
@@ -180,6 +188,9 @@ function startRpc(enableUserBash, confirmations = []) {
   let output = "";
   let exited = false;
   let exitCode;
+  let exitSignal;
+  let resolveClosed;
+  const closed = new Promise((resolve) => { resolveClosed = resolve; });
 
   const settle = () => {
     for (let index = waiters.length - 1; index >= 0; index -= 1) {
@@ -193,7 +204,8 @@ function startRpc(enableUserBash, confirmations = []) {
     }
   };
 
-  readline.createInterface({ input: child.stdout }).on("line", (line) => {
+  const stdoutLines = readline.createInterface({ input: child.stdout });
+  stdoutLines.on("line", (line) => {
     output += `${line}\n`;
     appendFileSync(transcript, `${line}\n`);
     let frame;
@@ -211,12 +223,14 @@ function startRpc(enableUserBash, confirmations = []) {
     output += text;
     appendFileSync(stderrFile, text);
   });
-  child.on("close", (code) => {
+  child.on("close", (code, signal) => {
     exited = true;
     exitCode = code;
+    exitSignal = signal;
+    resolveClosed();
     for (const waiter of waiters.splice(0)) {
       clearTimeout(waiter.timer);
-      waiter.reject(new Error(`OMP RPC exited before ${waiter.label}; code=${code}`));
+      waiter.reject(new Error(`OMP RPC exited before ${waiter.label}; code=${code}; signal=${signal}`));
     }
   });
 
@@ -241,10 +255,41 @@ function startRpc(enableUserBash, confirmations = []) {
     assert(response.success === true && response.command === "prompt", `${id} prompt failed: ${JSON.stringify(response)}`);
     await waitFor((frame) => frame.type === "prompt_result" && frame.id === id && frame.agentInvoked === false, `${id} local completion`);
   };
+  const waitForClose = async (timeoutMs) => {
+    if (exited) return true;
+    let timer;
+    const timedOut = await Promise.race([
+      closed.then(() => false),
+      new Promise((resolve) => { timer = setTimeout(() => resolve(true), timeoutMs); }),
+    ]);
+    clearTimeout(timer);
+    return !timedOut;
+  };
   const close = async () => {
-    child.stdin.end();
-    if (!exited) await new Promise((resolve) => child.once("close", resolve));
-    assert(exitCode === 0, `OMP RPC exit code was ${exitCode}`);
+    let forcedSignal;
+    try {
+      if (!child.stdin.destroyed) child.stdin.end();
+      if (!(await waitForClose(3000))) {
+        forcedSignal = "SIGTERM";
+        child.kill(forcedSignal);
+        if (!(await waitForClose(2000))) {
+          forcedSignal = "SIGKILL";
+          child.kill(forcedSignal);
+          if (!(await waitForClose(2000))) throw new Error("OMP RPC did not close after SIGKILL");
+        }
+      }
+      assert(forcedSignal === undefined, `OMP RPC required ${forcedSignal} during close; code=${exitCode}; signal=${exitSignal}`);
+      assert(exitCode === 0 && exitSignal === null, `OMP RPC exit was code=${exitCode}; signal=${exitSignal}`);
+    } finally {
+      stdoutLines.close();
+      child.stdin.destroy();
+      child.stdout.destroy();
+      child.stderr.destroy();
+      for (const waiter of waiters.splice(0)) {
+        clearTimeout(waiter.timer);
+        waiter.reject(new Error("OMP RPC closed while waiting for a frame"));
+      }
+    }
   };
   return { child, frames, get output() { return output; }, waitFor, send, prompt, close };
 }
