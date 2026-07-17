@@ -63,6 +63,7 @@ class FakePiHarness {
   readonly messageRenderers = new Map<string, unknown>()
   readonly autocompleteProviders: AutocompleteProviderFactory[] = []
   sessionId: string
+  parentSession: string | undefined
   private sessionGeneration = 0
   throwOnStalePiUse = false
   hasUI = true
@@ -156,7 +157,10 @@ class FakePiHarness {
         },
         getHeader: () => {
           assertFresh()
-          return { id: this.sessionId }
+          return {
+            id: this.sessionId,
+            ...(this.parentSession ? { parentSession: this.parentSession } : {}),
+          }
         },
       },
       isIdle: () => this.idle,
@@ -167,8 +171,9 @@ class FakePiHarness {
     } as never
   }
 
-  replaceSession(sessionId: string): void {
+  replaceSession(sessionId: string, parentSession?: string): void {
     this.sessionId = sessionId
+    this.parentSession = parentSession
     this.sessionGeneration += 1
   }
 
@@ -188,7 +193,7 @@ class FakePiHarness {
     return result
   }
 
-  async sessionStart(reason: "new" | "startup" | "resume" | "fork" = "new"): Promise<void> {
+  async sessionStart(reason: "new" | "startup" | "reload" | "resume" | "fork" | "handoff" = "new"): Promise<void> {
     await this.emit("session_start", { reason })
   }
 
@@ -204,7 +209,7 @@ class FakePiHarness {
     await this.emit("session_shutdown", reason ? { type: "session_shutdown", reason } : {})
   }
 
-  async sessionSwitch(reason?: "new" | "resume" | "fork"): Promise<void> {
+  async sessionSwitch(reason?: "new" | "resume" | "fork" | "handoff"): Promise<void> {
     await this.emit("session_switch", reason ? { type: "session_switch", reason } : {})
   }
 
