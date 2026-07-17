@@ -605,6 +605,57 @@ const cases: Case[] = [
       }),
   },
   {
+    name: "OMP edit result details drive hashline and apply_patch file.changed paths",
+    run: async () =>
+      await withIsolatedProject(true, async (projectDir) => {
+        writeProjectHooks(
+          projectDir,
+          `hooks:
+  - event: file.changed
+    conditions:
+      - matchesAnyPath: "src/hashline.ts"
+    actions:
+      - notify: "hashline-changed"
+  - event: file.changed
+    conditions:
+      - matchesAnyPath: "src/patched.ts"
+    actions:
+      - notify: "apply-patch-changed"
+`,
+        )
+
+        const harness = new FakePiHarness(projectDir, "session-1", "omp")
+        harness.register()
+        const hashlineInput = { input: "[src/stale.ts#A1B2]\nSWAP 1.=1:\n+updated" }
+        await harness.toolCall("edit", "omp-hashline", hashlineInput)
+        await harness.toolResult("edit", "omp-hashline", hashlineInput, {
+          diff: "",
+          path: path.join(projectDir, "src", "hashline.ts"),
+          op: "update",
+        })
+
+        const applyPatchInput = {
+          input: "*** Begin Patch\n*** Update File: src/stale.ts\n@@\n*** End Patch",
+        }
+        await harness.toolCall("edit", "omp-apply-patch", applyPatchInput)
+        await harness.toolResult("edit", "omp-apply-patch", applyPatchInput, {
+          diff: "",
+          perFileResults: [
+            {
+              path: path.join(projectDir, "src", "patched.ts"),
+              op: "update",
+              diff: "",
+            },
+          ],
+        })
+
+        const expected = JSON.stringify(["hashline-changed", "apply-patch-changed"])
+        return JSON.stringify(harness.notifications) === expected
+          ? { ok: true }
+          : { ok: false, detail: `notifications=${JSON.stringify(harness.notifications)}` }
+      }),
+  },
+  {
     name: "registers the hook diagnostics message renderer",
     run: async () =>
       await withIsolatedProject(true, async (projectDir) => {
