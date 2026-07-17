@@ -85,11 +85,39 @@ function normalizeToolResultArgs(event: ToolResultEvent): Record<string, unknown
       .filter((entry) => entry.isError !== true)
       .map(normalizeOmpEditDetail)
       .filter((entry): entry is Record<string, unknown> => entry !== undefined);
-    return edits.length > 0 ? { ...args, edits } : args;
+    return withAuthoritativeOmpEdits(args, edits);
   }
 
   const normalizedDetail = normalizeOmpEditDetail(details);
   return normalizedDetail ? { ...args, ...normalizedDetail } : args;
+}
+
+/**
+ * OMP per-file results describe what actually reached disk, so requested
+ * mutation paths must not survive alongside them. In particular, an empty
+ * successful set must remain a non-empty args envelope (`{ edits: [] }`) so
+ * the runtime neither parses the raw request nor falls back to pending args.
+ */
+function withAuthoritativeOmpEdits(
+  args: Record<string, unknown>,
+  edits: readonly Record<string, unknown>[],
+): Record<string, unknown> {
+  const {
+    edits: _requestedEdits,
+    input: _input,
+    file: _file,
+    filePath: _filePath,
+    file_path: _filePathSnake,
+    path: _path,
+    sourcePath: _sourcePath,
+    fromPath: _fromPath,
+    move: _move,
+    rename: _rename,
+    toPath: _toPath,
+    ...safeArgs
+  } = args;
+
+  return { ...safeArgs, edits };
 }
 
 function normalizeOmpEditDetail(detail: OmpEditResultDetail): Record<string, unknown> | undefined {
