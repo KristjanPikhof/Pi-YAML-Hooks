@@ -42,6 +42,7 @@ import {
   touchLruEntry,
 } from "./runtime-registry.js";
 import { installSessionLifecycleHandlers } from "./session-lifecycle.js";
+import { getRootSessionId } from "./session-lineage.js";
 import { registerUserBashInterception } from "./user-bash.js";
 
 /**
@@ -113,6 +114,12 @@ export function registerAdapter(pi: ExtensionAPI, hostKind: HookHostKind = "pi")
     rememberContext(ctx.cwd, ctx);
     const sessionId = safeGetSessionId(ctx.sessionManager);
     if (!sessionId) return;
+
+    // Resolve while this manager still owns sessionId. A tool_result can
+    // arrive after a session switch, when the replacement manager can no
+    // longer reveal the source session's parent chain; the lineage cache
+    // preserves scope:main|child routing for that late result.
+    getRootSessionId(sessionId, ctx.sessionManager);
 
     const runtime = getRuntimeFor(ctx.cwd);
     rememberToolCallSession(callIdsToSessionIds, event.toolCallId, sessionId);
