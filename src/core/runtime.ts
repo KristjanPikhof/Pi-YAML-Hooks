@@ -544,10 +544,10 @@ function retainHooksFromAuthorizedFiles(hooks: HookMap, authorizedFiles: Readonl
   let retainedHooks: HookMap | undefined
 
   for (const [event, eventHooks] of hooks) {
-    const retainedEventHooks = eventHooks.filter((hook) => authorizedFiles.has(hook.source.filePath))
-    if (retainedEventHooks.length === eventHooks.length) {
+    if (eventHooks.every((hook) => authorizedFiles.has(hook.source.filePath))) {
       continue
     }
+    const retainedEventHooks = eventHooks.filter((hook) => authorizedFiles.has(hook.source.filePath))
 
     retainedHooks ??= new Map(hooks)
     if (retainedEventHooks.length > 0) {
