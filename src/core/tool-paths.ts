@@ -53,7 +53,7 @@ export function getToolFileChanges(toolName: string, args: Record<string, unknow
   }
 
   if (normalized === "apply_patch") {
-    const patchText = pickString(args.patchText, args.patch, args.diff)
+    const patchText = pickString(args.patchText, args.patch, args.diff, args.input)
     return patchText ? parsePatchChanges(patchText) : []
   }
 
@@ -62,23 +62,35 @@ export function getToolFileChanges(toolName: string, args: Record<string, unknow
     return command ? parseBashChanges(command) : []
   }
 
-  // P1-16: MultiEdit (and some Edit variants) ship an `edits` array, where
-  // each item is a single-edit shape. The previous code only inspected the
-  // top-level path keys, silently losing every change beyond the first one.
-  // Walk the array first; fall back to single-shape extraction otherwise.
-  if (normalized === "multiedit") {
+  // Pi MultiEdit and OMP's multi-file edit results both expose `edits`.
+  // Result-derived OMP entries carry authoritative op/source/move metadata,
+  // while legacy Pi entries continue to fall back to a modify operation.
+  if (normalized === "multiedit" || normalized === "edit") {
     const fromArray = extractEditsArrayChanges(args)
     if (fromArray.length > 0) {
       return fromArray
     }
   }
 
-  const filePath = pickString(args.filePath, args.file_path, args.path, args.file)
-  if (!filePath) {
-    return []
+  const directChange = extractDirectMutationChange(args)
+  if (directChange) {
+    return [directChange]
   }
 
-  return [{ operation: "modify", path: filePath }]
+  // OMP 17's unified edit tool sends both hashline and apply-patch payloads
+  // as `{ input: string }`. Successful ToolResult details normally provide
+  // authoritative paths; parsing the payload keeps the mapping correct when
+  // details are unavailable (for example in compatibility test harnesses).
+  if (normalized === "edit") {
+    const editInput = pickString(args.input)
+    if (editInput) {
+      return editInput.includes("*** Begin Patch")
+        ? parsePatchChanges(editInput)
+        : parseHashlineChanges(editInput)
+    }
+  }
+
+  return []
 }
 
 export function getChangedPaths(changes: readonly FileChange[]): string[] {
@@ -114,9 +126,8 @@ function extractEditsArrayChanges(args: Record<string, unknown>): FileChange[] {
     return []
   }
 
-  // Top-level path is the canonical target for MultiEdit. Each edit may
-  // override it (rare, but supported for forward-compat with hosts that nest
-  // the path under each edit).
+  // Top-level path is the canonical target for Pi MultiEdit. Each edit may
+  // override it; OMP result normalization always supplies per-entry paths.
   const topLevelPath = pickString(args.filePath, args.file_path, args.path, args.file)
 
   const changes: FileChange[] = []
@@ -124,16 +135,39 @@ function extractEditsArrayChanges(args: Record<string, unknown>): FileChange[] {
     if (!edit || typeof edit !== "object") {
       continue
     }
-    const editRecord = edit as Record<string, unknown>
-    const editPath =
-      pickString(editRecord.filePath, editRecord.file_path, editRecord.path, editRecord.file) ?? topLevelPath
-    if (!editPath) {
-      continue
+    const change = extractDirectMutationChange(edit as Record<string, unknown>, topLevelPath)
+    if (change) {
+      changes.push(change)
     }
-    changes.push({ operation: "modify", path: editPath })
   }
 
   return changes
+}
+
+function extractDirectMutationChange(
+  args: Record<string, unknown>,
+  fallbackPath?: string,
+): FileChange | undefined {
+  const filePath = pickString(args.filePath, args.file_path, args.path, args.file) ?? fallbackPath
+  if (!filePath) {
+    return undefined
+  }
+
+  const sourcePath = pickString(args.sourcePath, args.fromPath)
+  const destinationPath = pickString(args.move, args.rename, args.toPath)
+  if (sourcePath && sourcePath !== filePath) {
+    return { operation: "rename", fromPath: sourcePath, toPath: filePath }
+  }
+  if (destinationPath && destinationPath !== filePath) {
+    return { operation: "rename", fromPath: filePath, toPath: destinationPath }
+  }
+
+  const operation = pickString(args.op, args.operation)
+  if (operation === "create" || operation === "delete") {
+    return { operation, path: filePath }
+  }
+
+  return { operation: "modify", path: filePath }
 }
 
 function parsePatchChanges(patchText: string): FileChange[] {
@@ -179,6 +213,47 @@ function parsePatchChanges(patchText: string): FileChange[] {
   }
 
   flushPendingModify()
+  return changes
+}
+
+function parseHashlineChanges(patchText: string): FileChange[] {
+  const changes: FileChange[] = []
+  let currentPath: string | undefined
+  let currentChange: FileChange | undefined
+
+  const flushCurrent = (): void => {
+    if (currentChange) {
+      changes.push(currentChange)
+    } else if (currentPath) {
+      changes.push({ operation: "modify", path: currentPath })
+    }
+    currentPath = undefined
+    currentChange = undefined
+  }
+
+  for (const line of patchText.split("\n")) {
+    const headerMatch = line.match(/^\[([^#\]\r\n]+)#[0-9A-Fa-f]{4}\]$/)
+    if (headerMatch?.[1]) {
+      flushCurrent()
+      currentPath = headerMatch[1]
+      continue
+    }
+    if (!currentPath) {
+      continue
+    }
+
+    if (line === "REM") {
+      currentChange = { operation: "delete", path: currentPath }
+      continue
+    }
+
+    const moveMatch = line.match(/^MV\s+(.+)$/)
+    if (moveMatch?.[1]) {
+      currentChange = { operation: "rename", fromPath: currentPath, toPath: moveMatch[1].trim() }
+    }
+  }
+
+  flushCurrent()
   return changes
 }
 

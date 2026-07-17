@@ -36,7 +36,16 @@ export function mapToolCallToBeforeOutput(event: ToolCallEvent): ToolExecuteBefo
   };
 }
 
-/** Build the `tool.execute.after` input envelope from a PI `tool_result`. */
+/**
+ * Build the `tool.execute.after` input envelope from a PI `tool_result`.
+ *
+ * OMP 17's unified `edit` tool accepts hashline/apply-patch text under
+ * `input`, while its successful result carries authoritative paths and
+ * operations in `details`. Translate those details into the existing
+ * direct/multi-edit argument shapes so the core path mapper can preserve
+ * file.changed semantics. Pi events do not expose `details` and retain their
+ * legacy input shape unchanged.
+ */
 export function mapToolResultToAfterInput(
   event: ToolResultEvent,
   sessionId: string,
@@ -45,7 +54,52 @@ export function mapToolResultToAfterInput(
     tool: event.toolName,
     sessionID: sessionId,
     callID: event.toolCallId,
-    args: (event.input ?? {}) as Record<string, unknown>,
+    args: normalizeToolResultArgs(event),
+  };
+}
+
+type OmpEditResultDetail = {
+  readonly path?: unknown;
+  readonly sourcePath?: unknown;
+  readonly op?: unknown;
+  readonly move?: unknown;
+  readonly isError?: unknown;
+};
+
+type OmpEditToolResult = ToolResultEvent & {
+  readonly details?: OmpEditResultDetail & {
+    readonly perFileResults?: unknown;
+  };
+};
+
+function normalizeToolResultArgs(event: ToolResultEvent): Record<string, unknown> {
+  const args = (event.input ?? {}) as Record<string, unknown>;
+  if (event.toolName !== "edit") return args;
+
+  const details = (event as OmpEditToolResult).details;
+  if (!details || typeof details !== "object") return args;
+
+  if (Array.isArray(details.perFileResults)) {
+    const edits = details.perFileResults
+      .filter((entry): entry is OmpEditResultDetail => entry !== null && typeof entry === "object")
+      .filter((entry) => entry.isError !== true)
+      .map(normalizeOmpEditDetail)
+      .filter((entry): entry is Record<string, unknown> => entry !== undefined);
+    return edits.length > 0 ? { ...args, edits } : args;
+  }
+
+  const normalizedDetail = normalizeOmpEditDetail(details);
+  return normalizedDetail ? { ...args, ...normalizedDetail } : args;
+}
+
+function normalizeOmpEditDetail(detail: OmpEditResultDetail): Record<string, unknown> | undefined {
+  if (typeof detail.path !== "string" || detail.path.trim().length === 0) return undefined;
+
+  return {
+    path: detail.path,
+    ...(typeof detail.sourcePath === "string" ? { sourcePath: detail.sourcePath } : {}),
+    ...(typeof detail.op === "string" ? { op: detail.op } : {}),
+    ...(typeof detail.move === "string" ? { move: detail.move } : {}),
   };
 }
 
