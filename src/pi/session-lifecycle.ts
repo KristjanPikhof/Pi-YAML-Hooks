@@ -63,11 +63,11 @@ export function installSessionLifecycleHandlers(
   // ids we have already fired session.deleted for so cleanup hooks do not
   // double-run. Entries are cleared shortly after to keep the set bounded.
   const deletedSessionIds = new Set<string>();
-  let lastCreatedOmpSessionId: string | undefined;
+  let lastLifecycleHandledOmpSessionId: string | undefined;
   function markSessionDeleted(sessionId: string): boolean {
     if (deletedSessionIds.has(sessionId)) return false;
     deletedSessionIds.add(sessionId);
-    if (lastCreatedOmpSessionId === sessionId) lastCreatedOmpSessionId = undefined;
+    if (lastLifecycleHandledOmpSessionId === sessionId) lastLifecycleHandledOmpSessionId = undefined;
     // Drop the marker after a few seconds — long enough to absorb the
     // before_switch/shutdown pair, short enough not to leak forever.
     setTimeout(() => deletedSessionIds.delete(sessionId), 5_000).unref?.();
@@ -79,8 +79,8 @@ export function installSessionLifecycleHandlers(
     const sessionId = safeGetSessionId(ctx.sessionManager);
     if (!sessionId) return;
     if (hostKind === "omp") {
-      if (lastCreatedOmpSessionId === sessionId) return;
-      lastCreatedOmpSessionId = sessionId;
+      if (lastLifecycleHandledOmpSessionId === sessionId) return;
+      lastLifecycleHandledOmpSessionId = sessionId;
     }
 
     // P1-3 fix: do NOT forward `header.parentSession` here. PI's
@@ -100,14 +100,17 @@ export function installSessionLifecycleHandlers(
   };
 
   // ---- session_start ----
-  // Pi exposes explicit new/startup reasons. OMP's startup event has no
-  // reason; resume/fork remain excluded when a reason is present.
+  // Pi exposes explicit new/startup reasons. OMP's startup may be reasonless;
+  // explicit non-create reasons are marked handled so a following reasonless
+  // start cannot misclassify reload/resume/fork/handoff as startup.
   pi.on("session_start", async (event: SessionStartEvent, ctx: ExtensionContext): Promise<void> => {
     rememberContext(ctx.cwd, ctx);
     const reason = extractReason(event);
     if (hostKind === "pi") {
       if (reason !== "new" && reason !== "startup") return;
     } else if (reason !== undefined && reason !== "new" && reason !== "startup") {
+      const sessionId = safeGetSessionId(ctx.sessionManager);
+      if (sessionId) lastLifecycleHandledOmpSessionId = sessionId;
       return;
     }
     await dispatchSessionCreated(ctx);
@@ -124,8 +127,17 @@ export function installSessionLifecycleHandlers(
     };
     ompSessionEventApi.on("session_switch", async (event, ctx): Promise<void> => {
       rememberContext(ctx.cwd, ctx);
-      if (extractReason(event) !== "new") return;
-      await dispatchSessionCreated(ctx);
+      const reason = extractReason(event);
+      if (reason === "new") {
+        await dispatchSessionCreated(ctx);
+        return;
+      }
+
+      // OMP emits session_switch after replacing its authoritative manager.
+      // Mark the replacement session handled for non-new transitions so the
+      // reasonless session_start that follows cannot create it accidentally.
+      const sessionId = safeGetSessionId(ctx.sessionManager);
+      if (sessionId) lastLifecycleHandledOmpSessionId = sessionId;
     });
   }
 
