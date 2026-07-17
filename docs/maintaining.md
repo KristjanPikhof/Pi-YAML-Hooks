@@ -24,7 +24,7 @@ The matrix uses isolated temporary copies, excludes `.git`, `.trekoon`, `node_mo
 |---|---|---|
 | Pi SDK compatibility | `@earendil-works/pi-coding-agent` and `@earendil-works/pi-tui` at `0.74.0` and `0.79.3` | Typecheck plus all discovered internal test files for each pair. These remain the compatibility claims. |
 | OMP SDK compatibility | `@oh-my-pi/pi-coding-agent` and `@oh-my-pi/pi-tui` at `17.0.1` | Isolated dependency substitution, typecheck, and the complete internal suite. |
-| OMP runtime | OMP CLI and SDK `17.0.1` | `scripts/smoke/omp-runtime-smoke.sh`, including native packed install, RPC behavior, real TUI autocomplete, lifecycle mapping, paths, trust, and cleanup. |
+| OMP runtime | Observed OMP CLI, Bun, and installed `pi-yaml-hooks` versions | `scripts/smoke/omp-runtime-smoke.sh`, including native packed install, RPC behavior, real TUI autocomplete, lifecycle mapping, active named-profile paths, trust, and cleanup. |
 | Package contract | Current `package.json`, canonical `package-lock.json`, and packed artifact | Both host manifest entries and public extension stubs exist; declared files are packed; tests, build debris, and undeclared targets are absent. |
 
 `npm test` is a consumer-facing no-op. The matrix intentionally runs `npm run test:internal`.
@@ -51,17 +51,19 @@ bash scripts/smoke/pi-runtime-smoke.sh --automated
 bash scripts/smoke/omp-runtime-smoke.sh
 ```
 
-Both scripts use isolated home, project, profile, npm, and log state. They install a locally packed artifact through the host's native discovery path and reject manual `-e` or `--extension` evidence.
+Both scripts stage a checkout copy, then use isolated home, project, profile, npm, and log state. They install the staged packed artifact through the host's native discovery path, reject manual `-e` or `--extension` evidence, and verify that packing did not change the checkout's package files or `dist`.
 
 | Runtime evidence | Pi smoke | OMP smoke |
 |---|---|---|
-| Host versions | Records Pi, both `@earendil-works` SDK packages, and Node | Records OMP, both `@oh-my-pi` SDK packages, and Bun |
-| Storage and trust | `.pi` global/project paths, active Pi trust store, default and override logs | Active default/named `.omp` profile paths, native project paths, OMP trust store, default log, and no Pi-state leakage |
-| Events | Tool before/after, synthesized file changes, created/idle/deleted, opt-in `user_bash` | Tool before, startup/new lifecycle, post-stop idle, deleted reason telemetry, opt-in `user_bash` |
+| Host versions | Records Pi, both `@earendil-works` SDK packages, and Node | Records the OMP CLI, Bun, and installed `pi-yaml-hooks` package |
+| Storage and trust | `.pi` global/project paths, active Pi trust store, default and override logs | Active named-profile `.omp` runtime paths, native project paths, OMP trust store, default log, and no Pi-state leakage |
+| Events | Tool before/after, synthesized file changes, created/idle/deleted, opt-in `user_bash` | Tool before, created/idle/deleted, and opt-in `user_bash` |
 | UI and prompts | RPC actions, prompt awareness, diagnostics, and real PTY autocomplete | RPC actions/headless degradation, prompt awareness, diagnostics, and real tmux TUI autocomplete with same-process lazy refresh |
-| Cleanup | Temporary install and process cleanup; real-home mutation checksum unchanged | Temporary profile, HTTP server, and private tmux cleanup |
+| Cleanup | Temporary install and process cleanup; real-home and checkout package/`dist` checksums unchanged | Temporary profile, package stage, HTTP server, and private tmux cleanup; checkout package/`dist` checksum unchanged |
 
-Current integrated runtime evidence used Pi `0.80.7` with SDK `0.80.7` and OMP `17.0.1` with SDK `17.0.1`. The Pi observation does not replace the published `0.74.0`/`0.79.3` compatibility matrix.
+Default-profile and named-profile OMP storage are both covered by internal tests. The standalone OMP smoke records runtime evidence only for its active named profile.
+
+Current standalone runtime evidence used Pi `0.80.7` with SDK `0.80.7`, and OMP CLI `17.0.1` with the printed Bun and installed plugin versions. The OMP SDK `17.0.1` claim comes from the host matrix, not the standalone runtime smoke. The Pi observation does not replace the published `0.74.0`/`0.79.3` compatibility matrix.
 
 The completed `2026-07-17` gate recorded `test_files=21 pass=21 fail=0` for each Pi pair and OMP `17.0.1`, OMP runtime `A23` through `A26` at `4/4`, and a package inventory of `140` files with `11` required entries, `0` missing, and `0` forbidden. Cleanup and package-file drift checks passed.
 

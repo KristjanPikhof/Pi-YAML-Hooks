@@ -194,6 +194,54 @@ for (const target of targets) add(target, target.slice(home.length));
 process.stdout.write(hash.digest("hex"));
 NODE
 }
+copy_checkout_for_pack() {
+  local source="$1"
+  local target="$2"
+  mkdir -p "$target"
+  if command -v rsync >/dev/null 2>&1; then
+    rsync -a --delete \
+      --exclude '.git/' \
+      --exclude '.trekoon/' \
+      --exclude 'node_modules/' \
+      --exclude 'dist/' \
+      "$source/" "$target/"
+  else
+    (cd "$source" && tar \
+      --exclude './.git' \
+      --exclude './.trekoon' \
+      --exclude './node_modules' \
+      --exclude './dist' \
+      -cf - .) | (cd "$target" && tar -xf -)
+  fi
+  for excluded in .git .trekoon node_modules dist; do
+    [[ ! -e "$target/$excluded" ]] || fail "excluded checkout path leaked into package stage: $excluded"
+  done
+}
+
+snapshot_checkout_build_surfaces() {
+  node --input-type=module - "$1" <<'NODE'
+import crypto from "node:crypto";
+import fs from "node:fs";
+import path from "node:path";
+const root = process.argv[2];
+const hash = crypto.createHash("sha256");
+function add(target, relative) {
+  let stat;
+  try { stat = fs.lstatSync(target); } catch { hash.update(`missing:${relative}\n`); return; }
+  hash.update(`${relative}:${stat.mode}:${stat.size}\n`);
+  if (stat.isDirectory()) {
+    for (const name of fs.readdirSync(target).sort()) add(path.join(target, name), path.join(relative, name));
+  } else if (stat.isFile()) {
+    hash.update(fs.readFileSync(target));
+  } else if (stat.isSymbolicLink()) {
+    hash.update(fs.readlinkSync(target));
+  }
+}
+for (const relative of ["package.json", "package-lock.json", "dist"]) add(path.join(root, relative), relative);
+process.stdout.write(hash.digest("hex"));
+NODE
+}
+
 
 write_rpc_driver() {
   cat > "$1" <<'NODE'
@@ -500,18 +548,28 @@ collect(2.0)
 waited = 0
 status = 0
 driver_terminated = False
+forced_kill = False
 try:
     waited, status = os.waitpid(pid, os.WNOHANG)
     if waited == 0:
         driver_terminated = True
         os.kill(pid, signal.SIGTERM)
-        waited, status = os.waitpid(pid, 0)
+        for _ in range(20):
+            time.sleep(0.05)
+            waited, status = os.waitpid(pid, os.WNOHANG)
+            if waited != 0:
+                break
+        if waited == 0:
+            forced_kill = True
+            os.kill(pid, signal.SIGKILL)
+            waited, status = os.waitpid(pid, 0)
 except ChildProcessError:
     waited = pid
 if driver_terminated:
     clean_exit = os.WIFEXITED(status) and os.WEXITSTATUS(status) == 0
     expected_signal = os.WIFSIGNALED(status) and os.WTERMSIG(status) == signal.SIGTERM
-    if not clean_exit and not expected_signal:
+    expected_forced_kill = forced_kill and os.WIFSIGNALED(status) and os.WTERMSIG(status) == signal.SIGKILL
+    if not clean_exit and not expected_signal and not expected_forced_kill:
         print(f"Pi TUI cleanup had unexpected wait status {status}", file=sys.stderr)
         sys.exit(1)
 elif os.WIFSIGNALED(status):
@@ -555,9 +613,12 @@ run_automated() {
   local evidence_dir="$project_dir/.pi/hooks-smoke"
   local artifact_dir="$smoke_root/artifact"
   local transcript_dir="$smoke_root/transcripts"
+  local package_stage="$smoke_root/package-stage"
   local sessions_dir="$smoke_root/sessions"
   local default_log="$agent_dir/logs/pi-yaml-hooks.ndjson"
   local override_log="$evidence_dir/override-log.ndjson"
+  local checkout_snapshot_before
+  local checkout_snapshot_after
   local trust_file="$agent_dir/trusted-projects.json"
   local mock_pid=""
   local pass_count=0
@@ -595,13 +656,18 @@ YAML
   local real_home_before
   local real_home_after
   real_home_before="$(snapshot_pi_mutation_surfaces "$real_home")"
+  checkout_snapshot_before="$(snapshot_checkout_build_surfaces "$ROOT_DIR")"
 
+  assert_dir "$ROOT_DIR/node_modules"
+  copy_checkout_for_pack "$ROOT_DIR" "$package_stage"
+  ln -s "$ROOT_DIR/node_modules" "$package_stage/node_modules"
   local pack_json="$transcript_dir/npm-pack.json"
   (
-    cd "$ROOT_DIR"
+    cd "$package_stage"
     HOME="$isolated_home" USERPROFILE="$isolated_home" npm_config_cache="$smoke_root/npm-cache" \
       npm_config_userconfig="$smoke_root/npmrc" npm pack --json --pack-destination "$artifact_dir"
   ) > "$pack_json"
+  assert_dir "$package_stage/dist"
   local packed_name
   local packed_version
   local tarball_name
@@ -913,7 +979,7 @@ NODE
   local pty_exit=$?
   set -e
   if [[ "$pty_exit" -eq 75 ]]; then
-    interactive_row="BLOCKED: platform PTY unavailable ($(tr '\n' ' ' < "$transcript_dir/pi-tui.stderr"))"
+    fail "automated Pi smoke requires PTY coverage: $(tr '\n' ' ' < "$transcript_dir/pi-tui.stderr")"
   elif [[ "$pty_exit" -ne 0 ]]; then
     fail "Pi TUI assertion failed: $(tr '\n' ' ' < "$transcript_dir/pi-tui.stderr")"
   else
@@ -925,6 +991,8 @@ NODE
 
   real_home_after="$(snapshot_pi_mutation_surfaces "$real_home")"
   [[ "$real_home_before" == "$real_home_after" ]] || fail "real HOME Pi mutation surfaces changed"
+  checkout_snapshot_after="$(snapshot_checkout_build_surfaces "$ROOT_DIR")"
+  [[ "$checkout_snapshot_before" == "$checkout_snapshot_after" ]] || fail "checkout package/dist surfaces changed during Pi smoke"
 
   pass_count=$((pass_count + 1))
   printf 'A23P PASS — packed artifact installed by native Pi package/settings flow; package=%s@%s sha256=%s source=%s installed=%s\n' "$packed_name" "$packed_version" "$artifact_sha256" "$package_source" "$installed_package"
@@ -944,13 +1012,13 @@ NODE
   [[ "$real_home_before" == "$real_home_after" ]] || fail "real HOME changed"
 
   pass_count=$((pass_count + 1))
-  printf 'A25P PASS — cleanup removed temp HOME/install/processes; real_HOME_snapshot=%s temp_removed=%s\n' "$real_home_after" "$smoke_root"
+  printf 'A25P PASS — cleanup removed temp HOME/install/processes/package-stage; real_HOME_snapshot=%s checkout_snapshot=%s temp_removed=%s\n' "$real_home_after" "$checkout_snapshot_after" "$smoke_root"
   pass_count=$((pass_count + 1))
   printf 'A26P PASS — package=%s@%s Pi=%s SDK(pi-coding-agent)=%s SDK(pi-tui)=%s Node=%s\n' "$packed_name" "$packed_version" "$pi_version" "$coding_agent_version" "$tui_version" "$node_version"
   printf 'EVIDENCE paths: global=%s project=%s trust=%s default_log=%s override_log=%s events=%s\n' \
     "$global_config" "$project_config" "$trust_file" "$default_log" "$override_log" "$events_file"
   printf 'EVIDENCE events: %s; names=global.session.created,session.created,tool.before.bash,tool.after.read,tool.after.write,file.changed,session.idle,session.deleted\n' "$event_sequence"
-  printf 'PASS count: %d/4 acceptance rows; cleanup proof: %s absent; real HOME mutation surfaces unchanged\n' "$pass_count" "$smoke_root"
+  printf 'PASS count: %d/4 acceptance rows; cleanup proof: %s absent; real HOME and checkout package/dist surfaces unchanged\n' "$pass_count" "$smoke_root"
 }
 
 if [[ "$MODE" == "automated" ]]; then

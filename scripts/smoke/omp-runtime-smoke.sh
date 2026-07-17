@@ -10,6 +10,7 @@ SMOKE_ROOT="$(mktemp -d "${TMP_BASE%/}/pi-yaml-hooks-omp-runtime.XXXXXX")"
 HOME_DIR="$SMOKE_ROOT/home"
 PROJECT_DIR="$SMOKE_ROOT/project"
 PACK_DIR="$SMOKE_ROOT/pack"
+PACKAGE_STAGE="$SMOKE_ROOT/package-stage"
 AGENT_DIR="$HOME_DIR/.omp/profiles/$PROFILE/agent"
 PLUGIN_DIR="$HOME_DIR/.omp/profiles/$PROFILE/plugins/node_modules/pi-yaml-hooks"
 GLOBAL_CONFIG="$AGENT_DIR/hook/hooks.yaml"
@@ -31,6 +32,54 @@ fail() {
   printf 'FAIL: %s\n' "$*" >&2
   exit 1
 }
+copy_checkout_for_pack() {
+  local source="$1"
+  local target="$2"
+  mkdir -p "$target"
+  if command -v rsync >/dev/null 2>&1; then
+    rsync -a --delete \
+      --exclude '.git/' \
+      --exclude '.trekoon/' \
+      --exclude 'node_modules/' \
+      --exclude 'dist/' \
+      "$source/" "$target/"
+  else
+    (cd "$source" && tar \
+      --exclude './.git' \
+      --exclude './.trekoon' \
+      --exclude './node_modules' \
+      --exclude './dist' \
+      -cf - .) | (cd "$target" && tar -xf -)
+  fi
+  for excluded in .git .trekoon node_modules dist; do
+    [[ ! -e "$target/$excluded" ]] || fail "excluded checkout path leaked into package stage: $excluded"
+  done
+}
+
+snapshot_checkout_build_surfaces() {
+  node --input-type=module - "$1" <<'NODE'
+import crypto from "node:crypto";
+import fs from "node:fs";
+import path from "node:path";
+const root = process.argv[2];
+const hash = crypto.createHash("sha256");
+function add(target, relative) {
+  let stat;
+  try { stat = fs.lstatSync(target); } catch { hash.update(`missing:${relative}\n`); return; }
+  hash.update(`${relative}:${stat.mode}:${stat.size}\n`);
+  if (stat.isDirectory()) {
+    for (const name of fs.readdirSync(target).sort()) add(path.join(target, name), path.join(relative, name));
+  } else if (stat.isFile()) {
+    hash.update(fs.readFileSync(target));
+  } else if (stat.isSymbolicLink()) {
+    hash.update(fs.readlinkSync(target));
+  }
+}
+for (const relative of ["package.json", "package-lock.json", "dist"]) add(path.join(root, relative), relative);
+process.stdout.write(hash.digest("hex"));
+NODE
+}
+
 
 cleanup() {
   if [[ "$CLEANED" -eq 1 ]]; then
@@ -69,6 +118,7 @@ process.stdout.write(JSON.parse(readFileSync(process.argv[2], "utf8")).version);
 NODE
 )"
 [[ "$OMP_VERSION" == "omp/17.0.1" ]] || fail "expected omp/17.0.1, got $OMP_VERSION"
+CHECKOUT_SNAPSHOT_BEFORE="$(snapshot_checkout_build_surfaces "$ROOT_DIR")"
 
 mkdir -p "$HOME_DIR" "$PROJECT_DIR/.omp/hook" "$PACK_DIR" "$AGENT_DIR/hook"
 export HOME="$HOME_DIR"
@@ -93,10 +143,14 @@ import YAML from "yaml";
 for (const file of process.argv.slice(2)) YAML.parse(fs.readFileSync(file, "utf8"));
 NODE
 
+[[ -d "$ROOT_DIR/node_modules" ]] || fail "local node_modules is unavailable for staged package build"
+copy_checkout_for_pack "$ROOT_DIR" "$PACKAGE_STAGE"
+ln -s "$ROOT_DIR/node_modules" "$PACKAGE_STAGE/node_modules"
 (
-  cd "$ROOT_DIR"
+  cd "$PACKAGE_STAGE"
   npm pack --pack-destination "$PACK_DIR" > "$SMOKE_ROOT/npm-pack.out"
 )
+[[ -d "$PACKAGE_STAGE/dist" ]] || fail "staged package build did not create dist"
 TARBALL="$(find "$PACK_DIR" -maxdepth 1 -name 'pi-yaml-hooks-*.tgz' -print -quit)"
 [[ -n "$TARBALL" && -f "$TARBALL" ]] || fail "npm pack did not create the plugin tarball"
 
@@ -642,6 +696,8 @@ if grep -Eq 'extension_error|failed to load extension|cannot find module' "$RPC_
   fail "load or extension error found in runtime evidence"
 fi
 [[ ! -e "$HOME_DIR/.pi" && ! -e "$PROJECT_DIR/.pi" ]] || fail "legacy .pi state leaked after all host runs"
+CHECKOUT_SNAPSHOT_AFTER="$(snapshot_checkout_build_surfaces "$ROOT_DIR")"
+[[ "$CHECKOUT_SNAPSHOT_BEFORE" == "$CHECKOUT_SNAPSHOT_AFTER" ]] || fail "checkout package/dist surfaces changed during OMP smoke"
 
 printf 'Versions: OMP=%s Bun=%s pi-yaml-hooks=%s\n' "$OMP_VERSION" "$BUN_VERSION" "$PLUGIN_VERSION"
 printf 'Paths: profile=%s plugin=%s global=%s project=%s trust=%s log=%s\n' \
@@ -658,4 +714,4 @@ trap - EXIT INT TERM
 if [[ -n "$SERVER_PID" ]] && kill -0 "$SERVER_PID" 2>/dev/null; then
   fail "local tarball server remained after cleanup"
 fi
-printf 'A26 PASS: versions and evidence printed; PASS count=4; cleanup proof=root-absent,server-stopped,tmux-stopped\n'
+printf 'A26 PASS: versions and evidence printed; PASS count=4; cleanup proof=root-absent,server-stopped,tmux-stopped,checkout-package-dist-unchanged\n'
