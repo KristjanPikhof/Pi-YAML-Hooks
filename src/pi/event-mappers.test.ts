@@ -72,6 +72,40 @@ const cases: Case[] = [
     },
   },
   {
+    name: "failed OMP single-file edit details expose no mutation paths or file.changed trigger",
+    run: () => {
+      const mapped = mapToolResultToAfterInput(
+        {
+          toolName: "edit",
+          toolCallId: "omp-single-failed",
+          input: {
+            input: "[src/requested.ts#A1B2]\nSWAP 1.=1:\n+failed",
+            requestTag: "retain-single-failure-metadata",
+          },
+          isError: true,
+          details: {
+            path: "/repo/src/requested.ts",
+            diff: "",
+          },
+        } as unknown as ToolResultMapperEvent,
+        "session-omp",
+      );
+
+      const args = mapped.args ?? {};
+      const changes = getToolFileChanges(mapped.tool, args);
+      const paths = getToolAffectedPaths(mapped.tool, args);
+      const ok = Array.isArray(args.edits) &&
+        args.edits.length === 0 &&
+        changes.length === 0 &&
+        paths.length === 0 &&
+        !Object.hasOwn(args, "input") &&
+        !Object.hasOwn(args, "path") &&
+        args.requestTag === "retain-single-failure-metadata";
+
+      return ok ? { ok: true } : { ok: false, detail: JSON.stringify({ args, changes, paths }) };
+    },
+  },
+  {
     name: "mixed OMP multi-file edit exposes only successful result paths",
     run: () => {
       const mapped = mapToolResultToAfterInput(
@@ -91,6 +125,7 @@ const cases: Case[] = [
               "+skipped",
             ].join("\n"),
           },
+          isError: true,
           details: {
             perFileResults: [
               { path: "/repo/src/applied.ts", op: "update" },

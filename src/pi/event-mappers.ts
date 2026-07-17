@@ -67,6 +67,7 @@ type OmpEditResultDetail = {
 };
 
 type OmpEditToolResult = ToolResultEvent & {
+  readonly isError?: unknown;
   readonly details?: OmpEditResultDetail & {
     readonly perFileResults?: unknown;
   };
@@ -76,7 +77,8 @@ function normalizeToolResultArgs(event: ToolResultEvent): Record<string, unknown
   const args = (event.input ?? {}) as Record<string, unknown>;
   if (event.toolName !== "edit") return args;
 
-  const details = (event as OmpEditToolResult).details;
+  const ompEvent = event as OmpEditToolResult;
+  const details = ompEvent.details;
   if (!details || typeof details !== "object") return args;
 
   if (Array.isArray(details.perFileResults)) {
@@ -86,6 +88,10 @@ function normalizeToolResultArgs(event: ToolResultEvent): Record<string, unknown
       .map(normalizeOmpEditDetail)
       .filter((entry): entry is Record<string, unknown> => entry !== undefined);
     return withAuthoritativeOmpEdits(args, edits);
+  }
+
+  if (ompEvent.isError === true) {
+    return withAuthoritativeOmpEdits(args, []);
   }
 
   const normalizedDetail = normalizeOmpEditDetail(details);
