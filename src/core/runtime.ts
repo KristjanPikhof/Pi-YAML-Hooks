@@ -148,10 +148,10 @@ export function createHooksRuntime(host: HostAdapter, options: CreateHooksRuntim
   // topology markers, and imports resolved by the last load. It is built once
   // and only rediscovered after a stat change, keeping git/project discovery
   // entirely off unchanged event dispatches (including empty configurations).
-  let lastLoadedFiles: readonly string[] = "files" in loaded ? loaded.files : []
+  const initiallyLoadedFiles: readonly string[] = "files" in loaded ? loaded.files : []
   let watchedFiles = options.hooks && !shouldReloadDiscoveredHooks
     ? []
-    : mergeUnique(resolveHookConfigWatchPaths(configDiscovery).paths, lastLoadedFiles)
+    : mergeUnique(resolveHookConfigWatchPaths(configDiscovery).paths, initiallyLoadedFiles)
   let lastStatFingerprint = computeStatFingerprint(watchedFiles)
   const state = new SessionStateStore()
   const runBashHook: ExecuteBashHook = options.executeBash ?? ((request) => host.runBash(request))
@@ -233,8 +233,7 @@ export function createHooksRuntime(host: HostAdapter, options: CreateHooksRuntim
 
     const nextWatchPaths = resolveHookConfigWatchPaths(configDiscovery).paths
     const nextLoaded = loadDiscoveredHooksSnapshot(configDiscovery)
-    lastLoadedFiles = nextLoaded.files
-    watchedFiles = mergeUnique(nextWatchPaths, lastLoadedFiles)
+    watchedFiles = mergeUnique(nextWatchPaths, nextLoaded.files)
     lastStatFingerprint = computeStatFingerprint(watchedFiles)
     if (nextLoaded.signature === lastLoadedSignature) {
       return hooks
