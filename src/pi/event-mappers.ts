@@ -64,6 +64,9 @@ type OmpEditResultDetail = {
   readonly op?: unknown;
   readonly move?: unknown;
   readonly isError?: unknown;
+  readonly diff?: unknown;
+  readonly oldText?: unknown;
+  readonly newText?: unknown;
 };
 
 type OmpEditToolResult = ToolResultEvent & {
@@ -90,7 +93,11 @@ function normalizeToolResultArgs(event: ToolResultEvent): Record<string, unknown
     return withAuthoritativeOmpEdits(args, edits);
   }
 
-  if (ompEvent.isError === true) {
+  const hasAppliedEvidence =
+    (typeof details.diff === "string" && details.diff.length > 0) ||
+    typeof details.oldText === "string" ||
+    typeof details.newText === "string";
+  if (ompEvent.isError === true && !hasAppliedEvidence) {
     return withAuthoritativeOmpEdits(args, []);
   }
 

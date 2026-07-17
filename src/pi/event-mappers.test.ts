@@ -106,6 +106,53 @@ const cases: Case[] = [
     },
   },
   {
+    name: "partially applied OMP single-file edit preserves diff and snapshot evidenced paths",
+    run: () => {
+      const evidenceCases = [
+        {
+          name: "non-empty diff",
+          details: {
+            path: "/repo/src/diff-applied.ts",
+            diff: "@@ -1 +1 @@\n-before\n+after",
+          },
+        },
+        {
+          name: "before/after snapshots",
+          details: {
+            path: "/repo/src/snapshot-applied.ts",
+            diff: "",
+            oldText: "before",
+            newText: "after",
+          },
+        },
+      ] as const;
+
+      for (const evidenceCase of evidenceCases) {
+        const mapped = mapToolResultToAfterInput(
+          {
+            toolName: "edit",
+            toolCallId: `omp-single-partial-${evidenceCase.name}`,
+            input: {
+              input: "[src/unapplied-request.ts#A1B2]\nSWAP 1.=1:\n+requested",
+            },
+            isError: true,
+            details: evidenceCase.details,
+          } as unknown as ToolResultMapperEvent,
+          "session-omp",
+        );
+        const paths = getToolAffectedPaths(mapped.tool, mapped.args ?? {});
+        if (paths.length !== 1 || paths[0] !== evidenceCase.details.path) {
+          return {
+            ok: false,
+            detail: JSON.stringify({ evidence: evidenceCase.name, args: mapped.args, paths }),
+          };
+        }
+      }
+
+      return { ok: true };
+    },
+  },
+  {
     name: "mixed OMP multi-file edit exposes only successful result paths",
     run: () => {
       const mapped = mapToolResultToAfterInput(
