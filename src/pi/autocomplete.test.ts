@@ -394,6 +394,61 @@ hooks: []
       }),
   },
   {
+    name: "refreshes when a missing import is added and when that import is edited",
+    run: async () =>
+      await withSandbox(async (projectDir, homeDir) => {
+        const globalDir = path.join(homeDir, ".pi", "agent", "hook")
+        const importedPath = path.join(globalDir, "packs", "shared.yaml")
+        writeHooksFile(
+          path.join(globalDir, "hooks.yaml"),
+          `imports:
+  - ./packs/shared.yaml
+hooks: []
+`,
+        )
+        process.env.PI_YAML_HOOKS_ALLOW_GLOBAL_IMPORTS = "1"
+        let discoveryCalls = 0
+        __setHookAutocompleteInstrumentationForTests({
+          onDiscovery: () => {
+            discoveryCalls += 1
+          },
+        })
+        const ctx = makeContext({ projectDir, hasUI: true, expose: true })
+        registerHookAutocomplete(ctx as never)
+        const provider = ctx.factories[0](createNoopProvider())
+        const input = "/hooks-status import-"
+        await provider.getSuggestions([input], 0, input.length, { signal: signal() })
+        writeHooksFile(
+          importedPath,
+          `hooks:
+  - id: import-added
+    event: session.idle
+    actions:
+      - notify: added
+`,
+        )
+        const added = await provider.getSuggestions([input], 0, input.length, { signal: signal() })
+        writeHooksFile(
+          importedPath,
+          `hooks:
+  - id: import-edited
+    event: session.idle
+    actions:
+      - notify: edited
+`,
+        )
+        const edited = await provider.getSuggestions([input], 0, input.length, { signal: signal() })
+        const addedValues = added?.items.map((item) => item.value) ?? []
+        const editedValues = edited?.items.map((item) => item.value) ?? []
+        return discoveryCalls === 3 &&
+          addedValues.includes("import-added") &&
+          editedValues.includes("import-edited") &&
+          !editedValues.includes("import-added")
+          ? { ok: true }
+          : { ok: false, detail: JSON.stringify({ discoveryCalls, addedValues, editedValues }) }
+      }),
+  },
+  {
     name: "returns null suggestions outside /hooks- prefix",
     run: async () =>
       await withSandbox(async (projectDir) => {

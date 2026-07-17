@@ -93,6 +93,8 @@ export interface HookMatchDecision {
   readonly details?: Record<string, unknown>
 }
 
+export const OMP_SYNCHRONOUS_BASH_BUDGET_MS = 20_000
+
 type ExecuteBashHook = (request: BashExecutionRequest) => Promise<BashHookResult>
 
 export interface HooksRuntime {

@@ -417,6 +417,7 @@ async function executeHook(
       warnAsyncStopOnce(logger, hook, projectDir, warnedAsyncStopSources)
     }
     const asyncConfig = resolveAsyncExecutionConfig(hook, sessionID)
+    const { synchronousBashBudget: _synchronousBashBudget, ...asyncContext } = context
     enqueueAsyncHook(
       asyncQueues,
       asyncConfig,
@@ -431,7 +432,7 @@ async function executeHook(
             runBashHook,
             hook.event,
             sessionID,
-            context,
+            asyncContext,
             hook.source.filePath,
             hookId,
             actionRecursionGuards,

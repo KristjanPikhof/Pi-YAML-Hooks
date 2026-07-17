@@ -84,6 +84,7 @@ export function registerHookAutocomplete(ctx: ExtensionContext): void {
     return
   }
 
+  autocompleteRegistered = true
   // Compute suggestion state lazily. A stat-only cache gate keeps synchronous
   // config/import discovery and project/git resolution off unchanged
   // autocomplete keystrokes while still noticing relevant file/env changes.
