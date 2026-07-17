@@ -22,7 +22,7 @@ The matrix uses isolated temporary copies, excludes `.git`, `.trekoon`, `node_mo
 
 | Gate | Pinned evidence | What must pass |
 |---|---|---|
-| Pi SDK compatibility | `@earendil-works/pi-coding-agent` and `@earendil-works/pi-tui` at `0.74.0` and `0.79.3` | Typecheck plus all discovered internal test files for each pair. These remain the compatibility claims. |
+| Pi SDK compatibility | `@earendil-works/pi-coding-agent` and `@earendil-works/pi-tui` at exact `0.74.0`, `0.79.3`, and `0.80.10` | Exact installed-version assertions, typecheck, and all discovered internal test files for each pair. |
 | OMP SDK compatibility | `@oh-my-pi/pi-coding-agent` and `@oh-my-pi/pi-tui` at `17.0.1` | Isolated dependency substitution, typecheck, and the complete internal suite. |
 | OMP runtime | Observed OMP CLI, Bun, and installed `pi-yaml-hooks` versions | `scripts/smoke/omp-runtime-smoke.sh`, including native packed install, RPC behavior, real TUI autocomplete, lifecycle mapping, active named-profile paths, trust, and cleanup. |
 | Package contract | Current `package.json`, canonical `package-lock.json`, and packed artifact | Both host manifest entries and public extension stubs exist; declared files are packed; tests, build debris, and undeclared targets are absent. |
@@ -36,7 +36,7 @@ The package gate must confirm:
 - `pi.extensions` points to `./extensions/pi-yaml-hooks/index.ts`
 - `omp.extensions` points to `./extensions/omp-yaml-hooks/index.ts`
 - Pi and OMP host peers remain optional so installing one host does not force the other runtime
-- dev SDK specs resolve to Pi `0.79.3` and OMP `17.0.1`
+- dev SDK specs resolve to Pi `0.80.10` and OMP `17.0.1`
 - source entries, generated `dist` entries, and public exports are present in `npm pack`
 - package inventory has no `*.test.*`, `*.tsbuildinfo`, or other build debris
 
@@ -57,15 +57,15 @@ Both scripts stage a checkout copy, then use isolated home, project, profile, np
 |---|---|---|
 | Host versions | Records Pi, both `@earendil-works` SDK packages, and Node | Records the OMP CLI, Bun, and installed `pi-yaml-hooks` package |
 | Storage and trust | `.pi` global/project paths, active Pi trust store, default and override logs | Active named-profile `.omp` runtime paths, native project paths, OMP trust store, default log, and no Pi-state leakage |
-| Events | Tool before/after, synthesized file changes, created/idle/deleted, opt-in `user_bash` | Tool before, created/idle/deleted, and opt-in `user_bash` |
+| Events | Tool before/after, synthesized file changes, created/idle/deleted, opt-in `user_bash`; a separate `--no-builtin-tools` RPC process proves created/deleted lifecycle | Tool before, created/idle/deleted, and opt-in `user_bash` |
 | UI and prompts | RPC actions, prompt awareness, diagnostics, and real PTY autocomplete | RPC actions/headless degradation, prompt awareness, diagnostics, and real tmux TUI autocomplete with same-process lazy refresh |
 | Cleanup | Temporary install and process cleanup; real-home and checkout package/`dist` checksums unchanged | Temporary profile, package stage, HTTP server, and private tmux cleanup; checkout package/`dist` checksum unchanged |
 
 Default-profile and named-profile OMP storage are both covered by internal tests. The standalone OMP smoke records runtime evidence only for its active named profile.
 
-Current standalone runtime evidence used Pi `0.80.7` with SDK `0.80.7`, and OMP CLI `17.0.1` with the printed Bun and installed plugin versions. The OMP SDK `17.0.1` claim comes from the host matrix, not the standalone runtime smoke. The Pi observation does not replace the published `0.74.0`/`0.79.3` compatibility matrix.
+Current standalone runtime evidence used Pi `0.80.10` with coding-agent and TUI SDK `0.80.10`, and OMP CLI `17.0.1` with the printed Bun and installed plugin versions. The Pi smoke passed all four acceptance rows, including native package discovery, RPC commands and diagnostics, PTY autocomplete, lifecycle hooks, and a graceful isolated `--no-builtin-tools` process. The OMP SDK `17.0.1` claim comes from the host matrix, not the standalone runtime smoke.
 
-The completed `2026-07-17` gate recorded `test_files=24 pass=24 fail=0` for each Pi pair and OMP `17.0.1`, OMP runtime `A23` through `A26` at `4/4`, and a package inventory of `140` files with `11` required entries, `0` missing, and `0` forbidden. Cleanup and package-file drift checks passed.
+The completed `2026-07-18` gates recorded `test_files=24 pass=24 fail=0` for each exact Pi `0.74.0`, `0.79.3`, and `0.80.10` pair and OMP `17.0.1`. The Pi runtime smoke recorded `A23P` through `A26P` at `4/4`, exact Pi/coding-agent/TUI `0.80.10`, and unchanged checkout and real Pi home surfaces. The OMP runtime recorded `A23` through `A26` at `4/4`; package verification recorded `140` files with `11` required entries, `0` missing, and `0` forbidden. Cleanup and package-file drift checks passed.
 
 ## Widen a host claim
 
@@ -79,7 +79,7 @@ Do not widen an OMP claim from typechecking alone. Before naming a newer OMP lin
 6. Prove tool, lifecycle, `user_bash`, prompt, diagnostic, RPC UI, no-UI, and real TUI autocomplete rows.
 7. Keep exact version output, event/log excerpts, path selections, package inventory, and cleanup assertions.
 
-Apply the same rule to a future Pi line: the advisory future SDK probe is not enough. Keep `0.74.0` and `0.79.3` claims until the exact matrix and live runtime smoke both pass.
+Apply the same rule to a future Pi line: the advisory future SDK probe is not enough. Keep the exact `0.74.0`, `0.79.3`, and `0.80.10` claims until that line's exact matrix and live runtime smoke both pass.
 
 ## Handle the known timed-hook flake
 
@@ -112,7 +112,7 @@ For every host-sensitive change, retain:
 | `npm run typecheck` | TypeScript verification after source changes |
 | `npm run build` | Build before direct `dist/**/*.test.js` execution |
 | `npm run test:internal` | Complete internal suite; the timed-hook policy above applies |
-| `npm run compat:sdk-matrix` | Pi `0.74.0`/`0.79.3` compatibility only |
+| `npm run compat:sdk-matrix` | Exact Pi `0.74.0`/`0.79.3`/`0.80.10` compatibility |
 | `npm run compat:sdk-matrix:future` | Advisory Pi future-line probe; never widens claims by itself |
 | `npm run compat:host-matrix -- --dry-run` | Print exact dual-host matrix versions and commands without installs |
 | `npm run compat:host-matrix` | Full Pi/OMP compile, test, runtime, package, cleanup, and drift gate |

@@ -75,7 +75,7 @@ If a trusted project also has project hooks, the summary includes both scopes:
 - `bash` on `$PATH` (override with `PI_YAML_HOOKS_BASH_EXECUTABLE`)
 - Pi with the verified SDK compatibility pairs described below, or OMP
 
-The Pi SDK matrix verifies the retained 0.74.0 floor and current 0.79.3 pair. The end-to-end runtime smoke was run with Pi 0.80.7 and OMP 17.0.1. These are tested versions, not a broader support claim.
+The Pi SDK matrix verifies exact 0.74.0, 0.79.3, and 0.80.10 pairs. The end-to-end runtime smoke passed with Pi 0.80.10, including an isolated `--no-builtin-tools` scenario, and with OMP 17.0.1. These are tested versions, not a broader support claim.
 
 Windows is unsupported.
 
@@ -107,7 +107,7 @@ Before widening Pi peer support or merging SDK-sensitive changes, run:
 npm run compat:sdk-matrix
 ```
 
-The matrix checks both the legacy 0.74.0 SDK floor and the current Pi 0.79.3 SDK pair (`@earendil-works/pi-coding-agent` and `@earendil-works/pi-tui`). It creates a temporary copy of the repository, installs each SDK pair in that copy only, then runs `npm run typecheck` and `npm run test:internal`. The working checkout's `package.json`, `package-lock.json`, and normal `node_modules` are not mutated.
+The matrix checks exact Pi 0.74.0, 0.79.3, and 0.80.10 SDK pairs (`@earendil-works/pi-coding-agent` and `@earendil-works/pi-tui`). It creates a temporary copy of the repository, installs and asserts each requested pair in that copy only, then runs `npm run typecheck` and `npm run test:internal`. The working checkout's `package.json`, `package-lock.json`, and normal `node_modules` are not mutated.
 
 `npm test` remains a consumer-facing no-op. Use `npm run test:internal` directly in the working checkout for full validation.
 

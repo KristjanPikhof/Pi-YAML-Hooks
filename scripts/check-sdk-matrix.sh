@@ -4,7 +4,7 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 DRY_RUN=0
 INCLUDE_FUTURE=0
-SDK_SPECS=("0.74.0" "0.79.3")
+SDK_SPECS=("0.74.0" "0.79.3" "0.80.10")
 
 usage() {
   cat <<'USAGE'
@@ -17,12 +17,13 @@ node_modules are not modified; each SDK spec is installed in a throwaway copy.
 Default matrix:
   - @earendil-works/pi-coding-agent@0.74.0 and @earendil-works/pi-tui@0.74.0
   - @earendil-works/pi-coding-agent@0.79.3 and @earendil-works/pi-tui@0.79.3
+  - @earendil-works/pi-coding-agent@0.80.10 and @earendil-works/pi-tui@0.80.10
 
 Options:
   --dry-run         Print the matrix and commands without creating temp installs.
-  --include-future Include the gated 0.80.x future target. This is advisory only and
+  --include-future Include the gated 0.81.x future target. This is advisory only and
                    does not change compatibility claims or package metadata.
-  --versions        Override SDK specs, for example: --versions "0.74.0 0.79.3".
+  --versions        Override SDK specs, for example: --versions "0.74.0 0.79.3 0.80.10".
   -h, --help        Show this help.
 USAGE
 }
@@ -61,7 +62,7 @@ while [[ $# -gt 0 ]]; do
 done
 
 if [[ "$INCLUDE_FUTURE" -eq 1 ]]; then
-  SDK_SPECS+=("0.80.x")
+  SDK_SPECS+=("0.81.x")
 fi
 
 # Track every temp dir so a single cleanup_all wipes them on EXIT/INT/TERM.
@@ -113,7 +114,7 @@ For each SDK spec, the script will:
   5. run npm run test:internal
   6. delete the temporary copy
 
-Future gate: pass --include-future to try 0.80.x without changing compatibility claims or package metadata.
+Future gate: pass --include-future to try 0.81.x without changing compatibility claims or package metadata.
 
 P2-9 note: the matrix tests include src/pi/adapter.test.ts, which pins known
 SDK-emitted "stale session-bound" error messages against
@@ -131,6 +132,7 @@ if [[ "$DRY_RUN" -eq 1 ]]; then
     echo "[dry-run] SDK $spec"
     echo "[dry-run] npm install --no-audit --no-fund"
     echo "[dry-run] npm install --no-audit --no-fund --no-save @earendil-works/pi-coding-agent@$spec @earendil-works/pi-tui@$spec"
+    echo "[dry-run] assert coding-agent and pi-tui resolve to the same version; exact specs must equal $spec"
     echo "[dry-run] npm run typecheck"
     echo "[dry-run] npm run test:internal"
   done
@@ -151,6 +153,24 @@ for spec in "${SDK_SPECS[@]}"; do
     npm install --no-audit --no-fund --no-save \
       "@earendil-works/pi-coding-agent@$spec" \
       "@earendil-works/pi-tui@$spec"
+    node --input-type=module - "$spec" <<'NODE'
+import { readFileSync } from "node:fs";
+
+const requested = process.argv[2];
+function packageVersion(name) {
+  return JSON.parse(readFileSync(`node_modules/${name}/package.json`, "utf8")).version;
+}
+const codingAgent = packageVersion("@earendil-works/pi-coding-agent");
+const tui = packageVersion("@earendil-works/pi-tui");
+if (codingAgent !== tui) {
+  throw new Error(`Pi SDK packages resolved differently: coding-agent=${codingAgent} tui=${tui} requested=${requested}`);
+}
+const exactSemver = /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$/;
+if (exactSemver.test(requested) && codingAgent !== requested) {
+  throw new Error(`Pi SDK exact-version mismatch: resolved=${codingAgent} requested=${requested}`);
+}
+console.log(`Pi SDK versions: requested=${requested} coding-agent=${codingAgent} tui=${tui}`);
+NODE
     npm run typecheck
     npm run test:internal
   )
