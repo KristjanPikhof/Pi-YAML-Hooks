@@ -19,17 +19,13 @@ const PROMPT_AWARENESS_DISABLE_ENV = "PI_YAML_HOOKS_PROMPT_AWARENESS"
 
 export function registerPromptSupport(api: PiExtensionAPI | OmpExtensionAPI): void {
   const profile = getHookHostProfile()
-  if (profile.kind === "omp") {
-    registerOmpPromptSupport(api as OmpExtensionAPI)
+    ;(api as OmpExtensionAPI).on("before_agent_start", handleOmpBeforeAgentStart)
     return
   }
 
-  registerPiPromptSupport(api as PiExtensionAPI)
+  ;(api as PiExtensionAPI).on("before_agent_start", handlePiBeforeAgentStart)
 }
 
-function registerPiPromptSupport(pi: PiExtensionAPI): void {
-  pi.on("before_agent_start", handlePiBeforeAgentStart)
-}
 
 function handlePiBeforeAgentStart(
   event: PiBeforeAgentStartEvent,
@@ -45,9 +41,6 @@ function handlePiBeforeAgentStart(
   }
 }
 
-function registerOmpPromptSupport(omp: OmpExtensionAPI): void {
-  omp.on("before_agent_start", handleOmpBeforeAgentStart)
-}
 
 function handleOmpBeforeAgentStart(
   event: OmpBeforeAgentStartEvent,
@@ -74,7 +67,9 @@ function isPromptAwarenessDisabled(): boolean {
   return PROMPT_AWARENESS_DISABLE_VALUES.has(raw.trim().toLowerCase())
 }
 
-function buildHookAwarenessSystemPrompt(ctx: Pick<PiExtensionContext | OmpExtensionContext, "cwd" | "hasUI">): string | undefined {
+function buildHookAwarenessSystemPrompt(
+  ctx: Pick<PiExtensionContext | OmpExtensionContext, "cwd" | "hasUI">,
+): string | undefined {
   if (isPromptAwarenessDisabled()) {
     return undefined
   }
