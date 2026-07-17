@@ -46,6 +46,7 @@ export interface HookDiscoveryResult {
   readonly errors: HookValidationError[]
   readonly advisories: string[]
   readonly files: string[]
+  readonly watchPaths: string[]
   readonly sources: HookSourceSummary[]
 }
 
@@ -103,10 +104,11 @@ export function loadDiscoveredHooksSnapshot(options: HookLoadOptions = {}): Hook
   const projectResolution = resolveProjectHookResolution(options)
   const snapshots = snapshotDiscoveredHookFiles(entries, options.readFile ?? defaultReadFile)
   const result = loadDiscoveredHooksFromSnapshots(snapshots, projectResolution)
-  // computeFingerprintSignature consumes `result.files`, which already
-  // contains every imported file expanded by `expandSnapshotImports`. Editing
-  // an imported file therefore changes the signature and busts the cache.
-  const fingerprintSignature = computeFingerprintSignature(result.files)
+  // The dependency manifest includes imported files, imported directories,
+  // and unresolved local candidates. Directory metadata detects child
+  // additions/removals; missing candidates transition to a normal file
+  // fingerprint when created.
+  const fingerprintSignature = computeFingerprintSignature(result.watchPaths)
   const cacheKey = entries.map((entry) => entry.filePath).join("\0")
   const cached = snapshotCache.get(cacheKey)
   if (cached && cached.signature === fingerprintSignature) {
@@ -144,6 +146,9 @@ function computeConsistentFileFingerprint(filePath: string): string {
   for (let attempt = 0; attempt < 3; attempt += 1) {
     try {
       const before = statSync(filePath)
+      if (before.isDirectory()) {
+        return `${before.mtimeMs}|${before.ctimeMs}|${before.size}|${before.ino}|${before.mode}|directory`
+      }
       const content = readFileSync(filePath)
       const after = statSync(filePath)
       if (sameStatFingerprint(before, after)) {
@@ -157,7 +162,7 @@ function computeConsistentFileFingerprint(filePath: string): string {
 
   try {
     const stat = statSync(filePath)
-    return `${stat.mtimeMs}|${stat.size}|${stat.ino}|${stat.mode}|unstable`
+    return `${stat.mtimeMs}|${stat.ctimeMs}|${stat.size}|${stat.ino}|${stat.mode}|unstable`
   } catch {
     return "missing"
   }
@@ -187,6 +192,7 @@ function loadDiscoveredHooksFromSnapshots(
   const advisories: string[] = []
   const sources: HookSourceSummary[] = []
   const files: string[] = []
+  const watchPaths = new Set<string>()
   const loadedFiles = new Set<string>()
   // P2 #4 fix: cache the parsed envelope per file path so the imports tree
   // walk does not re-parse the same YAML body when we later parse the same
@@ -196,9 +202,13 @@ function loadDiscoveredHooksFromSnapshots(
 
   for (const snapshot of snapshots) {
     const expanded = expandSnapshotImports(snapshot, loadedFiles, envelopeCache, projectResolution)
+    for (const watchPath of expanded.watchPaths) {
+      watchPaths.add(watchPath)
+    }
     errors.push(...expanded.errors)
 
     for (const entry of expanded.snapshots) {
+      watchPaths.add(entry.filePath)
       files.push(entry.filePath)
       const result = loadSnapshotHooksFile(entry, envelopeCache)
       const resolved = resolveOverrides(hooks, result.overrides)
@@ -218,7 +228,7 @@ function loadDiscoveredHooksFromSnapshots(
 
   errors.push(...validateAsyncQueueConfigs(hooks))
 
-  return { hooks, errors: dedupeValidationErrors(errors), advisories, files, sources }
+  return { hooks, errors: dedupeValidationErrors(errors), advisories, files, watchPaths: Array.from(watchPaths), sources }
 }
 
 function snapshotDiscoveredHookFiles(
