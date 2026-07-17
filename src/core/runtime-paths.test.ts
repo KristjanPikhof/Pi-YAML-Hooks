@@ -687,6 +687,97 @@ hooks: []
       }
     },
   },
+  {
+    name: "runtime reloads when a child is added to an imported directory",
+    run: async () => {
+      const sandbox = mkdtempSync(path.join(os.tmpdir(), "pi-hooks-runtime-import-directory-"))
+      const homeDir = path.join(sandbox, "home")
+      const agentDir = path.join(homeDir, ".pi", "agent")
+      const projectDir = path.join(sandbox, "repo")
+      const hookDir = path.join(projectDir, ".pi", "hook")
+      const projectPath = path.join(hookDir, "hooks.yaml")
+      const importedDir = path.join(hookDir, "fragments")
+      const trustPath = path.join(agentDir, "trusted-projects.json")
+
+      try {
+        mkdirSync(importedDir, { recursive: true })
+        writeWatchedFile(trustPath, `${JSON.stringify([projectDir])}\n`)
+        writeWatchedFile(projectPath, `imports:
+  - ./fragments
+hooks: []
+`)
+
+        const records: string[] = []
+        const runtime = createHooksRuntime(createFakeHost(records), {
+          directory: projectDir,
+          configDiscovery: {
+            homeDir,
+            profile: Object.freeze({ kind: "pi", agentDir }),
+            resolveGitWorktreeRoot: () => projectDir,
+          },
+        })
+
+        await runtime.event({
+          event: { type: "session.created", properties: { info: { id: "directory-before-add" } } },
+        })
+        writeWatchedFile(path.join(importedDir, "new-hook.yaml"), notificationHooks("directory-child"))
+        await runtime.event({
+          event: { type: "session.created", properties: { info: { id: "directory-after-add" } } },
+        })
+
+        return JSON.stringify(records) === JSON.stringify(["directory-child"])
+          ? { ok: true }
+          : { ok: false, detail: `records=${JSON.stringify(records)}` }
+      } finally {
+        rmSync(sandbox, { recursive: true, force: true })
+      }
+    },
+  },
+  {
+    name: "runtime reloads when a missing relative import is created",
+    run: async () => {
+      const sandbox = mkdtempSync(path.join(os.tmpdir(), "pi-hooks-runtime-missing-import-"))
+      const homeDir = path.join(sandbox, "home")
+      const agentDir = path.join(homeDir, ".pi", "agent")
+      const projectDir = path.join(sandbox, "repo")
+      const hookDir = path.join(projectDir, ".pi", "hook")
+      const projectPath = path.join(hookDir, "hooks.yaml")
+      const missingPath = path.join(hookDir, "later.yaml")
+      const trustPath = path.join(agentDir, "trusted-projects.json")
+
+      try {
+        writeWatchedFile(trustPath, `${JSON.stringify([projectDir])}\n`)
+        writeWatchedFile(projectPath, `imports:
+  - ./later.yaml
+hooks: []
+`)
+
+        const records: string[] = []
+        const runtime = createHooksRuntime(createFakeHost(records), {
+          directory: projectDir,
+          configDiscovery: {
+            homeDir,
+            profile: Object.freeze({ kind: "pi", agentDir }),
+            resolveGitWorktreeRoot: () => projectDir,
+          },
+        })
+
+        await runtime.event({
+          event: { type: "session.created", properties: { info: { id: "missing-before-create" } } },
+        })
+        writeWatchedFile(missingPath, notificationHooks("missing-created"))
+        await runtime.event({
+          event: { type: "session.created", properties: { info: { id: "missing-after-create" } } },
+        })
+
+        return JSON.stringify(records) === JSON.stringify(["missing-created"])
+          ? { ok: true }
+          : { ok: false, detail: `records=${JSON.stringify(records)}` }
+      } finally {
+        rmSync(sandbox, { recursive: true, force: true })
+      }
+    },
+  },
 ]
 
 export async function main(): Promise<number> {

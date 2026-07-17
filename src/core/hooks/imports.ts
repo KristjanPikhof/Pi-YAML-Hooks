@@ -37,9 +37,10 @@ export function expandSnapshotImports(
   loadedFiles: Set<string>,
   envelopeCache: Map<string, ParsedHooksFileEnvelope>,
   projectResolution: ProjectHookResolution | undefined,
-): { snapshots: DiscoveredHooksFileSnapshot[]; errors: HookValidationError[] } {
+): { snapshots: DiscoveredHooksFileSnapshot[]; errors: HookValidationError[]; watchPaths: string[] } {
   const ordered: DiscoveredHooksFileSnapshot[] = []
   const errors: HookValidationError[] = []
+  const watchPaths = new Set<string>()
   const visiting = new Set<string>()
 
   const visit = (current: DiscoveredHooksFileSnapshot, depth: number): void => {
@@ -73,7 +74,7 @@ export function expandSnapshotImports(
     }
 
     visiting.add(canonicalPath)
-    const imports = readSnapshotImports(current, errors, envelopeCache, projectResolution)
+    const imports = readSnapshotImports(current, errors, envelopeCache, projectResolution, watchPaths)
     for (const imported of imports) {
       visit(imported, depth + 1)
     }
@@ -86,7 +87,7 @@ export function expandSnapshotImports(
   }
 
   visit(snapshot, 0)
-  return { snapshots: ordered, errors }
+  return { snapshots: ordered, errors, watchPaths: Array.from(watchPaths) }
 }
 
 export function readSnapshotImports(
@@ -94,6 +95,7 @@ export function readSnapshotImports(
   errors: HookValidationError[],
   envelopeCache: Map<string, ParsedHooksFileEnvelope>,
   projectResolution: ProjectHookResolution | undefined,
+  watchPaths: Set<string>,
 ): DiscoveredHooksFileSnapshot[] {
   if (!("content" in snapshot)) {
     return []
@@ -113,6 +115,9 @@ export function readSnapshotImports(
   const imports: DiscoveredHooksFileSnapshot[] = []
   for (const specifier of envelope.imports) {
     const resolved = resolveHookImportTargets(snapshot.filePath, specifier, snapshot.scope)
+    for (const watchPath of resolved.watchPaths) {
+      watchPaths.add(watchPath)
+    }
     if (resolved.error) {
       errors.push(resolved.error)
       continue
@@ -275,9 +280,11 @@ export function resolveHookImportTargets(
   importerPath: string,
   specifier: string,
   importerScope: HookConfigSourceScope,
-): { filePaths: string[]; error?: undefined } | { filePaths?: undefined; error: HookValidationError } {
+): { filePaths: string[]; watchPaths: string[]; error?: HookValidationError } {
   if (importerScope === "global" && !isGlobalImportsAllowed()) {
     return {
+      filePaths: [],
+      watchPaths: [],
       error: createError(
         importerPath,
         "invalid_imports",
@@ -289,6 +296,8 @@ export function resolveHookImportTargets(
 
   if (isBareSpecifier(specifier) && !isPackageImportsAllowed()) {
     return {
+      filePaths: [],
+      watchPaths: [],
       error: createError(
         importerPath,
         "invalid_imports",
@@ -298,14 +307,18 @@ export function resolveHookImportTargets(
     }
   }
 
+  let resolvedPath: string | undefined
   try {
-    const resolvedPath = !isBareSpecifier(specifier)
+    resolvedPath = !isBareSpecifier(specifier)
       ? path.resolve(path.dirname(importerPath), specifier)
       : createRequire(importerPath).resolve(specifier, { paths: [path.dirname(importerPath)] })
-    return { filePaths: expandHookImportPath(resolvedPath) }
+    const filePaths = expandHookImportPath(resolvedPath)
+    return { filePaths, watchPaths: [resolvedPath, ...filePaths] }
   } catch (error) {
     const detail = error instanceof Error ? error.message : String(error)
     return {
+      filePaths: [],
+      watchPaths: resolvedPath === undefined ? [] : [resolvedPath],
       error: createError(importerPath, "invalid_imports", `Failed to resolve import ${JSON.stringify(specifier)}: ${detail}`, "imports"),
     }
   }
