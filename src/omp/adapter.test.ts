@@ -189,6 +189,10 @@ class FakeOmpHarness {
     await this.emit("agent_start", { type: "agent_start" })
   }
 
+  async agentEnd(): Promise<void> {
+    await this.emit("agent_end", { type: "agent_end", messages: [] })
+  }
+
   async beforeAgentStart(): Promise<unknown> {
     return await this.emit("before_agent_start", {
       type: "before_agent_start",
@@ -326,36 +330,6 @@ function createNoopAutocompleteProvider(): AutocompleteProvider {
     applyCompletion(lines, cursorLine, cursorCol) {
       return { lines, cursorLine, cursorCol }
     },
-  }
-}
-
-interface FakeMacrotasks {
-  readonly pendingCount: number
-  flushAll(): Promise<void>
-}
-
-async function withFakeMacrotasks<T>(run: (clock: FakeMacrotasks) => Promise<T>): Promise<T> {
-  const originalSetTimeout = globalThis.setTimeout
-  const queue: Array<() => unknown> = []
-  globalThis.setTimeout = ((callback: (...args: unknown[]) => unknown, _delay?: number, ...args: unknown[]) => {
-    queue.push(() => callback(...args))
-    return 0 as unknown as NodeJS.Timeout
-  }) as typeof setTimeout
-  const clock: FakeMacrotasks = {
-    get pendingCount() {
-      return queue.length
-    },
-    async flushAll() {
-      while (queue.length > 0) {
-        const callback = queue.shift()
-        if (callback) await callback()
-      }
-    },
-  }
-  try {
-    return await run(clock)
-  } finally {
-    globalThis.setTimeout = originalSetTimeout
   }
 }
 
@@ -680,46 +654,50 @@ const cases: Case[] = [
       }),
   },
   {
-    name: "OMP deferred idle suppresses replaced, continuing, busy, pending, and duplicate stops",
+    name: "OMP agent_end evaluates idle after session_stop continuations and dispatches once",
     run: async () =>
-      await withSandbox(async ({ projectDir, defaultAgentDir }) =>
-        await withFakeMacrotasks(async (clock) => {
-          process.env.PI_YAML_HOOKS_TRUST_PROJECT = "1"
-          writeOmpProjectHooks(projectDir, "hooks:\n  - event: session.idle\n    actions:\n      - notify: \"idle\"\n")
-          const harness = new FakeOmpHarness(projectDir, defaultAgentDir)
-          harness.register()
-          await harness.agentStart()
-          await harness.sessionStop()
-          const deferred = harness.notifications.length === 0 && clock.pendingCount === 1
-          harness.replaceSession("session-2")
-          await clock.flushAll()
-
-          await harness.agentStart()
-          await harness.sessionStop()
-          await harness.agentStart()
-          await clock.flushAll()
-
-          harness.idle = false
-          await harness.sessionStop()
-          await clock.flushAll()
-          harness.idle = true
+      await withSandbox(async ({ projectDir, defaultAgentDir }) => {
+        process.env.PI_YAML_HOOKS_TRUST_PROJECT = "1"
+        writeOmpProjectHooks(projectDir, "hooks:\n  - event: session.idle\n    actions:\n      - notify: \"idle\"\n")
+        const harness = new FakeOmpHarness(projectDir, defaultAgentDir)
+        harness.register()
+        const order: string[] = []
+        const sessionStopHandlers = harness.handlers.get("session_stop") ?? []
+        sessionStopHandlers.push(async () => {
+          await Promise.resolve()
           harness.pendingMessages = true
-          await harness.sessionStop()
-          await clock.flushAll()
+          order.push("session_stop:settled")
+        })
+        harness.handlers.set("session_stop", sessionStopHandlers)
 
-          harness.pendingMessages = false
-          await harness.agentStart()
-          await harness.sessionStop()
-          await harness.sessionStop()
-          const duplicateChecks = clock.pendingCount === 2
-          await clock.flushAll()
-          const trace = `deferred=${deferred};duplicateChecks=${duplicateChecks};notifications=${harness.notifications.join(",")}`
-          evidence.traces.push(`idle:${trace}`)
-          return deferred && duplicateChecks && harness.notifications.join(",") === "idle"
-            ? { ok: true }
-            : { ok: false, detail: trace }
-        }),
-      ),
+        await harness.agentStart()
+        await harness.sessionStop()
+        const noEarlyIdle =
+          harness.notifications.length === 0 && order.join(",") === "session_stop:settled"
+        await harness.agentEnd()
+        const continuationSuppressed = harness.notifications.length === 0
+
+        harness.pendingMessages = false
+        harness.idle = false
+        await harness.agentEnd()
+        const busySuppressed = harness.notifications.length === 0
+
+        harness.idle = true
+        await harness.agentEnd()
+        await harness.agentEnd()
+        const oneShot = harness.notifications.join(",") === "idle"
+
+        await harness.agentStart()
+        await harness.agentEnd()
+        const rearmed = harness.notifications.join(",") === "idle,idle"
+        const trace =
+          `noEarly=${noEarlyIdle};continuation=${continuationSuppressed};busy=${busySuppressed};` +
+          `oneShot=${oneShot};rearmed=${rearmed};order=${order.join(",")}`
+        evidence.traces.push(`idle:${trace}`)
+        return noEarlyIdle && continuationSuppressed && busySuppressed && oneShot && rearmed
+          ? { ok: true }
+          : { ok: false, detail: `${trace};notifications=${JSON.stringify(harness.notifications)}` }
+      }),
   },
   {
     name: "OMP UI permits confirm while headless mode blocks and degrades capabilities",
