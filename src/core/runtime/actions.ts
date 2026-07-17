@@ -291,6 +291,7 @@ const handleConfirm: ActionHandler = async ({
   projectDir,
   event,
   sessionID,
+  context,
   sourceFilePath,
   hookId,
   actionType,
@@ -300,12 +301,19 @@ const handleConfirm: ActionHandler = async ({
     return { blocked: false }
   }
 
+  const remainingBudget = context.synchronousBashBudget
+    ? Math.max(0, context.synchronousBashBudget.deadline - context.synchronousBashBudget.now())
+    : undefined
+
   try {
     if (typeof host.confirm === "function") {
-      const approved = await host.confirm({
-        ...(action.confirm.title !== undefined ? { title: action.confirm.title } : {}),
-        message: action.confirm.message,
-      })
+      const approved = remainingBudget === 0
+        ? false
+        : await host.confirm({
+            ...(action.confirm.title !== undefined ? { title: action.confirm.title } : {}),
+            message: action.confirm.message,
+            ...(remainingBudget === undefined ? {} : { timeout: remainingBudget }),
+          })
       logger.info("action_result", "Confirmation action completed.", {
         cwd: projectDir,
         event,
@@ -313,7 +321,7 @@ const handleConfirm: ActionHandler = async ({
         hookId,
         hookSource: sourceFilePath,
         action: actionType,
-        details: { title: action.confirm.title, message: action.confirm.message, approved },
+        details: { title: action.confirm.title, message: action.confirm.message, approved, timeout: remainingBudget },
       })
       if (!approved) {
         return { blocked: true, blockReason: "Blocked by user via confirm action" }
