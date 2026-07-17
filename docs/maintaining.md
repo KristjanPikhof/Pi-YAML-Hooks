@@ -57,7 +57,7 @@ Both scripts use isolated home, project, profile, npm, and log state. They insta
 |---|---|---|
 | Host versions | Records Pi, both `@earendil-works` SDK packages, and Node | Records OMP, both `@oh-my-pi` SDK packages, and Bun |
 | Storage and trust | `.pi` global/project paths, active Pi trust store, default and override logs | Active default/named `.omp` profile paths, native project paths, OMP trust store, default log, and no Pi-state leakage |
-| Events | Tool before/after, synthesized file changes, created/idle/deleted, opt-in `user_bash` | Tool before, startup/new lifecycle, deferred idle, deleted reason telemetry, opt-in `user_bash` |
+| Events | Tool before/after, synthesized file changes, created/idle/deleted, opt-in `user_bash` | Tool before, startup/new lifecycle, post-stop idle, deleted reason telemetry, opt-in `user_bash` |
 | UI and prompts | RPC actions, prompt awareness, diagnostics, and real PTY autocomplete | RPC actions/headless degradation, prompt awareness, diagnostics, and real tmux TUI autocomplete with same-process lazy refresh |
 | Cleanup | Temporary install and process cleanup; real-home mutation checksum unchanged | Temporary profile, HTTP server, and private tmux cleanup |
 

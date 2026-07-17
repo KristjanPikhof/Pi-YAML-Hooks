@@ -377,7 +377,7 @@ This is the canonical environment-variable reference for `pi-yaml-hooks`. The ex
 | `PI_YAML_HOOKS_ALLOW_PROJECT_IMPORTS_OUTSIDE_TRUST_ANCHOR` | `=1` allows project imports whose target falls outside the project's trust anchor |
 | `PI_YAML_HOOKS_DEBUG` | `=1` enables verbose, persistent NDJSON logging |
 | `PI_YAML_HOOKS_LOG_LEVEL` | Set the log level explicitly: `debug`, `info`, `warn`, or `error` |
-| `PI_YAML_HOOKS_LOG_FILE` | Override the log file location. The default is `<active-agent-dir>/logs/pi-yaml-hooks.ndjson`: `~/.pi/agent/...` for Pi, `~/.omp/agent/...` for OMP's default profile, or `~/.omp/profiles/<profile>/agent/...` for a named OMP profile. |
+| `PI_YAML_HOOKS_LOG_FILE` | Set a non-empty log file override; empty or whitespace-only values are treated as unset. The default is `<active-agent-dir>/logs/pi-yaml-hooks.ndjson`: `~/.pi/agent/...` for Pi, `~/.omp/agent/...` for OMP's default profile, or `~/.omp/profiles/<profile>/agent/...` for a named OMP profile. |
 | `PI_YAML_HOOKS_LOG_MAX_BYTES` | Rotate the structured log file once it exceeds this many bytes (positive integer). Default `10485760` (10 MiB). On rotation the live file is renamed to `<path>.1`, replacing any prior `.1`. |
 | `PI_YAML_HOOKS_LOG_STDERR` | `=1` mirrors structured log entries to stderr |
 

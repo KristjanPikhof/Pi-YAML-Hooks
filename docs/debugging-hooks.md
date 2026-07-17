@@ -52,9 +52,10 @@ From inside the running host:
 ```text
 /hooks-tail-log
 /hooks-tail-log --path
+/hooks-tail-log --follow
 ```
 
-With no arguments, the command prints the active log and a copy-pasteable `tail -F` command. `--path` prints only the resolved path, which is the safest choice for scripts and named OMP profiles.
+With no arguments, the command prints the active log and a copy-pasteable `tail -F` command. `--path` prints only the resolved path. `--follow` starts the packaged helper with that exact path, including for named OMP profiles and explicit log overrides.
 
 Raw host defaults:
 
@@ -63,7 +64,7 @@ tail -F ~/.pi/agent/logs/pi-yaml-hooks.ndjson
 tail -F ~/.omp/agent/logs/pi-yaml-hooks.ndjson
 ```
 
-The standalone helper defaults to the Pi path unless `PI_YAML_HOOKS_LOG_FILE` or `--file` is supplied. For OMP, get the active path from `/hooks-tail-log --path`, then pass it explicitly:
+The standalone helper cannot infer an OMP profile and defaults to the Pi path unless a non-empty `PI_YAML_HOOKS_LOG_FILE` or `--file` is supplied. `/hooks-tail-log --follow` passes the active path automatically. For direct helper use, print the path first:
 
 ```bash
 ./scripts/tail-hook-log.sh --file /path/from/hooks-tail-log
@@ -107,6 +108,6 @@ These entries come from the extension runtime, not the host session transcript. 
 The canonical environment-variable table lives in [`setup.md`](./setup.md#environment-variables). The debugging controls are:
 
 - `PI_YAML_HOOKS_DEBUG=1`: enable debug-level persistent logging
-- `PI_YAML_HOOKS_LOG_FILE=/path/file.ndjson`: override the active host default
+- `PI_YAML_HOOKS_LOG_FILE=/path/file.ndjson`: set a non-empty override for the active host default
 - `PI_YAML_HOOKS_LOG_LEVEL=debug|info|warn|error`: set the log level
 - `PI_YAML_HOOKS_LOG_STDERR=1`: mirror structured entries to stderr

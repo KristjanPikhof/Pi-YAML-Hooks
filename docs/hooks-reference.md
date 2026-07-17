@@ -135,7 +135,7 @@ The YAML surface is host-independent. The adapter translates Pi and OMP events i
 | `tool.after.*`, `tool.after.<name>` | `tool_result` | `tool_result` | Dispatches after the named tool. The adapter retains the session ID recorded at `tool_call` so an after-hook is not silently routed to a replacement session. |
 | `file.changed` | Synthesized after `tool_result` | Synthesized after `tool_result` | Not a host event. It fires after `tool.after.*` for recognized mutations described below. Human `user_bash` commands never synthesize it. |
 | `session.created` | `session_start` only when `reason` is `startup` or `new` | `session_start` when `reason` is absent, `startup`, or `new`; also `session_switch` when `reason` is `new` | Emits once for the current session ID. Resume and fork events are excluded on both hosts. OMP startup and new-session signals are deduplicated, so no resume/fork created-event claim is implied. |
-| `session.idle` | `agent_settled`; `agent_end` is the compatibility path | `session_stop`, deferred to the next macrotask | Requires the same live session, `isIdle()`, and no pending messages. Pi deduplicates `agent_end`/`agent_settled`. OMP rechecks after deferral; `agent_start`, a replacement session, or queued continuation cancels the candidate, and a later stop can re-arm it. Accumulated file changes are consumed only after a successful idle dispatch. |
+| `session.idle` | `agent_settled`; `agent_end` is the compatibility path | `agent_end`, after `session_stop` control handlers finish | Requires the same live session, `isIdle()`, and no pending messages. Pi deduplicates `agent_end`/`agent_settled`. OMP waits until stop handlers have settled, so a queued continuation, `agent_start`, or replacement session suppresses the candidate; a later terminal `agent_end` can re-arm it. Accumulated file changes are consumed only after a successful idle dispatch. |
 | `session.deleted` | `session_before_switch` or `session_shutdown` | `session_before_switch` or `session_shutdown` | Best-effort and intentionally lossy. Duplicate switch/shutdown signals for one session are collapsed. If the host supplies `reason`, the adapter forwards that string verbatim on the internal envelope and records it in debug dispatch telemetry. Treat it as opaque: values such as `quit`, `reload`, `new`, `resume`, and `fork` are observations, not a closed enum, and matching is unaffected. |
 | opt-in human `user_bash` | `user_bash` | `user_bash` | With `PI_YAML_HOOKS_ENABLE_USER_BASH=1`, maps only to `tool.before.bash`. It does not produce `tool.after.*` or `file.changed`. |
 | agent-start awareness | `before_agent_start` | `before_agent_start` | Appends the hook-awareness text to the existing system prompt unless `PI_YAML_HOOKS_PROMPT_AWARENESS` disables it. This is adapter behavior, not a YAML event. |
@@ -528,7 +528,7 @@ The current evidence separates compile compatibility from live runtime proof:
 - Pi compatibility remains pinned to the `0.74.0` and `0.79.3` SDK matrix. A live Pi `0.80.7` smoke passed, but that observation alone does not widen the compatibility claim.
 - OMP compile, internal-suite, package-install, RPC, and TUI smoke evidence is pinned to `17.0.1`.
 - Pi startup/new and OMP startup/new produce `session.created`; resume/fork do not.
-- OMP idle waits through the next macrotask and suppresses false idle during continuations.
+- OMP derives idle from the post-stop `agent_end`, after continuation-capable `session_stop` handlers have settled.
 - Both hosts prove `tool.before.bash`, `tool.after.read`, `tool.after.write`, synthesized `file.changed`, current-session `tool:` follow-up prompts, opt-in `user_bash`, UI capability degradation, and lifecycle cleanup.
 - OMP fallback tests prove a legacy `.pi` project config still requires OMP trust. Pi trust never authorizes it.
 
@@ -554,7 +554,7 @@ When you start either host with `PI_YAML_HOOKS_DEBUG=1`, `pi-yaml-hooks` writes 
 | OMP default profile | `~/.omp/agent/logs/pi-yaml-hooks.ndjson` |
 | OMP named profile | `~/.omp/profiles/<profile>/agent/logs/pi-yaml-hooks.ndjson` |
 
-`PI_YAML_HOOKS_LOG_FILE` overrides every default. For active profile paths, trust diagnostics, `/hooks-tail-log`, and host-aware tail commands, see [`debugging-hooks.md`](./debugging-hooks.md).
+A non-empty `PI_YAML_HOOKS_LOG_FILE` overrides every default; an empty or whitespace-only value is treated as unset. For active profile paths, trust diagnostics, `/hooks-tail-log`, and host-aware tail commands, see [`debugging-hooks.md`](./debugging-hooks.md).
 
 
 ## Best next steps
