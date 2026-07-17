@@ -6,7 +6,7 @@ Agent contract for `pi-yaml-hooks`. Facts only; tutorials in `docs/`.
 
 - Runtime: one `pi-yaml-hooks` package with native Pi and OMP extension entries. Type-only `pi-yaml-hooks/types` exports `HookConfig`, `HookEvent`, `BashHookContext`, `SessionDeletedReason`; smoke: `src/public-types-smoke.test.ts`.
 - Package engine: Node `>=22.19.0`; macOS/Linux only (`src/pi/register-adapter.ts` guards win32). OMP runtime smoke is verified with Bun `1.3.14`.
-- Pi host peers: `@earendil-works/pi-coding-agent` + `@earendil-works/pi-tui` as optional `*`; dev-tested at `0.79.3`; compatibility matrix covers `0.74.0` + `0.79.3`. Current live Pi evidence is `0.80.7`, not a widened claim.
+- Pi host peers: `@earendil-works/pi-coding-agent` + `@earendil-works/pi-tui` as optional `*`; dev-tested at `0.80.10`; compatibility matrix covers exact `0.74.0` + `0.79.3` + `0.80.10`. Current live Pi evidence is exact `0.80.10`, including `--no-builtin-tools`; this is not a broader range claim.
 - OMP host peers: `@oh-my-pi/pi-coding-agent` + `@oh-my-pi/pi-tui` as optional `*`; compile/runtime-tested at `17.0.1`.
 - No direct `@mariozechner/*` host deps. Transitive `@mariozechner/clipboard` may appear under Pi SDK packages in `package-lock.json`.
 - `package-lock.json` is canonical; no bun.lock.
@@ -51,7 +51,7 @@ Agent contract for `pi-yaml-hooks`. Facts only; tutorials in `docs/`.
 - Build: `npm run build` before direct `dist/**/*.test.js`; emits `dist/extensions/*`.
 - Full tests: `npm run test:internal` = build + `node scripts/run-tests.mjs`; known timed-hook flake policy is in `docs/maintaining.md`.
 - `npm test` is consumer no-op; not validation. No lint script exists.
-- Pi SDK matrix: `npm run compat:sdk-matrix` checks `0.74.0` + `0.79.3`; `:future` is advisory only.
+- Pi SDK matrix: `npm run compat:sdk-matrix` checks exact `0.74.0` + `0.79.3` + `0.80.10`; `:future` is advisory only.
 - Dual-host gate: `npm run compat:host-matrix -- --dry-run` previews; `npm run compat:host-matrix` runs Pi/OMP compile, tests, OMP smoke, package checks, cleanup, and drift assertions.
 - Runtime smokes: `bash scripts/smoke/pi-runtime-smoke.sh --automated` and `bash scripts/smoke/omp-runtime-smoke.sh`; both use isolated native package discovery.
 

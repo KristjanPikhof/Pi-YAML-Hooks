@@ -6,6 +6,7 @@ VALID_FIXTURE="$ROOT_DIR/scripts/smoke/pi-runtime-smoke-hooks.yaml"
 INVALID_FIXTURE="$ROOT_DIR/scripts/smoke/pi-runtime-smoke-invalid-hooks.yaml"
 MODE="manual"
 MANUAL_DIR=""
+PI_TARGET_VERSION="0.80.10"
 
 case "${1:-}" in
   --automated)
@@ -174,8 +175,6 @@ const targets = [
   path.join(home, ".pi", "agent", "trusted-projects.json"),
   path.join(home, ".pi", "agent", "npm", "node_modules", "pi-yaml-hooks"),
   path.join(home, ".pi", "agent", "logs", "pi-yaml-hooks.ndjson"),
-  path.join(home, ".npm", "_logs"),
-  path.join(home, ".npm", "_update-notifier-last-checked"),
 ];
 const hash = crypto.createHash("sha256");
 function add(target, relative = "") {
@@ -251,7 +250,7 @@ import { spawn } from "node:child_process";
 const [piBin, projectDir, transcriptPath, stderrPath, mode, sessionDir, eventsPath] = process.argv.slice(2);
 const transcript = fs.createWriteStream(transcriptPath, { flags: "a" });
 const stderr = fs.createWriteStream(stderrPath, { flags: "a" });
-const child = spawn(piBin, [
+const args = [
   "--mode", "rpc",
   "--offline",
   "--provider", "smoke",
@@ -259,7 +258,9 @@ const child = spawn(piBin, [
   "--api-key", "smoke-key",
   "--session-dir", sessionDir,
   "--no-context-files",
-], { cwd: projectDir, env: process.env, stdio: ["pipe", "pipe", "pipe"] });
+];
+if (mode === "no-builtins") args.push("--no-builtin-tools");
+const child = spawn(piBin, args, { cwd: projectDir, env: process.env, stdio: ["pipe", "pipe", "pipe"] });
 
 let nextId = 0;
 let stdoutBuffer = "";
@@ -416,6 +417,10 @@ try {
     await rpc("get_commands");
     await slash("/hooks-status");
     await slash("/hooks-tail-log --path");
+    await slash("/hooks-validate");
+  } else if (mode === "no-builtins") {
+    await rpc("get_commands");
+    await slash("/hooks-status");
     await slash("/hooks-validate");
   } else {
     throw new Error(`unknown mode: ${mode}`);
@@ -624,6 +629,15 @@ run_automated() {
   local pass_count=0
   local interactive_row=""
   local cleanup_complete=0
+  local isolated_env=(
+    HOME="$isolated_home"
+    USERPROFILE="$isolated_home"
+    PI_CODING_AGENT_DIR="$agent_dir"
+    npm_config_cache="$smoke_root/npm-cache"
+    npm_config_userconfig="$smoke_root/npmrc"
+    npm_config_global=false
+    NPM_CONFIG_GLOBAL=false
+  )
 
   cleanup() {
     if [[ -n "$mock_pid" ]] && kill -0 "$mock_pid" >/dev/null 2>&1; then
@@ -664,8 +678,7 @@ YAML
   local pack_json="$transcript_dir/npm-pack.json"
   (
     cd "$package_stage"
-    HOME="$isolated_home" USERPROFILE="$isolated_home" npm_config_cache="$smoke_root/npm-cache" \
-      npm_config_userconfig="$smoke_root/npmrc" npm pack --json --pack-destination "$artifact_dir"
+    env "${isolated_env[@]}" npm pack --json --pack-destination "$artifact_dir"
   ) > "$pack_json"
   assert_dir "$package_stage/dist"
   local packed_name
@@ -686,15 +699,14 @@ NODE
   local install_out="$transcript_dir/pi-install.txt"
   (
     cd "$project_dir"
-    HOME="$isolated_home" USERPROFILE="$isolated_home" PI_CODING_AGENT_DIR="$agent_dir" \
-      "$pi_bin" install "$package_source"
+    env "${isolated_env[@]}" "$pi_bin" install "$package_source"
   ) > "$install_out" 2>&1
   assert_contains "$install_out" "Installed $package_source"
+  assert_dir "$smoke_root/npm-cache/_logs"
   local list_out="$transcript_dir/pi-list.txt"
   (
     cd "$project_dir"
-    HOME="$isolated_home" USERPROFILE="$isolated_home" PI_CODING_AGENT_DIR="$agent_dir" \
-      "$pi_bin" list
+    env "${isolated_env[@]}" "$pi_bin" list
   ) > "$list_out" 2>&1
   assert_contains "$list_out" "$package_source"
   local installed_package="$agent_dir/npm/node_modules/pi-yaml-hooks"
@@ -732,7 +744,7 @@ NODE
   local coding_agent_version
   local tui_version
   local node_version
-  pi_version="$($pi_bin --version 2>&1 | sed -n '1p')"
+  pi_version="$(env "${isolated_env[@]}" "$pi_bin" --version 2>&1 | sed -n '1p')"
   node_version="$(node --version)"
   read -r coding_agent_version tui_version < <(node --input-type=module - "$pi_bin" <<'NODE'
 import fs from "node:fs";
@@ -759,8 +771,9 @@ if (!coding.version || !tui?.version) process.exit(1);
 process.stdout.write(`${coding.version} ${tui.version}\n`);
 NODE
 )
-  [[ -n "$pi_version" && "$pi_version" != *unknown* ]] || fail "Pi version is not exact"
-  [[ -n "$coding_agent_version" && -n "$tui_version" ]] || fail "SDK versions are not exact"
+  [[ "$pi_version" == "$PI_TARGET_VERSION" ]] || fail "Pi version mismatch: actual=$pi_version expected=$PI_TARGET_VERSION"
+  [[ "$coding_agent_version" == "$PI_TARGET_VERSION" ]] || fail "coding-agent version mismatch: actual=$coding_agent_version expected=$PI_TARGET_VERSION"
+  [[ "$tui_version" == "$PI_TARGET_VERSION" ]] || fail "pi-tui version mismatch: actual=$tui_version expected=$PI_TARGET_VERSION"
   [[ "$node_version" == v* ]] || fail "Node version is not exact"
 
   local mock_server="$smoke_root/mock-server.mjs"
@@ -801,9 +814,7 @@ EOF
   local rpc_driver="$smoke_root/rpc-driver.mjs"
   write_rpc_driver "$rpc_driver"
   local common_env=(
-    HOME="$isolated_home"
-    USERPROFILE="$isolated_home"
-    PI_CODING_AGENT_DIR="$agent_dir"
+    "${isolated_env[@]}"
     PI_YAML_HOOKS_DEBUG=1
     PI_YAML_HOOKS_ENABLE_USER_BASH=1
     PI_OFFLINE=1
@@ -966,8 +977,36 @@ NODE
   assert_contains "$override_rpc" "Active hooks are valid"
   assert_file "$override_log"
 
+  local no_builtins_start_lines
+  no_builtins_start_lines="$(wc -l < "$events_file")"
+  local no_builtins_rpc="$transcript_dir/no-builtins-rpc.ndjson"
+  local no_builtins_err="$transcript_dir/no-builtins-stderr.txt"
+  env "${common_env[@]}" node "$rpc_driver" "$pi_bin" "$project_dir" "$no_builtins_rpc" "$no_builtins_err" no-builtins "$sessions_dir/no-builtins" "$events_file"
+  assert_contains "$no_builtins_rpc" "hooks-status"
+  assert_contains "$no_builtins_rpc" "hooks-validate"
+  assert_contains "$no_builtins_rpc" "Hooks status for"
+  assert_contains "$no_builtins_rpc" "Active hooks are valid"
+  assert_contains "$no_builtins_rpc" "pi-yaml-hooks-diagnostics"
+  local no_builtins_lifecycle
+  no_builtins_lifecycle="$(node --input-type=module - "$events_file" "$no_builtins_start_lines" <<'NODE'
+import fs from "node:fs";
+
+const [eventsFile, startText] = process.argv.slice(2);
+const rows = fs.readFileSync(eventsFile, "utf8").trim().split("\n").filter(Boolean)
+  .slice(Number(startText)).map((line) => JSON.parse(line));
+const created = rows.filter((row) => row.event === "session.created" && typeof row.session === "string");
+const deleted = rows.filter((row) => row.event === "session.deleted" && typeof row.session === "string");
+const session = created.find(({ session }) => deleted.some((row) => row.session === session))?.session;
+if (!session) throw new Error(`no --no-builtin-tools session has ordered created/deleted lifecycle: ${JSON.stringify(rows)}`);
+const createdIndex = rows.findIndex((row) => row.event === "session.created" && row.session === session);
+const deletedIndex = rows.findIndex((row) => row.event === "session.deleted" && row.session === session);
+if (createdIndex >= deletedIndex) throw new Error(`invalid --no-builtin-tools lifecycle order: created=${createdIndex} deleted=${deletedIndex}`);
+process.stdout.write(`session=${session};created=${createdIndex};deleted=${deletedIndex};graceful-exit=0`);
+NODE
+)"
+
   local combined_host_output="$transcript_dir/combined-host-output.txt"
-  cat "$untrusted_rpc" "$untrusted_err" "$trusted_rpc" "$trusted_err" "$invalid_rpc" "$invalid_err" "$override_rpc" "$override_err" > "$combined_host_output"
+  cat "$untrusted_rpc" "$untrusted_err" "$trusted_rpc" "$trusted_err" "$invalid_rpc" "$invalid_err" "$override_rpc" "$override_err" "$no_builtins_rpc" "$no_builtins_err" > "$combined_host_output"
   assert_not_contains_regex "$combined_host_output" 'Failed to load extension|Error loading extension|Cannot load extension|ERR_MODULE_NOT_FOUND|SyntaxError.*extensions/pi-yaml-hooks'
 
   local pty_driver="$smoke_root/pty-driver.py"
@@ -998,6 +1037,7 @@ NODE
   printf 'A23P PASS — packed artifact installed by native Pi package/settings flow; package=%s@%s sha256=%s source=%s installed=%s\n' "$packed_name" "$packed_version" "$artifact_sha256" "$package_source" "$installed_package"
   pass_count=$((pass_count + 1))
   printf 'A24P PASS — commands, trust, configs, logs, tools, lifecycle, user_bash, prompt, diagnostics, and UI evidence asserted\n'
+  printf 'A24P NO_BUILTINS — native package commands/diagnostics/lifecycle with --no-builtin-tools; %s\n' "$no_builtins_lifecycle"
   printf 'A24P INTERACTIVE %s\n' "$interactive_row"
 
   if [[ -n "$mock_pid" ]] && kill -0 "$mock_pid" >/dev/null 2>&1; then

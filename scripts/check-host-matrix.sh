@@ -2,7 +2,7 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-PI_SDK_SPECS=("0.74.0" "0.79.3")
+PI_SDK_SPECS=("0.74.0" "0.79.3" "0.80.10")
 OMP_SDK_SPEC="17.0.1"
 DRY_RUN=0
 MATRIX_ROOT=""
@@ -267,12 +267,13 @@ run_pi_matrix() {
     return "$pipeline_status"
   fi
 
-  node --input-type=module - "$log_file" "$EXPECTED_TEST_FILES" "$EXPECTED_TEST_PASS" <<'NODE'
+  node --input-type=module - "$log_file" "$EXPECTED_TEST_FILES" "$EXPECTED_TEST_PASS" "${PI_SDK_SPECS[@]}" <<'NODE'
 import { readFileSync } from "node:fs";
 const text = readFileSync(process.argv[2], "utf8");
 const expectedFiles = Number(process.argv[3]);
 const expectedPass = Number(process.argv[4]);
-for (const version of ["0.74.0", "0.79.3"]) {
+const versions = process.argv.slice(5);
+for (const version of versions) {
   const start = text.indexOf(`==> Checking Pi SDK ${version} in `);
   const end = text.indexOf(`==> Pi SDK ${version} passed`, start);
   if (start < 0 || end < 0) throw new Error(`missing completed Pi SDK section for ${version}`);

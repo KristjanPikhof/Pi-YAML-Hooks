@@ -11,7 +11,7 @@ This guide installs `pi-yaml-hooks` natively in Pi or OMP, then gives you a safe
 
 Windows is unsupported because the hook runner expects a POSIX `bash`.
 
-The package lists both hosts' SDK packages as optional peer dependencies and as dev dependencies for local typechecking only. The retained Pi compatibility checks use SDK 0.74.0 and 0.79.3. End-to-end runtime behavior was tested with Pi 0.80.7 and OMP 17.0.1. Do not read those runtime versions as a broader support range.
+The package lists both hosts' SDK packages as optional peer dependencies and as dev dependencies for local typechecking only. Pi compatibility checks use exact SDK pairs 0.74.0, 0.79.3, and 0.80.10. End-to-end runtime behavior was tested with Pi 0.80.10 and OMP 17.0.1. Do not read those tested versions as a broader support range.
 
 ## Install the extension
 

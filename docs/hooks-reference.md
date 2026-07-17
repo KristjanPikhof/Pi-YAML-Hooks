@@ -525,7 +525,7 @@ Use the repeatable host matrix and runtime smoke gates in [`maintaining.md`](./m
 
 The current evidence separates compile compatibility from live runtime proof:
 
-- Pi compatibility remains pinned to the `0.74.0` and `0.79.3` SDK matrix. A live Pi `0.80.7` smoke passed, but that observation alone does not widen the compatibility claim.
+- Pi compatibility is pinned to exact `0.74.0`, `0.79.3`, and `0.80.10` SDK matrix rows. The live Pi `0.80.10` smoke also covers native package discovery and an isolated `--no-builtin-tools` lifecycle scenario.
 - OMP compile, internal-suite, package-install, RPC, and TUI smoke evidence is pinned to `17.0.1`.
 - Pi startup/new and OMP startup/new produce `session.created`; resume/fork do not.
 - OMP derives idle from the post-stop `agent_end`, after continuation-capable `session_stop` handlers have settled.
