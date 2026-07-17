@@ -132,7 +132,7 @@ Maintainer-facing details live in [`docs/maintaining.md`](./docs/maintaining.md)
 
 When an event matches, `pi-yaml-hooks` evaluates conditions and runs the configured actions. `bash` actions receive hook context JSON on stdin plus injected `PI_*` environment variables such as `PI_PROJECT_DIR`, `PI_WORKTREE_DIR`, `PI_SESSION_ID`, and `PI_GIT_COMMON_DIR`. At agent start, the extension also appends a short hook-awareness note to the system prompt so the host has the current hook and trust context while it works.
 
-## Native PI surface
+## Shared Pi and OMP surface
 
 ### Events
 
@@ -141,19 +141,19 @@ When an event matches, `pi-yaml-hooks` evaluates conditions and runs the configu
 | `tool.before.*` | Before a tool call |
 | `tool.after.*` | After a tool call |
 | `file.changed` | Synthesized after recognized file mutations |
-| `session.created` | PI startup or a genuinely new session |
-| `session.idle` | Agent turn has settled with no retry, compaction retry, or queued continuation remaining on capable hosts; older Pi falls back to `agent_end` behavior |
-| `session.deleted` | Best-effort cleanup on shutdown or session switch; includes PI's reason (`quit`, `reload`, `new`, `resume`, or `fork`) when available |
+| `session.created` | Host startup or a genuinely new session; resume and fork signals are excluded |
+| `session.idle` | Agent turn has settled with no retry, compaction retry, or queued continuation remaining; older Pi falls back to `agent_end` behavior |
+| `session.deleted` | Best-effort cleanup on shutdown or session switch; forwards the host's opaque reason string when available |
 
 ### Actions
 
-| Action | PI behavior |
+| Action | Host behavior |
 |---|---|
 | `bash` | Runs a shell command with injected context |
-| `tool` | Sends a follow-up prompt into the current PI session |
-| `notify` | Shows a PI notification when `ctx.hasUI` and the UI method exist, including RPC UI contexts in Pi 0.79+ |
+| `tool` | Sends a follow-up prompt into the current Pi or OMP session |
+| `notify` | Shows a host notification when `ctx.hasUI` and the UI method exist |
 | `confirm` | Shows a confirmation dialog before a tool runs when UI exists; headless/no-UI contexts fail closed |
-| `setStatus` | Sets a PI status-bar/status entry keyed to the hook when the UI method exists |
+| `setStatus` | Sets a host status-bar/status entry keyed to the hook when the UI method exists |
 
 ### Slash commands
 
@@ -165,19 +165,19 @@ When an event matches, `pi-yaml-hooks` evaluates conditions and runs the configu
 | `/hooks-reload` | Asks the active host to reload extensions; edited hooks also refresh lazily on the next relevant event |
 | `/hooks-tail-log` | Log path plus a ready-to-run `tail -F` command; `--follow` starts a detached live tail, and `--path` prints only the path |
 
-`/hooks-status`, `/hooks-validate`, and hook-load validation errors persist as custom entries on the Pi 0.80-capable TUI path. These entries do not enter model context. Older Pi and non-TUI paths retain the custom-message fallback.
+`/hooks-status`, `/hooks-validate`, and hook-load validation errors persist as context-free custom entries when the host exposes that surface, with a custom-message fallback on older or non-TUI hosts.
 
-PI exposes `ctx.ui.addAutocompleteProvider` in the TUI editor, so `pi-yaml-hooks` layers guarded `/hooks` autocomplete only when `ctx.mode` is `"tui"` (or absent on older SDKs) and the method exists. Suggestions include the command names plus contextual hook IDs, event names, config paths, and log-tail options where useful. Hook IDs are loaded lazily and memoized by hook-snapshot signature, not fixed at extension registration time.
+Pi and OMP expose `ctx.ui.addAutocompleteProvider` in their TUI editors. `pi-yaml-hooks` layers guarded `/hooks` autocomplete only when `ctx.mode` is `"tui"` (or absent on older SDKs) and the method exists. Suggestions include command names plus contextual hook IDs, event names, config paths, and log-tail options. Hook IDs are loaded lazily and memoized by hook-snapshot signature, not fixed at extension registration time.
 
 ## Important limitations
 
-These are the PI-specific constraints that matter most:
+These constraints apply to both hosts unless noted:
 
-- `command:` actions are unsupported on PI and are rejected at load time
-- `tool:` is prompt injection, not imperative tool execution
+- `command:` actions are unsupported and rejected at load time
+- `tool:` sends a follow-up prompt into the current host session; it does not execute a tool or target another session
 - `action: stop` only has real effect on `tool.before.*`
 - `runIn: main` is unsupported for non-`bash` actions
-- `session.deleted` is best-effort and intentionally lossy: PI fires it for shutdown and for session switches like `/new`, `/resume`, and `/fork`, and `pi-yaml-hooks` forwards PI's `reason` (`quit`, `reload`, `new`, `resume`, or `fork`) on the envelope so hooks can disambiguate
+- `session.deleted` is best-effort and intentionally lossy; duplicate switch/shutdown signals are collapsed and any host-provided reason is forwarded as an opaque string
 - `user_bash` interception is opt-in with `PI_YAML_HOOKS_ENABLE_USER_BASH=1`
 
 Keep those rules in mind when authoring hooks. They explain most surprising behavior.

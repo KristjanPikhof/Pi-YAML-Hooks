@@ -186,6 +186,7 @@ const cases: Case[] = [
           sp[1] === hostPrompt[1] &&
           JSON.stringify(hostPrompt) === JSON.stringify(originalHostPrompt) &&
           awareness?.includes("- active hook host: OMP") === true &&
+          awareness.includes("tool actions inject a follow-up prompt into the current OMP session only") &&
           awareness.includes(`- selected global hook config: ${globalPath}`) &&
           awareness.includes(`- project hooks are trusted and active when loaded: ${projectPath}`) &&
           awareness.includes(`- project trust list: ${path.join(profile.agentDir, "trusted-projects.json")}`)

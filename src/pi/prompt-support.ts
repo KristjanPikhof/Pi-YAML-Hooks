@@ -102,14 +102,12 @@ function buildHookAwarenessSystemPrompt(
     lines.push(`- pi-yaml-hooks loaded ${summary.total} hooks (${summary.global} global, ${summary.project} project)`)
   }
 
-  lines.push("- command actions are unsupported on PI; prefer bash-backed hooks or user-invoked /hooks commands")
-  // P2-16: be explicit about the targeting boundary. The previous wording
-  // ("tool prompts still target the current session") was easy to misread
-  // as "tool actions can target sessions" with the current one as a default.
-  // tool: actions on PI inject a follow-up prompt into the same PI session
-  // the hook fired in — they cannot route a prompt to any other session.
+  lines.push(`- command actions are unsupported on ${hostLabel}; prefer bash-backed hooks or user-invoked /hooks commands`)
+  // P2-16: be explicit about the targeting boundary. A tool action injects a
+  // follow-up prompt into the same host session in which the hook fired; it
+  // cannot route a prompt to another session.
   lines.push(
-    "- tool actions inject a follow-up prompt into the current PI session only; they cannot target other sessions",
+    `- tool actions inject a follow-up prompt into the current ${hostLabel} session only; they cannot target other sessions`,
   )
 
   if (!ctx.hasUI) {
