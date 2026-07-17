@@ -173,9 +173,9 @@ export function registerAdapter(pi: ExtensionAPI, hostKind: HookHostKind = "pi")
 
   // ---- host-specific idle lifecycle ----
   // Pi <=0.79 is idle at agent_end. Pi >=0.80 emits agent_settled only after
-  // retries, compaction, and queued continuations are exhausted. OMP instead
-  // emits session_stop before a possible continuation starts, so its check is
-  // deferred to the next macrotask and invalidated by a new agent_start.
+  // retries, compaction, and queued continuations are exhausted. OMP 17 emits
+  // its extension-facing agent_end only after all session_stop handlers have
+  // settled, so continuation eligibility is authoritative at agent_end.
   let sessionIdleDispatched = false;
   let sessionIdleGeneration = 0;
 
@@ -187,7 +187,9 @@ export function registerAdapter(pi: ExtensionAPI, hostKind: HookHostKind = "pi")
   const dispatchSessionIdle = async (
     ctx: ExtensionContext,
     expectedSessionId?: string,
+    expectedGeneration?: number,
   ): Promise<void> => {
+    if (expectedGeneration !== undefined && expectedGeneration !== sessionIdleGeneration) return;
     if (sessionIdleDispatched) return;
 
     const sessionId = safeGetSessionId(ctx.sessionManager);
@@ -206,22 +208,11 @@ export function registerAdapter(pi: ExtensionAPI, hostKind: HookHostKind = "pi")
   };
 
   if (hostKind === "omp") {
-    // OMP-only compatibility events deliberately use the smallest shape this
-    // adapter consumes so Pi 0.74/0.79 types remain the compile-time contract.
-    const ompSessionEventApi = pi as unknown as {
-      on(
-        event: "session_stop",
-        handler: (_event: unknown, ctx: ExtensionContext) => Promise<void> | void,
-      ): void;
-    };
-    ompSessionEventApi.on("session_stop", (_event, ctx): void => {
+    pi.on("agent_end", async (_event, ctx: ExtensionContext): Promise<void> => {
       const expectedSessionId = safeGetSessionId(ctx.sessionManager);
       if (!expectedSessionId) return;
       const expectedGeneration = sessionIdleGeneration;
-      setTimeout(async () => {
-        if (expectedGeneration !== sessionIdleGeneration) return;
-        await dispatchSessionIdle(ctx, expectedSessionId);
-      }, 0);
+      await dispatchSessionIdle(ctx, expectedSessionId, expectedGeneration);
     });
   } else {
     pi.on("agent_end", async (_event, ctx: ExtensionContext): Promise<void> => {

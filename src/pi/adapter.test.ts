@@ -234,8 +234,13 @@ class FakePiHarness {
     return await this.emit("tool_call", { toolName, toolCallId, input })
   }
 
-  async toolResult(toolName: string, toolCallId: string, input: Record<string, unknown> = {}): Promise<void> {
-    await this.emit("tool_result", { toolName, toolCallId, input })
+  async toolResult(
+    toolName: string,
+    toolCallId: string,
+    input: Record<string, unknown> = {},
+    details?: unknown,
+  ): Promise<void> {
+    await this.emit("tool_result", { toolName, toolCallId, input, details })
   }
 
   async userBash(command: string, excludeFromContext = false): Promise<unknown> {
@@ -317,41 +322,6 @@ function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms))
 }
 
-interface FakeMacrotasks {
-  readonly pendingCount: number
-  flushAll(): Promise<void>
-}
-
-async function withFakeMacrotasks<T>(run: (clock: FakeMacrotasks) => Promise<T>): Promise<T> {
-  const originalSetTimeout = globalThis.setTimeout
-  const queue: Array<() => unknown> = []
-  globalThis.setTimeout = ((
-    callback: (...args: unknown[]) => unknown,
-    _delay?: number,
-    ...args: unknown[]
-  ) => {
-    queue.push(() => callback(...args))
-    return 0 as unknown as NodeJS.Timeout
-  }) as typeof setTimeout
-
-  const clock: FakeMacrotasks = {
-    get pendingCount() {
-      return queue.length
-    },
-    async flushAll() {
-      while (queue.length > 0) {
-        const callback = queue.shift()
-        if (callback) await callback()
-      }
-    },
-  }
-
-  try {
-    return await run(clock)
-  } finally {
-    globalThis.setTimeout = originalSetTimeout
-  }
-}
 
 function createNoopAutocompleteProvider(): AutocompleteProvider {
   return {
@@ -579,57 +549,60 @@ const cases: Case[] = [
       }),
   },
   {
-    name: "OMP session_stop defers idle and suppresses replaced, continuing, busy, and pending turns",
+    name: "OMP agent_end evaluates idle only after session_stop continuation handlers settle",
     run: async () =>
-      await withIsolatedProject(true, async (projectDir) =>
-        await withFakeMacrotasks(async (clock) => {
-          writeProjectHooks(
-            projectDir,
-            `hooks:
+      await withIsolatedProject(true, async (projectDir) => {
+        writeProjectHooks(
+          projectDir,
+          `hooks:
   - event: session.idle
     actions:
       - notify: "idle"
 `,
-          )
+        )
 
-          const harness = new FakePiHarness(projectDir, "session-1", "omp")
-          harness.register()
-          await harness.agentStart()
-          await harness.sessionStop()
-          const deferredUntilMacrotask = harness.notifications.length === 0 && clock.pendingCount === 1
-          harness.replaceSession("session-2")
-          await clock.flushAll()
-
-          await harness.agentStart()
-          await harness.sessionStop()
-          await harness.agentStart()
-          await clock.flushAll()
-
-          harness.idle = false
-          await harness.sessionStop()
-          await clock.flushAll()
-          harness.idle = true
+        const harness = new FakePiHarness(projectDir, "session-1", "omp")
+        harness.register()
+        const order: string[] = []
+        const sessionStopHandlers = harness.handlers.get("session_stop") ?? []
+        sessionStopHandlers.push(async () => {
+          await Promise.resolve()
           harness.pendingMessages = true
-          await harness.sessionStop()
-          await clock.flushAll()
+          order.push("session_stop:settled")
+        })
+        harness.handlers.set("session_stop", sessionStopHandlers)
 
-          harness.pendingMessages = false
-          await harness.agentStart()
-          await harness.sessionStop()
-          await harness.sessionStop()
-          const dedupeChecksQueued = clock.pendingCount === 2
-          await clock.flushAll()
+        await harness.agentStart()
+        await harness.sessionStop()
+        const noEarlyIdle = harness.notifications.length === 0 &&
+          order.join(",") === "session_stop:settled"
+        await harness.agentEnd()
+        const continuationSuppressed = harness.notifications.length === 0
 
-          return deferredUntilMacrotask && dedupeChecksQueued && harness.notifications.join(",") === "idle"
-            ? { ok: true }
-            : {
-                ok: false,
-                detail:
-                  `deferred=${deferredUntilMacrotask}, dedupeQueued=${dedupeChecksQueued}, ` +
-                  `notifications=${JSON.stringify(harness.notifications)}, pending=${clock.pendingCount}`,
-              }
-        }),
-      ),
+        harness.pendingMessages = false
+        harness.idle = false
+        await harness.agentEnd()
+        const busySuppressed = harness.notifications.length === 0
+
+        harness.idle = true
+        await harness.agentEnd()
+        await harness.agentEnd()
+        const oneShot = harness.notifications.join(",") === "idle"
+
+        await harness.agentStart()
+        await harness.agentEnd()
+        const rearmed = harness.notifications.join(",") === "idle,idle"
+
+        return noEarlyIdle && continuationSuppressed && busySuppressed && oneShot && rearmed
+          ? { ok: true }
+          : {
+              ok: false,
+              detail:
+                `noEarly=${noEarlyIdle}, continuation=${continuationSuppressed}, busy=${busySuppressed}, ` +
+                `oneShot=${oneShot}, rearmed=${rearmed}, order=${JSON.stringify(order)}, ` +
+                `notifications=${JSON.stringify(harness.notifications)}`,
+            }
+      }),
   },
   {
     name: "registers the hook diagnostics message renderer",
