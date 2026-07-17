@@ -9,10 +9,10 @@ import type {
 import { setActiveHookPolicy } from "../core/load-hooks.js"
 
 /**
- * PI-specific diagnostics for hook configurations loaded from OpenCode-compatible
- * hooks.yaml files. Some YAML features are unsupported on PI (or behave
- * differently) — we surface them either as hard errors (block the load) or as
- * advisories (load succeeds, user is informed).
+ * Host compatibility diagnostics for hook configurations loaded from
+ * OpenCode-compatible hooks.yaml files. Some YAML features are unsupported by
+ * the PI-compatible extension API (or behave differently), while tool-name
+ * availability depends on the selected host.
  */
 
 export type UnsupportedDiagnostics = HookPolicyDiagnostics
@@ -195,17 +195,15 @@ export function diagnoseUnsupportedToolNameEvents(
 }
 
 /**
- * Collect PI-specific diagnostics across every hook in the given map.
+ * Collect compatibility diagnostics across every hook in the given map.
  * Errors are intended to be appended to ParsedHooksFile.errors (load-blocking).
  * Advisories are intended to be surfaced via console.info and/or a new
  * `advisories` field on ParsedHooksFile (load succeeds).
+ *
+ * Importing this module installs PI's policy for the default entry point. OMP's
+ * entry point explicitly selects ompHookPolicy after successful host
+ * registration, keeping OMP-only tool names out of PI's allow-list.
  */
-// PI policy registered with the host-agnostic core loader. P2 #22: the loader
-// no longer imports from `src/pi/*`, so callers that want PI's
-// "unsupported on PI" diagnostics must side-effect-import this module. The
-// production entry point (src/index.ts) does so unconditionally; PI test
-// files that load `parseHooksFile` directly should also import this module
-// to install the policy.
 export function createUnsupportedHookPolicy(host: UnsupportedDiagnosticsHost): HookPolicy {
   return {
     diagnose: (hookMap: HookMap): HookPolicyDiagnostics => collectUnsupportedDiagnostics(hookMap, host),

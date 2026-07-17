@@ -36,7 +36,6 @@ export default function ompHooksExtension(input: unknown): void {
     throw new Error("OMP extension requires pi.pi.getAgentDir() to return an absolute agentDir path.")
   }
 
-
   registerHooksExtension(pi, { kind: "omp", agentDir })
   setActiveHookPolicy(ompHookPolicy)
 }

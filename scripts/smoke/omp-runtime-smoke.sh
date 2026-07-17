@@ -406,12 +406,14 @@ const api = {
 };
 const extension = (await import(pathToFileURL(entry).href)).default;
 extension(api);
+let idle = false;
+let pendingMessages = true;
 const ctx = {
   cwd: projectDir,
   hasUI: true,
   mode: "tui",
-  isIdle: () => true,
-  hasPendingMessages: () => false,
+  isIdle: () => idle,
+  hasPendingMessages: () => pendingMessages,
   sessionManager: {
     getSessionId: () => "deferred-idle-session",
     getSessionFile: () => undefined,
@@ -446,22 +448,67 @@ if (!refreshedSuggestions?.items?.some((item) => item.label === "omp-lazy-refres
   throw new Error("OMP TUI autocomplete did not lazily refresh the installed hook id");
 }
 copyFileSync(validFixture, projectConfig);
+const extensionErrors = [];
+const promptResults = [];
+for (const handler of handlers.get("before_agent_start") ?? []) {
+  try {
+    const result = await handler({
+      type: "before_agent_start",
+      prompt: "inspect installed OMP hook awareness",
+      systemPrompt: ["base system prompt"],
+    }, ctx);
+    if (result !== undefined) promptResults.push(result);
+  } catch (error) {
+    extensionErrors.push({ type: "extension_error", event: "before_agent_start", error: String(error) });
+  }
+}
+if (extensionErrors.length !== 0) throw new Error(`OMP prompt lifecycle emitted extension_error: ${JSON.stringify(extensionErrors)}`);
+if (promptResults.length !== 1 || !Array.isArray(promptResults[0].systemPrompt)) {
+  throw new Error(`OMP before_agent_start did not preserve array-shaped systemPrompt ABI: ${JSON.stringify(promptResults)}`);
+}
+if (promptResults[0].systemPrompt[0] !== "base system prompt" ||
+    !promptResults[0].systemPrompt.some((part) => String(part).includes("active hook host: OMP"))) {
+  throw new Error(`OMP before_agent_start prompt evidence mismatch: ${JSON.stringify(promptResults[0])}`);
+}
+appendFileSync(eventFile, `${JSON.stringify({
+  evidence: "before_agent_start",
+  session: "deferred-idle-session",
+  systemPromptShape: "array",
+})}\n`);
+
+const readEventRows = () => {
+  if (!existsSync(eventFile)) return [];
+  return readFileSync(eventFile, "utf8").trim().split("\n").filter(Boolean).map(JSON.parse);
+};
+const idleCountBefore = readEventRows().filter((row) => row.event === "session.idle").length;
+const assertNoNewIdle = async (phase) => {
+  await new Promise((resolve) => setTimeout(resolve, 50));
+  const count = readEventRows().filter((row) => row.event === "session.idle").length;
+  if (count !== idleCountBefore) throw new Error(`OMP session.idle dispatched before authoritative final agent_end (${phase})`);
+};
+
 for (const handler of handlers.get("agent_start") ?? []) await handler({}, ctx);
 for (const handler of handlers.get("session_stop") ?? []) await handler({}, ctx);
-const immediate = existsSync(eventFile) ? readFileSync(eventFile, "utf8") : "";
-if (immediate.includes("session.idle")) throw new Error("OMP session.idle was not deferred to a macrotask");
+await assertNoNewIdle("session_stop");
+pendingMessages = false;
+for (const handler of handlers.get("agent_end") ?? []) await handler({}, ctx);
+await assertNoNewIdle("non-idle agent_end");
+idle = true;
+for (const handler of handlers.get("agent_end") ?? []) await handler({}, ctx);
+const immediateIdleCount = readEventRows().filter((row) => row.event === "session.idle").length;
+if (immediateIdleCount !== idleCountBefore) throw new Error("OMP session.idle was not deferred to a macrotask");
 const deadline = Date.now() + 5000;
 while (Date.now() < deadline) {
-  const text = existsSync(eventFile) ? readFileSync(eventFile, "utf8") : "";
-  if (text.includes("session.idle")) {
+  const rows = readEventRows();
+  if (rows.filter((row) => row.event === "session.idle").length > idleCountBefore) {
     if (!notifications.includes("omp smoke deferred idle")) throw new Error("deferred idle notify action missing");
     if (!statuses.includes("omp smoke deferred idle")) throw new Error("deferred idle setStatus action missing");
-    appendFileSync(eventFile, `${JSON.stringify({ evidence: "deferred-macrotask" })}\n`);
+    appendFileSync(eventFile, `${JSON.stringify({ evidence: "deferred-macrotask", session: "deferred-idle-session" })}\n`);
     process.exit(0);
   }
   await new Promise((resolve) => setTimeout(resolve, 25));
 }
-throw new Error("timed out waiting for installed OMP adapter deferred idle dispatch");
+throw new Error("timed out waiting for installed OMP adapter deferred idle dispatch after final agent_end");
 IDLE
 [[ -d "$ROOT_DIR/node_modules/@earendil-works/pi-tui" ]] || fail "local pi-tui dependency is unavailable for the deferred-idle harness"
 mkdir -p "$PLUGIN_DIR/node_modules/@earendil-works"
@@ -545,12 +592,54 @@ TUI_EVIDENCE="$(TUI_LOG="$TUI_TRANSCRIPT" bun --eval '
 [[ -f "$EVENT_FILE" ]] || fail "hook event trace was not created"
 EVENT_TRACE="$(EVENT_FILE="$EVENT_FILE" bun --eval '
   const text = await Bun.file(process.env.EVENT_FILE).text();
-  const rows = text.trim().split("\n").filter(Boolean).map(JSON.parse);
-  const events = [...new Set(rows.map((row) => row.event ?? row.evidence).filter(Boolean))];
-  for (const required of ["session.created", "session.deleted", "tool.before.bash", "session.idle", "deferred-macrotask"]) {
-    if (!events.includes(required)) throw new Error(`event trace missing ${required}: ${events.join(",")}`);
+  const rows = text.trim().split("\n").filter(Boolean).map((line, index) => {
+    try { return JSON.parse(line); }
+    catch (error) { throw new Error(`invalid event NDJSON row ${index + 1}: ${error.message}`); }
+  });
+  const label = (row) => row.event ?? row.evidence;
+  const required = [
+    ["event", "session.created"],
+    ["event", "session.deleted"],
+    ["event", "tool.before.bash"],
+    ["event", "session.idle"],
+    ["evidence", "before_agent_start"],
+    ["evidence", "deferred-macrotask"],
+  ];
+  for (const [key, value] of required) {
+    if (!rows.some((row) => row[key] === value)) throw new Error(`event trace missing exact ${key}=${value}`);
   }
-  console.log(events.join("->"));
+  for (const row of rows.filter((candidate) => required.some(([key, value]) => candidate[key] === value))) {
+    if (typeof row.session !== "string" || row.session.length === 0) {
+      throw new Error(`structured event evidence is missing session: ${JSON.stringify(row)}`);
+    }
+  }
+
+  const deferredSession = "deferred-idle-session";
+  const indexOf = (key, value, session) => rows.findIndex((row) => row[key] === value && row.session === session);
+  const promptIndex = indexOf("evidence", "before_agent_start", deferredSession);
+  const createdIndex = indexOf("event", "session.created", deferredSession);
+  const deletedIndex = indexOf("event", "session.deleted", deferredSession);
+  const idleIndex = indexOf("event", "session.idle", deferredSession);
+  const deferredIndex = indexOf("evidence", "deferred-macrotask", deferredSession);
+  if (!(promptIndex < createdIndex && createdIndex < deletedIndex && deletedIndex < idleIndex && idleIndex < deferredIndex)) {
+    throw new Error(`deferred lifecycle order mismatch: ${JSON.stringify({ promptIndex, createdIndex, deletedIndex, idleIndex, deferredIndex })}`);
+  }
+  const promptRow = rows[promptIndex];
+  if (promptRow.systemPromptShape !== "array") throw new Error(`before_agent_start ABI evidence mismatch: ${JSON.stringify(promptRow)}`);
+
+  const userBashRows = rows
+    .map((row, index) => ({ row, index }))
+    .filter(({ row }) => row.event === "tool.before.bash");
+  const correlatedUserBash = userBashRows.find(({ row, index }) => {
+    const created = rows.findIndex((candidate) => candidate.event === "session.created" && candidate.session === row.session);
+    const deleted = rows.findIndex((candidate, candidateIndex) =>
+      candidateIndex > index && candidate.event === "session.deleted" && candidate.session === row.session);
+    return created >= 0 && created < index && deleted > index;
+  });
+  if (!correlatedUserBash) {
+    throw new Error(`tool.before.bash lacks created/tool/deleted session ordering: ${JSON.stringify(userBashRows)}`);
+  }
+  console.log(rows.map(label).filter(Boolean).join("->"));
 ')"
 
 [[ -f "$LOG_FILE" ]] || fail "default OMP hook log was not created"

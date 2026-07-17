@@ -1,4 +1,5 @@
 import {
+  chmodSync,
   existsSync,
   lstatSync,
   mkdirSync,
@@ -9,7 +10,9 @@ import {
   statSync,
   symlinkSync,
   writeFileSync,
+  watch,
 } from "node:fs"
+import { once } from "node:events"
 import os from "node:os"
 import path from "node:path"
 
@@ -96,6 +99,48 @@ function createCtx(opts: { cwd: string; hasUI: boolean }): FakeCtx {
   }
 }
 
+async function captureTailFollowArgs(
+  handler: (args: string, ctx: unknown) => Promise<void>,
+  ctx: FakeCtx,
+  sandboxDir: string,
+): Promise<string[]> {
+  const binDir = path.join(sandboxDir, "fake-bin")
+  const capturePath = path.join(sandboxDir, "tail-args.txt")
+  const fakeBashPath = path.join(binDir, "bash")
+  mkdirSync(binDir, { recursive: true })
+  writeFileSync(
+    fakeBashPath,
+    [
+      "#!/bin/sh",
+      'tmp=\"${PI_YAML_HOOKS_TEST_TAIL_CAPTURE}.tmp\"',
+      'printf \'%s\\n\' \"$@\" > \"$tmp\"',
+      'mv \"$tmp\" \"$PI_YAML_HOOKS_TEST_TAIL_CAPTURE\"',
+      "",
+    ].join("\n"),
+    "utf8",
+  )
+  chmodSync(fakeBashPath, 0o755)
+
+  const previousPath = process.env.PATH
+  const previousCapture = process.env.PI_YAML_HOOKS_TEST_TAIL_CAPTURE
+  process.env.PATH = `${binDir}${path.delimiter}${previousPath ?? ""}`
+  process.env.PI_YAML_HOOKS_TEST_TAIL_CAPTURE = capturePath
+
+  try {
+    await handler("--follow", ctx as never)
+    while (!existsSync(capturePath)) {
+      await once(captureWatcher, "change")
+    }
+    return readFileSync(capturePath, "utf8").trimEnd().split("\n")
+  } finally {
+    captureWatcher.close()
+    if (previousPath === undefined) delete process.env.PATH
+    else process.env.PATH = previousPath
+    if (previousCapture === undefined) delete process.env.PI_YAML_HOOKS_TEST_TAIL_CAPTURE
+    else process.env.PI_YAML_HOOKS_TEST_TAIL_CAPTURE = previousCapture
+  }
+}
+
 function writeProjectHooks(
   projectDir: string,
   content: string,
@@ -111,7 +156,7 @@ function trustedFilePath(): string {
 }
 
 async function withSandbox<T>(
-  opts: { trusted: boolean; host?: "pi" | "omp" },
+  opts: { trusted: boolean; host?: "pi" | "omp"; ompProfile?: string },
   run: (projectDir: string) => Promise<T>,
 ): Promise<T> {
   const projectDir = mkdtempSync(path.join(os.tmpdir(), "pi-yaml-hooks-cmds-"))
@@ -128,7 +173,10 @@ async function withSandbox<T>(
   __resetHookHostProfileForTests()
   __resetTrustListCacheForTests()
   if (opts.host === "omp") {
-    configureHookHostProfile({ kind: "omp", agentDir: path.join(homeDir, ".omp", "agent") })
+    const agentDir = opts.ompProfile
+      ? path.join(homeDir, ".omp", "profiles", opts.ompProfile, "agent")
+      : path.join(homeDir, ".omp", "agent")
+    configureHookHostProfile({ kind: "omp", agentDir })
   }
   resetPiHooksLoggerForTests()
   const previousInfo = console.info
@@ -527,6 +575,50 @@ const cases: Case[] = [
         // --path output should be a single-line path, not the multi-line tail hint.
         const ok = !!notif && !notif.message.includes("tail -F")
         return ok ? { ok: true } : { ok: false, detail: JSON.stringify(ctx.notifications) }
+      }),
+  },
+  {
+    name: "hooks-tail-log --follow passes the named OMP profile log path to the helper",
+    run: async () =>
+      await withSandbox(
+        { trusted: true, host: "omp", ompProfile: "work" },
+        async (projectDir) => {
+          const pi = createFakePi()
+          registerCommands(pi as never)
+          const handler = pi.commands.get("hooks-tail-log")
+          if (!handler) return { ok: false, detail: "hooks-tail-log command not registered" }
+
+          const ctx = createCtx({ cwd: projectDir, hasUI: true })
+          const args = await captureTailFollowArgs(handler, ctx, projectDir)
+          const expected = path.join(
+            getHookHostProfile().agentDir,
+            "logs",
+            "pi-yaml-hooks.ndjson",
+          )
+          const ok =
+            args[0]?.endsWith(path.join("scripts", "tail-hook-log.sh")) === true &&
+            args[1] === "--file" &&
+            args[2] === expected &&
+            ctx.notifications.some((notification) => notification.message.includes(expected))
+          return ok ? { ok: true } : { ok: false, detail: JSON.stringify({ args, expected }) }
+        },
+      ),
+  },
+  {
+    name: "hooks-tail-log --follow preserves an explicit log file override",
+    run: async () =>
+      await withSandbox({ trusted: true, host: "omp" }, async (projectDir) => {
+        const override = path.join(projectDir, "custom logs", "hooks.ndjson")
+        process.env.PI_YAML_HOOKS_LOG_FILE = override
+        const pi = createFakePi()
+        registerCommands(pi as never)
+        const handler = pi.commands.get("hooks-tail-log")
+        if (!handler) return { ok: false, detail: "hooks-tail-log command not registered" }
+
+        const ctx = createCtx({ cwd: projectDir, hasUI: true })
+        const args = await captureTailFollowArgs(handler, ctx, projectDir)
+        const ok = args[1] === "--file" && args[2] === override
+        return ok ? { ok: true } : { ok: false, detail: JSON.stringify({ args, override }) }
       }),
   },
   {

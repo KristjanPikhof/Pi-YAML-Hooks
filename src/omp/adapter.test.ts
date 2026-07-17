@@ -193,7 +193,7 @@ class FakeOmpHarness {
     return await this.emit("before_agent_start", {
       type: "before_agent_start",
       prompt: "inspect OMP hooks",
-      systemPrompt: "base system prompt",
+      systemPrompt: ["base system prompt"],
     })
   }
 
@@ -405,7 +405,8 @@ const cases: Case[] = [
         const bashResult = await harness.userBash("echo omp")
         await harness.command("hooks-status")
         const promptResult = await harness.beforeAgentStart()
-        const prompt = (promptResult as { systemPrompt?: string } | undefined)?.systemPrompt ?? ""
+        const promptBlocks = (promptResult as { systemPrompt?: string[] } | undefined)?.systemPrompt ?? []
+        const prompt = promptBlocks.join("\n")
         const factory = harness.autocompleteProviders[0]
         const suggestions = factory
           ? await factory(createNoopAutocompleteProvider()).getSuggestions(["/hooks-status "], 0, 14, {
@@ -739,7 +740,8 @@ const cases: Case[] = [
         await headlessHarness.sessionStart()
         const headlessResult = await headlessHarness.toolCall("bash", "headless-call", { command: "echo headless" })
         const promptResult = await headlessHarness.beforeAgentStart()
-        const prompt = (promptResult as { systemPrompt?: string } | undefined)?.systemPrompt ?? ""
+        const promptBlocks = (promptResult as { systemPrompt?: string[] } | undefined)?.systemPrompt ?? []
+        const prompt = promptBlocks.join("\n")
         const blocked = headlessResult as { block?: boolean } | undefined
         return uiResult === undefined &&
             uiHarness.confirms.length === 1 &&
