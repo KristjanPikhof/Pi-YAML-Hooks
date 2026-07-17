@@ -616,7 +616,7 @@ EVENT_TRACE="$(EVENT_FILE="$EVENT_FILE" bun --eval '
   const deletedIndex = indexOf("event", "session.deleted", deferredSession);
   const idleIndex = indexOf("event", "session.idle", deferredSession);
   const deferredIndex = indexOf("evidence", "deferred-macrotask", deferredSession);
-  if (!(promptIndex < createdIndex && createdIndex < deletedIndex && deletedIndex < idleIndex && idleIndex < deferredIndex)) {
+  if (!(createdIndex < promptIndex && promptIndex < deletedIndex && deletedIndex < idleIndex && idleIndex < deferredIndex)) {
     throw new Error(`deferred lifecycle order mismatch: ${JSON.stringify({ promptIndex, createdIndex, deletedIndex, idleIndex, deferredIndex })}`);
   }
   const promptRow = rows[promptIndex];
