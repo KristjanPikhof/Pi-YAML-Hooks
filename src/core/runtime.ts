@@ -3,7 +3,10 @@ import { statSync } from "node:fs"
 
 import { executeBashHook } from "./bash-executor.js"
 import type { BashExecutionRequest, BashHookResult } from "./bash-types.js"
-import { discoverHookConfigEntries } from "./config-paths.js"
+import {
+  resolveHookConfigWatchPaths,
+  type HookConfigDiscoveryOptions,
+} from "./config-paths.js"
 import { loadDiscoveredHooksSnapshot } from "./load-hooks.js"
 import { getPiHooksLogger } from "./logger.js"
 import { abortSession, isHostDiedError } from "./runtime/actions.js"
@@ -105,12 +108,17 @@ export interface CreateHooksRuntimeOptions {
   readonly initialSignature?: string
   readonly reloadDiscoveredHooks?: boolean
   readonly executeBash?: ExecuteBashHook
+  readonly configDiscovery?: Omit<HookConfigDiscoveryOptions, "projectDir">
 }
 
 export function createHooksRuntime(host: HostAdapter, options: CreateHooksRuntimeOptions): HooksRuntime {
   const projectDir = options.directory
   const logger = getPiHooksLogger()
   const shouldReloadDiscoveredHooks = options.reloadDiscoveredHooks === true
+  const configDiscovery: HookConfigDiscoveryOptions = {
+    ...options.configDiscovery,
+    projectDir,
+  }
 
   let loaded = options.hooks
     ? {
@@ -118,7 +126,7 @@ export function createHooksRuntime(host: HostAdapter, options: CreateHooksRuntim
         errors: [] as HookValidationError[],
         signature: options.initialSignature ?? "manual",
       }
-    : loadDiscoveredHooksSnapshot({ projectDir })
+    : loadDiscoveredHooksSnapshot(configDiscovery)
   if (loaded.errors.length > 0) {
     console.error(formatHookLoadErrors(loaded.errors))
     logger.error("config_load", "Initial hook load reported validation errors.", {
@@ -136,18 +144,17 @@ export function createHooksRuntime(host: HostAdapter, options: CreateHooksRuntim
   let hooks = loaded.hooks
   let lastLoadedSignature = loaded.signature
   let lastReportedInvalidSignature = loaded.errors.length > 0 ? loaded.signature : undefined
-  // P1-1 fix: stat-only fingerprint computed from the most recently loaded
-  // file set so refreshHooks can short-circuit without re-entering the
-  // (heavier) load-hooks parsing path on every event. The fingerprint covers
-  // the discovered roots PLUS any imports that the previous load resolved,
-  // so editing an imported file still busts the cache. The first refresh
-  // after construction uses the file set captured by the initial discovery
-  // call above (or, for `options.hooks`, an empty set so the gate below
-  // continues to short-circuit).
+  // The watch set contains every config candidate, the trust store, repository
+  // topology markers, and imports resolved by the last load. It is built once
+  // and only rediscovered after a stat change, keeping git/project discovery
+  // entirely off unchanged event dispatches (including empty configurations).
   let lastLoadedFiles: readonly string[] = options.hooks
     ? []
     : (loaded as { files?: readonly string[] }).files ?? []
-  let lastStatFingerprint = computeStatFingerprint(lastLoadedFiles)
+  let watchedFiles = options.hooks && !shouldReloadDiscoveredHooks
+    ? []
+    : mergeUnique(resolveHookConfigWatchPaths(configDiscovery).paths, lastLoadedFiles)
+  let lastStatFingerprint = computeStatFingerprint(watchedFiles)
   const state = new SessionStateStore()
   const runBashHook: ExecuteBashHook = options.executeBash ?? ((request) => host.runBash(request))
   const dispatchStates = new Map<string, DispatchState>()
@@ -221,23 +228,16 @@ export function createHooksRuntime(host: HostAdapter, options: CreateHooksRuntim
       return hooks
     }
 
-    // P1-1 fix: compute a cheap stat fingerprint over the previously loaded
-    // file set plus the currently discovered roots. If nothing has changed
-    // we skip the YAML parse + import expansion entirely. Discovered roots
-    // are included so a newly added (or removed) hooks.yaml still triggers
-    // a real reload — `statSync` returns "missing" for absent paths, which
-    // changes the fingerprint as expected.
-    const discoveredEntries = discoverHookConfigEntries({ projectDir })
-    const discoveredFiles = discoveredEntries.map((entry) => entry.filePath)
-    const fingerprintFiles = mergeUnique(lastLoadedFiles, discoveredFiles)
-    const nextStatFingerprint = computeStatFingerprint(fingerprintFiles)
-    if (nextStatFingerprint === lastStatFingerprint && lastLoadedFiles.length > 0) {
+    const nextStatFingerprint = computeStatFingerprint(watchedFiles)
+    if (nextStatFingerprint === lastStatFingerprint) {
       return hooks
     }
 
-    const nextLoaded = loadDiscoveredHooksSnapshot({ projectDir })
+    const nextWatchPaths = resolveHookConfigWatchPaths(configDiscovery).paths
+    const nextLoaded = loadDiscoveredHooksSnapshot(configDiscovery)
     lastLoadedFiles = nextLoaded.files
-    lastStatFingerprint = computeStatFingerprint(mergeUnique(nextLoaded.files, discoveredFiles))
+    watchedFiles = mergeUnique(nextWatchPaths, lastLoadedFiles)
+    lastStatFingerprint = computeStatFingerprint(watchedFiles)
     if (nextLoaded.signature === lastLoadedSignature) {
       return hooks
     }
