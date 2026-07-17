@@ -97,6 +97,89 @@ const cases: Case[] = [
     run: () => (getToolFileChanges("write", {}).length === 0 ? { ok: true } : { ok: false }),
   },
   {
+    name: "OMP hashline edit input extracts modify, delete, and rename paths",
+    run: () => {
+      const input = [
+        "[src/keep.ts#A1B2]",
+        "SWAP 1.=1:",
+        "+updated",
+        "[src/gone.ts#C3D4]",
+        "REM",
+        "[src/from.ts#E5F6]",
+        "MV src/to.ts",
+      ].join("\n")
+      const changes = getToolFileChanges("edit", { input })
+      const summary = changes.map((change) =>
+        change.operation === "rename"
+          ? `rename:${change.fromPath}->${change.toPath}`
+          : `${change.operation}:${change.path}`,
+      )
+      const expected = ["modify:src/keep.ts", "delete:src/gone.ts", "rename:src/from.ts->src/to.ts"]
+      return JSON.stringify(summary) === JSON.stringify(expected)
+        ? { ok: true }
+        : { ok: false, detail: JSON.stringify(summary) }
+    },
+  },
+  {
+    name: "OMP unified edit apply_patch input extracts paths",
+    run: () => {
+      const input = [
+        "*** Begin Patch",
+        "*** Add File: src/new.ts",
+        "+export {}",
+        "*** Update File: src/keep.ts",
+        "@@",
+        "*** End Patch",
+      ].join("\n")
+      const changes = getToolFileChanges("edit", { input })
+      const summary = changes.map((change) => `${change.operation}:${change.operation === "rename" ? change.toPath : change.path}`)
+      return JSON.stringify(summary) === JSON.stringify(["create:src/new.ts", "modify:src/keep.ts"])
+        ? { ok: true }
+        : { ok: false, detail: JSON.stringify(summary) }
+    },
+  },
+  {
+    name: "OMP apply_patch input key preserves the apply_patch mutation path",
+    run: () => {
+      const input = "*** Begin Patch\n*** Update File: src/keep.ts\n@@\n*** End Patch"
+      const changes = getToolFileChanges("apply_patch", { input })
+      return changes.length === 1 && changes[0].operation === "modify" && changes[0].path === "src/keep.ts"
+        ? { ok: true }
+        : { ok: false, detail: JSON.stringify(changes) }
+    },
+  },
+  {
+    name: "OMP result-derived edit entries preserve create, delete, and rename semantics",
+    run: () => {
+      const changes = getToolFileChanges("edit", {
+        input: "[ignored.ts#A1B2]\nSWAP 1.=1:\n+x",
+        edits: [
+          { path: "src/new.ts", op: "create" },
+          { path: "src/gone.ts", op: "delete" },
+          { path: "src/to.ts", sourcePath: "src/from.ts", op: "update", move: "src/to.ts" },
+        ],
+      })
+      const summary = changes.map((change) =>
+        change.operation === "rename"
+          ? `rename:${change.fromPath}->${change.toPath}`
+          : `${change.operation}:${change.path}`,
+      )
+      const expected = ["create:src/new.ts", "delete:src/gone.ts", "rename:src/from.ts->src/to.ts"]
+      return JSON.stringify(summary) === JSON.stringify(expected)
+        ? { ok: true }
+        : { ok: false, detail: JSON.stringify(summary) }
+    },
+  },
+  {
+    name: "legacy Pi edit path shape remains a modify",
+    run: () => {
+      const changes = getToolFileChanges("edit", { path: "/repo/src/pi.ts", oldText: "a", newText: "b" })
+      return changes.length === 1 && changes[0].operation === "modify" && changes[0].path === "/repo/src/pi.ts"
+        ? { ok: true }
+        : { ok: false, detail: JSON.stringify(changes) }
+    },
+  },
+  {
     name: "getToolFileChanges parses Add/Update/Delete/Move from apply_patch",
     run: () => {
       const patchText = [
