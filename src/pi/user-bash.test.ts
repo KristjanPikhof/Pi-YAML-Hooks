@@ -450,10 +450,9 @@ const cases: Case[] = [
       }),
   },
   {
-    // Regression for P1-10: when there is no session id, the handler bypasses
-    // interception (it can't address the runtime). Today this was silent;
-    // now it must leave a debug breadcrumb that names the bypass reason.
-    name: "user_bash handler logs debug when bypassed for missing session id",
+    // Regression: enabled interception must fail closed when there is no
+    // session id, before constructing a runtime, and leave a diagnostic error.
+    name: "user_bash handler fails closed when session id is missing",
     run: () =>
       withEnabledHandler(async ({ readLogLines }) => {
         const stub = createPiStub()
@@ -474,8 +473,11 @@ const cases: Case[] = [
         if (runtimeCalled) {
           return { ok: false, detail: "runtime was constructed even though session id was missing" }
         }
-        if (result !== undefined) {
-          return { ok: false, detail: `expected void result for bypass, got ${JSON.stringify(result)}` }
+        if (!result || !result.result || result.result.cancelled !== true) {
+          return { ok: false, detail: `expected cancelled result, got ${JSON.stringify(result)}` }
+        }
+        if (!result.result.output.includes("internal error") || !result.result.output.includes("missing_session_id")) {
+          return { ok: false, detail: `cancelled result is not diagnostic: ${result.result.output}` }
         }
 
         const lines = readLogLines()
@@ -490,8 +492,8 @@ const cases: Case[] = [
           .filter((entry): entry is Record<string, unknown> => entry !== undefined)
           .find(
             (entry) =>
-              entry.kind === "user_bash_bypassed" &&
-              entry.level === "debug" &&
+              entry.kind === "user_bash_internal_error" &&
+              entry.level === "error" &&
               typeof entry.details === "object" &&
               entry.details !== null &&
               (entry.details as Record<string, unknown>).reason === "missing_session_id",
@@ -500,7 +502,7 @@ const cases: Case[] = [
         if (!matched) {
           return {
             ok: false,
-            detail: `no user_bash_bypassed debug log with reason=missing_session_id; got: ${lines.join(" | ")}`,
+            detail: `no user_bash_internal_error error log with reason=missing_session_id; got: ${lines.join(" | ")}`,
           }
         }
         return { ok: true }
