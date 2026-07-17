@@ -44,7 +44,7 @@ function withEnv<T>(key: string, value: string | undefined, run: () => T): T {
 }
 
 function createSandbox(name: string): string {
-  return mkdtempSync(path.join(os.tmpdir(), `pi-yaml-hooks-${name}-`))
+  return realpathSync.native(mkdtempSync(path.join(os.tmpdir(), `pi-yaml-hooks-${name}-`)))
 }
 
 function runGit(args: string[], cwd: string): string {
