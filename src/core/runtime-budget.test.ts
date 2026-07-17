@@ -148,6 +148,54 @@ const cases: Case[] = [
     },
   },
   {
+    name: "user bash shares one deadline across bash and confirmation actions",
+    run: async () => {
+      const hooks: HookMap = new Map()
+      addHook(hooks, "tool.before.bash", [
+        { bash: "preflight" },
+        { confirm: { title: "Approve", message: "Run command?" } },
+      ])
+      let now = 1_000
+      let bashTimeout: number | undefined
+      let confirmTimeout: number | undefined
+      const host: HostAdapter = {
+        ...createFakeHost(),
+        confirm: async (request) => {
+          confirmTimeout = request.timeout
+          return false
+        },
+      }
+      const runtime = createHooksRuntime(host, {
+        directory: "/repo",
+        hooks,
+        synchronousBashBudgetMs: OMP_SYNCHRONOUS_BASH_BUDGET_MS,
+        now: () => now,
+        executeBash: async (request: BashExecutionRequest) => {
+          bashTimeout = request.timeout
+          now += 15_000
+          return successfulResult(request.command)
+        },
+      })
+
+      let blocked = false
+      try {
+        await runtime["user.bash.before"](
+          { tool: "bash", sessionID: "s1", callID: "c1" },
+          { args: { command: "echo hi" } },
+        )
+      } catch {
+        blocked = true
+      }
+
+      return blocked && bashTimeout === 20_000 && confirmTimeout === 5_000
+        ? { ok: true }
+        : {
+            ok: false,
+            detail: `blocked=${String(blocked)}, bash=${String(bashTimeout)}, confirm=${String(confirmTimeout)}`,
+          }
+    },
+  },
+  {
     name: "async bash actions omit the synchronous OMP deadline",
     run: async () => {
       const hooks: HookMap = new Map()

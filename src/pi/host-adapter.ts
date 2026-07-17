@@ -189,7 +189,7 @@ export function createHostAdapter(
         throw new Error(`ui.notify failed: ${message}`);
       }
     },
-    confirm: async (options: { title?: string; message: string }): Promise<boolean> => {
+    confirm: async (request: { title?: string; message: string; timeout?: number }): Promise<boolean> => {
       const ctx = getContext();
       if (!ctx?.hasUI || typeof ctx.ui?.confirm !== "function") {
         if (!warnedNoConfirm) {
@@ -211,28 +211,35 @@ export function createHostAdapter(
         return process.env.PI_YAML_HOOKS_CONFIRM_AUTO_APPROVE === "1";
       }
       try {
-        const title = options.title ?? "Confirm";
+        const title = request.title ?? "Confirm";
         // Pi's confirm ABI remains the original two positional arguments.
         // OMP 17 accepts a structural third options argument; its signal
         // closes the dialog when our deadline wins, while the local race
         // guarantees a fail-closed result even if the host ignores it.
+        const ompTimeout = Math.min(
+          request.timeout ?? OMP_SYNCHRONOUS_BASH_BUDGET_MS,
+          OMP_SYNCHRONOUS_BASH_BUDGET_MS,
+        );
         const approved = isOmp
-          ? await confirmOmpWithDeadline(
-              ctx.ui as unknown as OmpConfirmationUi,
-              title,
-              options.message,
-              scheduleDeadline,
-            )
-          : await ctx.ui.confirm(title, options.message);
+          ? ompTimeout <= 0
+            ? false
+            : await confirmOmpWithDeadline(
+                ctx.ui as unknown as OmpConfirmationUi,
+                title,
+                request.message,
+                ompTimeout,
+                scheduleDeadline,
+              )
+          : await ctx.ui.confirm(title, request.message);
         logger.info("host_confirm", "Completed UI confirmation request.", {
           cwd: projectDir,
-          details: { title, message: options.message, approved },
+          details: { title, message: request.message, approved, ...(isOmp ? { timeout: ompTimeout } : {}) },
         });
         return approved;
       } catch (error) {
         logger.error("host_confirm", "UI confirmation failed.", {
           cwd: projectDir,
-          details: { title: options.title ?? "Confirm", message: options.message, error: error instanceof Error ? error.message : String(error) },
+          details: { title: request.title ?? "Confirm", message: request.message, error: error instanceof Error ? error.message : String(error) },
         });
         debugLog(`ui.confirm failed: ${error instanceof Error ? error.message : String(error)}`);
         // Errors from the UI surface (dismissed, aborted) fall through as
@@ -293,12 +300,13 @@ async function confirmOmpWithDeadline(
   ui: OmpConfirmationUi,
   title: string,
   message: string,
+  timeout: number,
   scheduleDeadline: NonNullable<HostAdapterOptions["scheduleDeadline"]>,
 ): Promise<boolean> {
   const abortController = new AbortController();
   const confirmation = Promise.resolve().then(() =>
     ui.confirm(title, message, {
-      timeout: OMP_SYNCHRONOUS_BASH_BUDGET_MS,
+      timeout,
       signal: abortController.signal,
     }),
   );
@@ -307,7 +315,7 @@ async function confirmOmpWithDeadline(
     cancelDeadline = scheduleDeadline(() => {
       abortController.abort();
       resolve(false);
-    }, OMP_SYNCHRONOUS_BASH_BUDGET_MS);
+    }, timeout);
   });
 
   try {
