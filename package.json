@@ -1,6 +1,6 @@
 {
   "name": "pi-yaml-hooks",
-  "version": "2026.7.18",
+  "version": "2026.7.19",
   "description": "YAML hook automation for the Pi and OMP coding agents: tool guards, session hooks, prompts, notifications, and bash actions.",
   "author": "Kristjan Pikhof <kristjan.pikhof@gmail.com> (https://github.com/KristjanPikhof)",
   "type": "module",
