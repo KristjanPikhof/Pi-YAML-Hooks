@@ -220,17 +220,20 @@ export function createHostAdapter(
           request.timeout ?? OMP_SYNCHRONOUS_BASH_BUDGET_MS,
           OMP_SYNCHRONOUS_BASH_BUDGET_MS,
         );
-        const approved = isOmp
-          ? ompTimeout <= 0
-            ? false
-            : await confirmOmpWithDeadline(
-                ctx.ui as unknown as OmpConfirmationUi,
-                title,
-                request.message,
-                ompTimeout,
-                scheduleDeadline,
-              )
-          : await ctx.ui.confirm(title, request.message);
+        let approved: boolean;
+        if (!isOmp) {
+          approved = await ctx.ui.confirm(title, request.message);
+        } else if (ompTimeout <= 0) {
+          approved = false;
+        } else {
+          approved = await confirmOmpWithDeadline(
+            ctx.ui as unknown as OmpConfirmationUi,
+            title,
+            request.message,
+            ompTimeout,
+            scheduleDeadline,
+          );
+        }
         logger.info("host_confirm", "Completed UI confirmation request.", {
           cwd: projectDir,
           details: { title, message: request.message, approved, ...(isOmp ? { timeout: ompTimeout } : {}) },
