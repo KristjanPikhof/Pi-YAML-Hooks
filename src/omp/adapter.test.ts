@@ -662,10 +662,14 @@ const cases: Case[] = [
         const harness = new FakeOmpHarness(projectDir, defaultAgentDir)
         harness.register()
         const order: string[] = []
+        let requestContinuation = true
         const sessionStopHandlers = harness.handlers.get("session_stop") ?? []
         sessionStopHandlers.push(async () => {
           await Promise.resolve()
-          harness.pendingMessages = true
+          if (requestContinuation) {
+            requestContinuation = false
+            harness.pendingMessages = true
+          }
           order.push("session_stop:settled")
         })
         harness.handlers.set("session_stop", sessionStopHandlers)
@@ -679,15 +683,18 @@ const cases: Case[] = [
 
         harness.pendingMessages = false
         harness.idle = false
+        await harness.sessionStop()
         await harness.agentEnd()
         const busySuppressed = harness.notifications.length === 0
 
         harness.idle = true
+        await harness.sessionStop()
         await harness.agentEnd()
         await harness.agentEnd()
         const oneShot = harness.notifications.join(",") === "idle"
 
         await harness.agentStart()
+        await harness.sessionStop()
         await harness.agentEnd()
         const rearmed = harness.notifications.join(",") === "idle,idle"
         const trace =
