@@ -148,9 +148,7 @@ export function createHooksRuntime(host: HostAdapter, options: CreateHooksRuntim
   // topology markers, and imports resolved by the last load. It is built once
   // and only rediscovered after a stat change, keeping git/project discovery
   // entirely off unchanged event dispatches (including empty configurations).
-  let lastLoadedFiles: readonly string[] = options.hooks
-    ? []
-    : (loaded as { files?: readonly string[] }).files ?? []
+  let lastLoadedFiles: readonly string[] = "files" in loaded ? loaded.files : []
   let watchedFiles = options.hooks && !shouldReloadDiscoveredHooks
     ? []
     : mergeUnique(resolveHookConfigWatchPaths(configDiscovery).paths, lastLoadedFiles)

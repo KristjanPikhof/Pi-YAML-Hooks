@@ -121,7 +121,7 @@ export function resolveHookConfigWatchPaths(
   paths.push(resolveTrustedProjectsFilePath({ homeDir, profile }))
 
   if (!options.projectDir) {
-    return { paths }
+    return { paths: uniquePaths(paths) }
   }
 
   const realpath = options.realpath ?? defaultRealpath
