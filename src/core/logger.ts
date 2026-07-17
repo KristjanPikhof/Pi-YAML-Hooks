@@ -248,11 +248,9 @@ function rotateLogIfNeeded(filePath: string, maxBytes: number): void {
   cachedLogFdPath = undefined
 }
 
-function createPiHooksLogger(): PiHooksLogger {
-  const enabled = shouldEnableLogging()
-  const level = resolveLogLevel(enabled)
-  const filePath = enabled ? resolveLogFilePath() : undefined
-  const mirrorToStderr = process.env.PI_YAML_HOOKS_LOG_STDERR === "1"
+function createPiHooksLogger(configuration: LoggerConfiguration): PiHooksLogger {
+  const { enabled, level, mirrorToStderr } = configuration
+  const filePath = enabled ? configuration.filePath : undefined
 
   return {
     enabled,
@@ -317,11 +315,34 @@ function createPiHooksLogger(): PiHooksLogger {
   }
 }
 
-function shouldEnableLogging(): boolean {
-  return (
+function resolveLoggerConfiguration(): LoggerConfiguration {
+  const profile = getHookHostProfile()
+  const enabled =
     process.env.PI_YAML_HOOKS_DEBUG === "1" ||
     process.env.PI_YAML_HOOKS_LOG_LEVEL !== undefined ||
     process.env.PI_YAML_HOOKS_LOG_FILE !== undefined
+  const level = resolveLogLevel(enabled)
+  return {
+    hostKind: profile.kind,
+    agentDir: profile.agentDir,
+    enabled,
+    filePath: resolveLogFilePath(profile.agentDir),
+    ...(level ? { level } : {}),
+    mirrorToStderr: process.env.PI_YAML_HOOKS_LOG_STDERR === "1",
+  }
+}
+
+function loggerConfigurationsMatch(
+  previous: LoggerConfiguration | undefined,
+  current: LoggerConfiguration,
+): boolean {
+  return (
+    previous?.hostKind === current.hostKind &&
+    previous.agentDir === current.agentDir &&
+    previous.enabled === current.enabled &&
+    previous.filePath === current.filePath &&
+    previous.level === current.level &&
+    previous.mirrorToStderr === current.mirrorToStderr
   )
 }
 
@@ -342,11 +363,9 @@ function resolveLogLevel(enabled: boolean): PiHooksLogLevel | undefined {
   return "info"
 }
 
-function resolveLogFilePath(): string {
-  return (
-    process.env.PI_YAML_HOOKS_LOG_FILE ??
-    path.join(getHookHostProfile().agentDir, "logs", "pi-yaml-hooks.ndjson")
-  )
+function resolveLogFilePath(agentDir = getHookHostProfile().agentDir): string {
+  const override = process.env.PI_YAML_HOOKS_LOG_FILE?.trim()
+  return override || path.join(agentDir, "logs", "pi-yaml-hooks.ndjson")
 }
 
 function serializeLogEntry(entry: PiHooksLogEntry): string {
