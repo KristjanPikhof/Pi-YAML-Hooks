@@ -33,6 +33,10 @@ export interface DiscoveredHookConfigPath {
   readonly filePath: string
 }
 
+export interface HookConfigWatchPaths {
+  readonly paths: readonly string[]
+}
+
 export interface ProjectHookResolution {
   readonly cwd: string
   readonly anchorDir: string
@@ -98,6 +102,38 @@ export function discoverHookConfigEntries(options: HookConfigDiscoveryOptions = 
 
 export function discoverHookConfigPaths(options: HookConfigDiscoveryOptions = {}): string[] {
   return discoverHookConfigEntries(options).map((entry) => entry.filePath)
+}
+
+/**
+ * Resolve the complete, stable set of filesystem paths that can affect hook
+ * discovery for one host profile and cwd. Callers can stat this set between
+ * events and defer the synchronous project/git discovery work until one of
+ * the paths changes.
+ */
+export function resolveHookConfigWatchPaths(
+  options: HookConfigDiscoveryOptions = {},
+): HookConfigWatchPaths {
+  const platform = options.platform ?? process.platform
+  const homeDir = options.homeDir ?? resolveHomeDir()
+  const appDataDir = options.appDataDir ?? process.env.APPDATA
+  const profile = resolveDiscoveryProfile(options, homeDir)
+  const paths = globalCandidatePaths(platform, homeDir, appDataDir, profile)
+  paths.push(resolveTrustedProjectsFilePath({ homeDir, profile }))
+
+  if (!options.projectDir) {
+    return { paths }
+  }
+
+  const realpath = options.realpath ?? defaultRealpath
+  const project = resolveProjectHookResolution(options)
+  const cwd = project?.cwd ?? path.resolve(options.projectDir)
+  const stopDir = project?.worktreeRoot
+  for (const dir of ancestorDirs(cwd, stopDir, realpath)) {
+    paths.push(...projectCandidatePaths(dir, profile.kind))
+    paths.push(path.join(dir, ".git"))
+  }
+
+  return { paths: uniquePaths(paths) }
 }
 
 const MAX_WARNED_UNTRUSTED_PROJECTS = 128
@@ -380,6 +416,18 @@ function pickFirstExisting(
     }
   }
   return undefined
+}
+
+function uniquePaths(paths: readonly string[]): string[] {
+  const seen = new Set<string>()
+  const unique: string[] = []
+  for (const filePath of paths) {
+    if (!seen.has(filePath)) {
+      seen.add(filePath)
+      unique.push(filePath)
+    }
+  }
+  return unique
 }
 
 export function resolveTrustedProjectsFilePath(
