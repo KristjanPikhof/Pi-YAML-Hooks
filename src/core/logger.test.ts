@@ -82,11 +82,13 @@ const cases: Case[] = [
     name: "empty log override falls back to the active OMP profile path",
     run: () =>
       withLoggerSandbox((tempDir) => {
-        const agentDir = path.join(tempDir, ".omp", "profiles", "work", "agent")
-        configureHookHostProfile({ kind: "omp", agentDir })
+        const profile = configureHookHostProfile({
+          kind: "omp",
+          agentDir: path.join(tempDir, ".omp", "profiles", "work", "agent"),
+        })
         process.env.PI_YAML_HOOKS_LOG_FILE = "   "
 
-        const expected = path.join(agentDir, "logs", "pi-yaml-hooks.ndjson")
+        const expected = path.join(profile.agentDir, "logs", "pi-yaml-hooks.ndjson")
         const logger = getPiHooksLogger()
         logger.info("empty-override", "fallback path")
 
