@@ -125,6 +125,7 @@ async function captureTailFollowArgs(
   const previousCapture = process.env.PI_YAML_HOOKS_TEST_TAIL_CAPTURE
   process.env.PATH = `${binDir}${path.delimiter}${previousPath ?? ""}`
   process.env.PI_YAML_HOOKS_TEST_TAIL_CAPTURE = capturePath
+  const captureWatcher = watch(sandboxDir)
 
   try {
     await handler("--follow", ctx as never)
