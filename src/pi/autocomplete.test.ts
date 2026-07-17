@@ -371,7 +371,7 @@ const cases: Case[] = [
       }),
   },
   {
-    name: "refreshes OMP fallback path suggestions after native configs appear without re-registering",
+    name: "refreshes OMP project fallback suggestions without exposing Pi global config",
     run: async () =>
       await withSandbox(async (projectDir, homeDir) => {
         const agentDir = path.join(homeDir, ".omp", "agent")
@@ -394,8 +394,9 @@ const cases: Case[] = [
         const refreshedValues = refreshed?.items.map((item) => item.value) ?? []
         const ok =
           ctx.factories.length === 1 &&
-          initialValues.includes(fallbackGlobal) &&
+          initialValues.includes(nativeGlobal) &&
           initialValues.includes(fallbackProject) &&
+          !initialValues.includes(fallbackGlobal) &&
           refreshedValues.includes(nativeGlobal) &&
           refreshedValues.includes(nativeProject) &&
           !refreshedValues.includes(fallbackGlobal) &&

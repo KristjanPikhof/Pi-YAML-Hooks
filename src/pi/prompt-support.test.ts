@@ -194,7 +194,7 @@ const cases: Case[] = [
       }),
   },
   {
-    name: "refreshes OMP fallback prompt paths after native configs appear without re-registering",
+    name: "refreshes OMP project fallback paths without loading Pi global config",
     run: async () =>
       await withSandbox({ trusted: true }, async (projectDir, homeDir) => {
         const agentDir = path.join(homeDir, ".omp", "agent")
@@ -215,8 +215,9 @@ const cases: Case[] = [
         const refreshed = (refreshedResult as { systemPrompt?: string[] } | undefined)?.systemPrompt?.at(-1)
         const ok =
           (pi.handlers.get("before_agent_start") ?? []).length === 1 &&
-          initial?.includes(`- selected global hook config: ${fallbackGlobal}`) === true &&
+          initial?.includes(`- selected global hook config: ${nativeGlobal}`) === true &&
           initial.includes(`- project hooks are trusted and active when loaded: ${fallbackProject}`) &&
+          !initial.includes(fallbackGlobal) &&
           refreshed?.includes(`- selected global hook config: ${nativeGlobal}`) === true &&
           refreshed.includes(`- project hooks are trusted and active when loaded: ${nativeProject}`) &&
           !refreshed.includes(fallbackGlobal) &&
