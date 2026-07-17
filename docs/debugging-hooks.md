@@ -16,8 +16,8 @@ Run `/hooks-status` inside Pi or OMP first. It reports the current project direc
 | Host | Active agent directory | Global candidates, first existing wins | Project candidates at the nearest project root | Trust store | Default log |
 |---|---|---|---|---|---|
 | Pi | `~/.pi/agent` | `~/.pi/agent/hook/hooks.yaml`, then `~/.pi/agent/hooks.yaml` | `.pi/hook/hooks.yaml`, then `.pi/hooks.yaml` | `~/.pi/agent/trusted-projects.json` | `~/.pi/agent/logs/pi-yaml-hooks.ndjson` |
-| OMP default profile | `~/.omp/agent` | `<agentDir>/hook/hooks.yaml`, then `<agentDir>/hooks.yaml`, then the two Pi global candidates | `.omp/hook/hooks.yaml`, then `.omp/hooks.yaml`, then the two `.pi` candidates | `~/.omp/agent/trusted-projects.json` | `~/.omp/agent/logs/pi-yaml-hooks.ndjson` |
-| OMP named profile | `~/.omp/profiles/<profile>/agent` | Same order under the active named `agentDir`, then the two Pi global candidates | Same project order as OMP default | `~/.omp/profiles/<profile>/agent/trusted-projects.json` | `~/.omp/profiles/<profile>/agent/logs/pi-yaml-hooks.ndjson` |
+| OMP default profile | `~/.omp/agent` | `<agentDir>/hook/hooks.yaml`, then `<agentDir>/hooks.yaml` | `.omp/hook/hooks.yaml`, then `.omp/hooks.yaml`, then the two `.pi` candidates | `~/.omp/agent/trusted-projects.json` | `~/.omp/agent/logs/pi-yaml-hooks.ndjson` |
+| OMP named profile | `~/.omp/profiles/<profile>/agent` | Same order under the active named `agentDir` | Same project order as OMP default | `~/.omp/profiles/<profile>/agent/trusted-projects.json` | `~/.omp/profiles/<profile>/agent/logs/pi-yaml-hooks.ndjson` |
 
 OMP gets its active `agentDir` from the running host. Do not infer a named profile path from `HOME` alone. `/hooks-status`, prompt awareness, autocomplete, trust warnings, and `/hooks-tail-log` all use that active directory.
 
@@ -29,7 +29,7 @@ Project trust is stored as absolute canonical repo/worktree anchors. Use these c
 - `/hooks-validate` reports validation errors for the selected paths without replacing the last-known-good hook set with an invalid config.
 - `/hooks-trust` writes only the active host's trust store, using an atomic mode-`0600` replacement on POSIX.
 
-OMP considers legacy `.pi` project candidates only when no native `.omp` candidate wins. A legacy project file still requires the repo/worktree anchor in the active OMP trust store. `~/.pi/agent/trusted-projects.json` never authorizes OMP project hooks, and `/hooks-trust` under OMP does not create or update Pi trust state. Global fallback is visible because `/hooks-status` prints the selected global path.
+OMP considers legacy `.pi` project candidates only when no native `.omp` candidate wins. A legacy project file still requires the repo/worktree anchor in the active OMP trust store. `~/.pi/agent/trusted-projects.json` never authorizes OMP project hooks, and `/hooks-trust` under OMP does not create or update Pi trust state.
 
 Malformed or missing trust files fail closed. The warning names the active trust store, and a malformed file is left unchanged. `PI_YAML_HOOKS_TRUST_PROJECT=1` is an explicit per-process bypass and logs a trust-boundary warning.
 

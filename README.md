@@ -204,7 +204,7 @@ The preferred root config paths are:
 | OMP default profile | `~/.omp/agent/hook/hooks.yaml` | `<project>/.omp/hook/hooks.yaml` |
 | OMP named profile | `~/.omp/profiles/<profile>/agent/hook/hooks.yaml` | `<project>/.omp/hook/hooks.yaml` |
 
-The same YAML works in every listed location. Each host loads at most one global root and one project root. OMP checks its native `.omp` location before the legacy `.pi` fallback, so it never combines native and legacy roots within one scope.
+The same YAML works in every listed location. Each host loads at most one global root and one project root. OMP global discovery stays inside the active profile's agent directory. At project scope, native `.omp` config wins before the trust-gated legacy `.pi` fallback.
 
 Project hooks are gated by pi-yaml-hooks trust because they can run arbitrary `bash` with your user permissions. Trust is evaluated against the repo or worktree trust anchor, not an arbitrary nested directory string. `trusted-projects.json` entries must be absolute paths; relative entries such as `.` are ignored.
 
