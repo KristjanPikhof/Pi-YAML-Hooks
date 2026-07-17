@@ -667,6 +667,7 @@ hooks: []
           hooks: initial.hooks,
           initialSignature: initial.signature,
           initialFiles: initial.files,
+          initialWatchPaths: initial.watchPaths,
           reloadDiscoveredHooks: true,
           configDiscovery,
         })

@@ -107,6 +107,7 @@ export interface CreateHooksRuntimeOptions {
   readonly hooks?: HookMap
   readonly initialSignature?: string
   readonly initialFiles?: readonly string[]
+  readonly initialWatchPaths?: readonly string[]
   readonly reloadDiscoveredHooks?: boolean
   readonly executeBash?: ExecuteBashHook
   readonly configDiscovery?: Omit<HookConfigDiscoveryOptions, "projectDir">
@@ -152,9 +153,12 @@ export function createHooksRuntime(host: HostAdapter, options: CreateHooksRuntim
   const initiallyLoadedFiles: readonly string[] = "files" in loaded
     ? loaded.files
     : options.initialFiles ?? []
+  const initiallyLoadedWatchPaths: readonly string[] = "watchPaths" in loaded
+    ? loaded.watchPaths
+    : mergeUnique(initiallyLoadedFiles, options.initialWatchPaths ?? [])
   let watchedFiles = options.hooks && !shouldReloadDiscoveredHooks
     ? []
-    : mergeUnique(resolveHookConfigWatchPaths(configDiscovery).paths, initiallyLoadedFiles)
+    : mergeUnique(resolveHookConfigWatchPaths(configDiscovery).paths, initiallyLoadedWatchPaths)
   let lastStatFingerprint = computeStatFingerprint(watchedFiles)
   const state = new SessionStateStore()
   const runBashHook: ExecuteBashHook = options.executeBash ?? ((request) => host.runBash(request))
@@ -236,7 +240,7 @@ export function createHooksRuntime(host: HostAdapter, options: CreateHooksRuntim
 
     const nextWatchPaths = resolveHookConfigWatchPaths(configDiscovery).paths
     const nextLoaded = loadDiscoveredHooksSnapshot(configDiscovery)
-    watchedFiles = mergeUnique(nextWatchPaths, nextLoaded.files)
+    watchedFiles = mergeUnique(nextWatchPaths, nextLoaded.watchPaths)
     lastStatFingerprint = computeStatFingerprint(watchedFiles)
     if (nextLoaded.signature === lastLoadedSignature) {
       return hooks

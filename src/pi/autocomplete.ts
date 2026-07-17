@@ -9,7 +9,7 @@ import {
   resolveHookConfigWatchPaths,
   resolveProjectHookResolution,
 } from "../core/config-paths.js"
-import { loadDiscoveredHooksSnapshot } from "../core/load-hooks.js"
+import { loadDiscoveredHooksSnapshot, type HookLoadSnapshot } from "../core/load-hooks.js"
 import { getHookHostProfile } from "../core/host-profile.js"
 import { SESSION_HOOK_EVENTS } from "../core/types.js"
 import { getPiHooksLogFilePath } from "../core/logger.js"
@@ -147,7 +147,7 @@ function getOrComputeAutocompleteState(cwd: string): HookAutocompleteState {
   const projectDir = path.resolve(cwd)
   const profile = getHookHostProfile()
   const profileIdentity = `${profile.kind}\0${profile.agentDir}`
-  const envStateKey = getDiscoveryEnvStateKey()
+  const envStateKey = DISCOVERY_ENV_KEYS.map((key) => `${key}=${process.env[key] ?? ""}`).join("\0")
   if (
     cachedAutocompleteState &&
     cachedAutocompleteState.projectDir === projectDir &&
@@ -246,12 +246,12 @@ const DISCOVERY_ENV_KEYS = [
   "PI_YAML_HOOKS_ALLOW_PACKAGE_IMPORTS",
 ] as const
 
-function getDiscoveryEnvStateKey(): string {
-  return DISCOVERY_ENV_KEYS.map((key) => `${key}=${process.env[key] ?? ""}`).join("\0")
-}
 
-function getSnapshotWatchPaths(snapshot: ReturnType<typeof loadDiscoveredHooksSnapshot>): readonly string[] {
-  const watchPaths = (snapshot as { readonly watchPaths?: unknown }).watchPaths
+function getSnapshotWatchPaths(snapshot: HookLoadSnapshot): readonly string[] {
+  if (!("watchPaths" in snapshot)) {
+    return []
+  }
+  const { watchPaths } = snapshot
   return Array.isArray(watchPaths) && watchPaths.every((filePath) => typeof filePath === "string")
     ? watchPaths
     : []
