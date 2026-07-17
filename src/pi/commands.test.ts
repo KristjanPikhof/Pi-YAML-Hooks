@@ -368,7 +368,7 @@ const cases: Case[] = [
         writeFileSync(ompTrustFile, JSON.stringify([existingOmpEntry], null, 2) + "\n", "utf8")
 
         const before = resolveProjectHookResolution({ projectDir })
-        if (before?.trusted || before?.projectConfigPath !== path.join(projectDir, ".pi", "hook", "hooks.yaml")) {
+        if (before?.trusted || before?.projectConfigPath !== path.join(expected, ".pi", "hook", "hooks.yaml")) {
           return { ok: false, detail: `legacy config bypassed OMP trust: ${JSON.stringify(before)}` }
         }
 

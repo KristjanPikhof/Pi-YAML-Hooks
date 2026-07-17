@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs"
+import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs"
 import os from "node:os"
 import path from "node:path"
 
@@ -136,7 +136,7 @@ const cases: Case[] = [
     name: "reports selected Pi paths and trust state when SDK mode is omitted",
     run: async () =>
       await withSandbox({ trusted: true }, async (projectDir, homeDir) => {
-        const projectPath = path.join(projectDir, ".pi", "hook", "hooks.yaml")
+        const projectPath = path.join(realpathSync.native(projectDir), ".pi", "hook", "hooks.yaml")
         writeProjectHooks(
           projectDir,
           `hooks:
@@ -168,7 +168,7 @@ const cases: Case[] = [
         const agentDir = path.join(homeDir, ".omp", "agent", "profiles", "work")
         const profile = configureHookHostProfile({ kind: "omp", agentDir })
         const globalPath = path.join(profile.agentDir, "hook", "hooks.yaml")
-        const projectPath = path.join(projectDir, ".omp", "hook", "hooks.yaml")
+        const projectPath = path.join(realpathSync.native(projectDir), ".omp", "hook", "hooks.yaml")
         writeHooksFile(globalPath, "hooks: []\n")
         writeHooksFile(projectPath, "hooks: []\n")
         const pi = createFakePi()
@@ -200,9 +200,10 @@ const cases: Case[] = [
         const agentDir = path.join(homeDir, ".omp", "agent")
         const profile = configureHookHostProfile({ kind: "omp", agentDir })
         const fallbackGlobal = path.join(homeDir, ".pi", "agent", "hook", "hooks.yaml")
-        const fallbackProject = path.join(projectDir, ".pi", "hook", "hooks.yaml")
+        const canonicalProjectDir = realpathSync.native(projectDir)
+        const fallbackProject = path.join(canonicalProjectDir, ".pi", "hook", "hooks.yaml")
         const nativeGlobal = path.join(profile.agentDir, "hook", "hooks.yaml")
-        const nativeProject = path.join(projectDir, ".omp", "hook", "hooks.yaml")
+        const nativeProject = path.join(canonicalProjectDir, ".omp", "hook", "hooks.yaml")
         writeHooksFile(fallbackGlobal, "hooks: []\n")
         writeHooksFile(fallbackProject, "hooks: []\n")
         const pi = createFakePi()
