@@ -64,6 +64,9 @@ export function installSessionLifecycleHandlers(
   // double-run. Entries are cleared shortly after to keep the set bounded.
   const deletedSessionIds = new Set<string>();
   let lastLifecycleHandledOmpSessionId: string | undefined;
+  let pendingOmpSwitch:
+    | { readonly cwd: string; readonly sessionId: string; readonly reason?: string }
+    | undefined;
   function markSessionDeleted(sessionId: string): boolean {
     if (deletedSessionIds.has(sessionId)) return false;
     deletedSessionIds.add(sessionId);
@@ -73,6 +76,30 @@ export function installSessionLifecycleHandlers(
     setTimeout(() => deletedSessionIds.delete(sessionId), 5_000).unref?.();
     return true;
   }
+
+  const dispatchSessionDeleted = async (
+    cwd: string,
+    sessionId: string,
+    reason: string | undefined,
+    details?: Record<string, unknown>,
+  ): Promise<void> => {
+    if (!markSessionDeleted(sessionId)) return;
+    try {
+      const runtime = getRuntimeFor(cwd);
+      await runtime.event(buildSessionDeletedEvent(sessionId, reason));
+    } catch (error) {
+      reportDispatchFailure(
+        logger,
+        {
+          cwd,
+          event: "session.deleted",
+          sessionId,
+          ...(details ? { details } : reason ? { details: { reason } } : {}),
+        },
+        error,
+      );
+    }
+  };
 
   const dispatchSessionCreated = async (ctx: ExtensionContext): Promise<void> => {
     rememberContext(ctx.cwd, ctx);
@@ -127,6 +154,19 @@ export function installSessionLifecycleHandlers(
     };
     ompSessionEventApi.on("session_switch", async (event, ctx): Promise<void> => {
       rememberContext(ctx.cwd, ctx);
+      const completedSwitch = pendingOmpSwitch;
+      pendingOmpSwitch = undefined;
+      if (completedSwitch) {
+        await dispatchSessionDeleted(
+          completedSwitch.cwd,
+          completedSwitch.sessionId,
+          completedSwitch.reason,
+          {
+            trigger: "session_before_switch",
+            ...(completedSwitch.reason ? { reason: completedSwitch.reason } : {}),
+          },
+        );
+      }
       const reason = extractReason(event);
       if (reason === "new") {
         await dispatchSessionCreated(ctx);
@@ -151,52 +191,29 @@ export function installSessionLifecycleHandlers(
     rememberContext(ctx.cwd, ctx);
     const sessionId = safeGetSessionId(ctx.sessionManager);
     if (!sessionId) return;
-    if (!markSessionDeleted(sessionId)) return; // already fired via before_switch
-
-    const reason = extractReason(event);
-    try {
-      const runtime = getRuntimeFor(ctx.cwd);
-      await runtime.event(buildSessionDeletedEvent(sessionId, reason));
-    } catch (error) {
-      reportDispatchFailure(
-        logger,
-        {
-          cwd: ctx.cwd,
-          event: "session.deleted",
-          sessionId,
-          ...(reason ? { details: { reason } } : {}),
-        },
-        error,
-      );
-    }
+    if (pendingOmpSwitch?.sessionId === sessionId) pendingOmpSwitch = undefined;
+    await dispatchSessionDeleted(ctx.cwd, sessionId, extractReason(event));
   });
 
   // ---- session_before_switch ----
-  // P1-4 fix: forward the SDK's `reason` ("new" | "resume") on the envelope.
-  // session_shutdown also fires for the same logical transition; whichever
-  // arrives first wins (markSessionDeleted dedupes), so the reason actually
-  // delivered to hooks may be either of the two.
+  // Pi dispatches immediately and relies on the shutdown pair dedupe. OMP's
+  // aggregate can still be cancelled after this handler returns, so capture
+  // its old session and defer deletion until session_switch proves success.
   pi.on("session_before_switch", async (event: SessionBeforeSwitchEvent, ctx: ExtensionContext): Promise<void> => {
     rememberContext(ctx.cwd, ctx);
     const sessionId = safeGetSessionId(ctx.sessionManager);
     if (!sessionId) return;
-    if (!markSessionDeleted(sessionId)) return; // session_shutdown already fired
-
     const reason = extractReason(event);
-    try {
-      const runtime = getRuntimeFor(ctx.cwd);
-      await runtime.event(buildSessionDeletedEvent(sessionId, reason));
-    } catch (error) {
-      reportDispatchFailure(
-        logger,
-        {
-          cwd: ctx.cwd,
-          event: "session.deleted",
-          sessionId,
-          details: { trigger: "session_before_switch", ...(reason ? { reason } : {}) },
-        },
-        error,
-      );
+    if (hostKind === "omp") {
+      pendingOmpSwitch = { cwd: ctx.cwd, sessionId, ...(reason ? { reason } : {}) };
+      return;
     }
+
+    await dispatchSessionDeleted(
+      ctx.cwd,
+      sessionId,
+      reason,
+      { trigger: "session_before_switch", ...(reason ? { reason } : {}) },
+    );
   });
 }

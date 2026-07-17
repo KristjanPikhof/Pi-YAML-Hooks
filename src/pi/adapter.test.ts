@@ -473,7 +473,7 @@ const cases: Case[] = [
       }),
   },
   {
-    name: "OMP session.created maps startup and new switch once while excluding resume and fork",
+    name: "OMP session.created fires once for startup and ignores duplicate and reload starts",
     run: async () =>
       await withIsolatedProject(true, async (projectDir) => {
         writeProjectHooks(
@@ -489,17 +489,88 @@ const cases: Case[] = [
         harness.register()
         await harness.sessionStartWithoutReason()
         await harness.sessionStartWithoutReason()
-        await harness.sessionStart("resume")
-        await harness.sessionStart("fork")
+        await harness.sessionStart("reload")
+        await harness.sessionStartWithoutReason()
+
+        return harness.notifications.join(",") === "created"
+          ? { ok: true }
+          : { ok: false, detail: `notifications=${JSON.stringify(harness.notifications)}` }
+      }),
+  },
+  {
+    name: "OMP new session_switch creates once and the following reasonless start deduplicates",
+    run: async () =>
+      await withIsolatedProject(true, async (projectDir) => {
+        writeProjectHooks(
+          projectDir,
+          `hooks:
+  - event: session.created
+    actions:
+      - notify: "created"
+`,
+        )
+
+        const harness = new FakePiHarness(projectDir, "session-1", "omp")
+        harness.register()
+        await harness.sessionStartWithoutReason()
         harness.replaceSession("session-2")
         await harness.sessionSwitch("new")
-        await harness.sessionSwitch("new")
-        harness.replaceSession("session-3")
-        await harness.sessionSwitch("resume")
-        harness.replaceSession("session-4")
-        await harness.sessionSwitch("fork")
+        await harness.sessionStartWithoutReason()
 
         return harness.notifications.join(",") === "created,created"
+          ? { ok: true }
+          : { ok: false, detail: `notifications=${JSON.stringify(harness.notifications)}` }
+      }),
+  },
+  {
+    name: "OMP resume session_switch and following reasonless start never create",
+    run: async () =>
+      await withIsolatedProject(true, async (projectDir) => {
+        writeProjectHooks(
+          projectDir,
+          `hooks:
+  - event: session.created
+    actions:
+      - notify: "created"
+`,
+        )
+
+        const harness = new FakePiHarness(projectDir, "session-1", "omp")
+        harness.register()
+        await harness.sessionStartWithoutReason()
+        harness.replaceSession("resumed-session")
+        await harness.sessionSwitch("resume")
+        await harness.sessionStartWithoutReason()
+
+        return harness.notifications.join(",") === "created"
+          ? { ok: true }
+          : { ok: false, detail: `notifications=${JSON.stringify(harness.notifications)}` }
+      }),
+  },
+  {
+    name: "OMP fork and handoff session_switch plus reasonless starts never create",
+    run: async () =>
+      await withIsolatedProject(true, async (projectDir) => {
+        writeProjectHooks(
+          projectDir,
+          `hooks:
+  - event: session.created
+    actions:
+      - notify: "created"
+`,
+        )
+
+        const harness = new FakePiHarness(projectDir, "session-1", "omp")
+        harness.register()
+        await harness.sessionStartWithoutReason()
+        harness.replaceSession("forked-session")
+        await harness.sessionSwitch("fork")
+        await harness.sessionStartWithoutReason()
+        harness.replaceSession("handoff-session")
+        await harness.sessionSwitch("handoff")
+        await harness.sessionStartWithoutReason()
+
+        return harness.notifications.join(",") === "created"
           ? { ok: true }
           : { ok: false, detail: `notifications=${JSON.stringify(harness.notifications)}` }
       }),
@@ -692,6 +763,44 @@ const cases: Case[] = [
 
         const expected = JSON.stringify(["hashline-changed", "apply-patch-changed"])
         return JSON.stringify(harness.notifications) === expected
+          ? { ok: true }
+          : { ok: false, detail: `notifications=${JSON.stringify(harness.notifications)}` }
+      }),
+  },
+  {
+    name: "late child tool_result keeps source lineage after the manager switches",
+    run: async () =>
+      await withIsolatedProject(true, async (projectDir) => {
+        writeProjectHooks(
+          projectDir,
+          `hooks:
+  - event: tool.after.read
+    scope: child
+    actions:
+      - notify: "child-matched"
+  - event: tool.after.read
+    scope: main
+    actions:
+      - notify: "main-matched"
+`,
+        )
+        const rootSessionFile = path.join(projectDir, "root-session.jsonl")
+        writeFileSync(
+          rootSessionFile,
+          `${JSON.stringify({ type: "session", id: "root-session", timestamp: "", cwd: projectDir })}\n`,
+          "utf8",
+        )
+
+        const harness = new FakePiHarness(projectDir, "child-session", "omp")
+        harness.parentSession = rootSessionFile
+        harness.register()
+        await harness.toolCall("read", "late-child-read", { path: path.join(projectDir, "src", "file.ts") })
+
+        harness.replaceSession("replacement-session")
+        await harness.sessionSwitch("resume")
+        await harness.toolResult("read", "late-child-read", { path: path.join(projectDir, "src", "file.ts") })
+
+        return harness.notifications.join(",") === "child-matched"
           ? { ok: true }
           : { ok: false, detail: `notifications=${JSON.stringify(harness.notifications)}` }
       }),
