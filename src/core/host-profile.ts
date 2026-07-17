@@ -93,4 +93,3 @@ function canonicalizeAgentDir(agentDir: string): string {
     }
   }
 }
-
