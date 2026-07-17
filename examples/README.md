@@ -1,6 +1,18 @@
 # Example hook packs
 
-These folders include complete example packs. Copy the `hooks.yaml` snippets into a global or trusted project hook file, and keep any referenced scripts at the paths used by the YAML or update those paths.
+These folders include complete opt-in example packs for Pi and OMP. Copy a pack's `hooks.yaml` into one global or trusted project hook file, and keep referenced scripts at the paths used by the YAML or update those paths.
+
+## Where to copy a pack
+
+The YAML is identical across hosts:
+
+| Scope | Pi | OMP |
+|---|---|---|
+| Global, default profile | `~/.pi/agent/hook/hooks.yaml` | `~/.omp/agent/hook/hooks.yaml` |
+| Global, named OMP profile | Not applicable | `~/.omp/profiles/<profile>/agent/hook/hooks.yaml` |
+| Project | `<project>/.pi/hook/hooks.yaml` | `<project>/.omp/hook/hooks.yaml` |
+
+After copying a project pack, start the matching host, run `/hooks-trust`, then run `/hooks-status`. OMP saves trust in its active profile, separate from Pi, even if OMP falls back to a legacy `.pi` project config.
 
 ## Complete packs
 

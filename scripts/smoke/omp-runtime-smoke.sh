@@ -20,8 +20,11 @@ EVENT_FILE="$PROJECT_DIR/.omp/hooks-smoke/events.ndjson"
 RPC_TRANSCRIPT="$SMOKE_ROOT/rpc-frames.ndjson"
 RPC_STDERR="$SMOKE_ROOT/rpc-stderr.log"
 TUI_TRANSCRIPT="$SMOKE_ROOT/tui.log"
+TMUX_BIN="/opt/homebrew/bin/tmux"
+TMUX_SOCKET="$SMOKE_ROOT/tmux.sock"
 SERVER_PID=""
 CLEANED=0
+TMUX_ACTIVE=0
 
 fail() {
   printf 'FAIL: %s\n' "$*" >&2
@@ -33,6 +36,10 @@ cleanup() {
     return
   fi
   CLEANED=1
+  if [[ "$TMUX_ACTIVE" -eq 1 ]]; then
+    "$TMUX_BIN" -S "$TMUX_SOCKET" kill-server 2>/dev/null || true
+    TMUX_ACTIVE=0
+  fi
   if [[ -n "$SERVER_PID" ]] && kill -0 "$SERVER_PID" 2>/dev/null; then
     kill "$SERVER_PID" 2>/dev/null || true
     wait "$SERVER_PID" 2>/dev/null || true
@@ -44,9 +51,10 @@ cleanup() {
 }
 trap cleanup EXIT INT TERM
 
-for command in omp bun npm node expect; do
+for command in omp bun npm node; do
   command -v "$command" >/dev/null 2>&1 || fail "required command is unavailable: $command"
 done
+[[ -x "$TMUX_BIN" ]] || fail "required tmux binary is unavailable: $TMUX_BIN"
 
 OMP_VERSION="$(omp --version 2>&1 | sed -n '1p')"
 BUN_VERSION="$(bun --version)"
@@ -328,15 +336,17 @@ TRUST_FILE="$TRUST_FILE" PROJECT_DIR="$PROJECT_DIR" bun --eval '
   if (JSON.stringify(entries) !== JSON.stringify([expected])) throw new Error(`isolated OMP trust mismatch: ${JSON.stringify(entries)}`);
 '
 [[ ! -e "$HOME_DIR/.pi" && ! -e "$PROJECT_DIR/.pi" ]] || fail "Pi trust/config state appeared during OMP RPC"
+sed 's/omp-lazy-initial/omp-lazy-refreshed/' "$VALID_FIXTURE" > "$SMOKE_ROOT/refreshed-hooks.yaml"
 
 cat > "$SMOKE_ROOT/deferred-idle.mjs" <<'IDLE'
-import { appendFileSync, existsSync, readFileSync } from "node:fs";
+import { appendFileSync, copyFileSync, existsSync, readFileSync } from "node:fs";
 import { pathToFileURL } from "node:url";
 
-const [entry, agentDir, projectDir, eventFile] = process.argv.slice(2);
+const [entry, agentDir, projectDir, eventFile, projectConfig, validFixture, refreshedFixture] = process.argv.slice(2);
 const handlers = new Map();
 const notifications = [];
 const statuses = [];
+const autocompleteFactories = [];
 const api = {
   pi: { getAgentDir: () => agentDir },
   on(name, handler) {
@@ -354,6 +364,7 @@ extension(api);
 const ctx = {
   cwd: projectDir,
   hasUI: true,
+  mode: "tui",
   isIdle: () => true,
   hasPendingMessages: () => false,
   sessionManager: {
@@ -362,11 +373,34 @@ const ctx = {
     getEntries: () => [],
   },
   ui: {
+    addAutocompleteProvider: (factory) => autocompleteFactories.push(factory),
     notify: (message) => notifications.push(message),
     setStatus: (_key, text) => statuses.push(text),
     confirm: async () => true,
   },
 };
+for (const handler of handlers.get("session_start") ?? []) await handler({}, ctx);
+if (autocompleteFactories.length !== 1) throw new Error(`OMP TUI autocomplete registration count mismatch: ${autocompleteFactories.length}`);
+const provider = autocompleteFactories[0]({
+  getSuggestions: async () => null,
+  applyCompletion: (lines) => ({ lines, cursorLine: 0, cursorCol: lines[0]?.length ?? 0 }),
+});
+const suggestionsFor = async (prefix) => provider.getSuggestions(
+  [`/hooks-status ${prefix}`],
+  0,
+  `/hooks-status ${prefix}`.length,
+  { signal: new AbortController().signal },
+);
+const initialSuggestions = await suggestionsFor("omp-lazy-i");
+if (!initialSuggestions?.items?.some((item) => item.label === "omp-lazy-initial")) {
+  throw new Error("OMP TUI autocomplete did not expose the initial installed hook id");
+}
+copyFileSync(refreshedFixture, projectConfig);
+const refreshedSuggestions = await suggestionsFor("omp-lazy-r");
+if (!refreshedSuggestions?.items?.some((item) => item.label === "omp-lazy-refreshed")) {
+  throw new Error("OMP TUI autocomplete did not lazily refresh the installed hook id");
+}
+copyFileSync(validFixture, projectConfig);
 for (const handler of handlers.get("agent_start") ?? []) await handler({}, ctx);
 for (const handler of handlers.get("session_stop") ?? []) await handler({}, ctx);
 const immediate = existsSync(eventFile) ? readFileSync(eventFile, "utf8") : "";
@@ -388,110 +422,66 @@ IDLE
 mkdir -p "$PLUGIN_DIR/node_modules/@earendil-works"
 ln -s "$ROOT_DIR/node_modules/@earendil-works/pi-tui" "$PLUGIN_DIR/node_modules/@earendil-works/pi-tui"
 bun "$SMOKE_ROOT/deferred-idle.mjs" \
-  "$PLUGIN_DIR/dist/extensions/omp-yaml-hooks/index.js" "$AGENT_DIR" "$PROJECT_DIR" "$EVENT_FILE"
+  "$PLUGIN_DIR/dist/extensions/omp-yaml-hooks/index.js" "$AGENT_DIR" "$PROJECT_DIR" "$EVENT_FILE" \
+  "$PROJECT_CONFIG" "$VALID_FIXTURE" "$SMOKE_ROOT/refreshed-hooks.yaml"
 rm "$PLUGIN_DIR/node_modules/@earendil-works/pi-tui"
 rmdir "$PLUGIN_DIR/node_modules/@earendil-works" "$PLUGIN_DIR/node_modules" 2>/dev/null || true
 
 cp "$VALID_FIXTURE" "$PROJECT_CONFIG"
-sed 's/omp-lazy-initial/omp-lazy-refreshed/' "$VALID_FIXTURE" > "$SMOKE_ROOT/refreshed-hooks.yaml"
-export OMP_SMOKE_PROJECT="$PROJECT_DIR"
-export OMP_SMOKE_REFRESHED="$SMOKE_ROOT/refreshed-hooks.yaml"
-export OMP_SMOKE_TUI_LOG="$TUI_TRANSCRIPT"
+printf -v TMUX_COMMAND \
+  'env HOME=%q USERPROFILE=%q OMP_PROFILE=%q PI_YAML_HOOKS_ENABLE_USER_BASH=0 omp --profile %q --cwd %q --no-title' \
+  "$HOME_DIR" "$HOME_DIR" "$PROFILE" "$PROFILE" "$PROJECT_DIR"
+"$TMUX_BIN" -S "$TMUX_SOCKET" new-session -d -s omp-smoke -x 160 -y 50 "$TMUX_COMMAND"
+TMUX_ACTIVE=1
 
-cat > "$SMOKE_ROOT/tui.exp" <<'EXPECT'
-#!/usr/bin/expect -f
-set timeout 20
-log_file -noappend $env(OMP_SMOKE_TUI_LOG)
-proc send_text {value} {
-  send -- "\033\[200~"
-  send -- $value
-  send -- "\033\[201~"
-}
-proc drain {seconds} {
-  set previous $::timeout
-  set ::timeout $seconds
-  expect {
-    timeout {}
-    eof {}
-  }
-  set ::timeout $previous
-}
-set kittyQuery "\033\[?u"
-set kittyResponse "\033\[?1u"
-set deviceQuery "\033\[c"
-set deviceResponse "\033\[?1;2c"
-set colorQuery "\033\]11;?\007"
-set colorResponse "\033\]11;rgb:0000/0000/0000\007"
-set syncQuery "\033\[?2026\$p"
-set syncResponse "\033\[?2026;2\$y"
-set unicodeQuery "\033\[?2048\$p"
-set unicodeResponse "\033\[?2048;2\$y"
-set appearanceQuery "\033\[?2031\$p"
-set appearanceResponse "\033\[?2031;2\$y"
-set notificationsQuery "\033\[?1010\$p"
-set notificationsResponse "\033\[?1010;2\$y"
-set notificationsFilterQuery "\033\[?1011\$p"
-set notificationsFilterResponse "\033\[?1011;2\$y"
-set cellSizeQuery "\033\[16t"
-set cellSizeResponse "\033\[6;16;8t"
-spawn -noecho omp --profile $env(OMP_PROFILE) --cwd $env(OMP_SMOKE_PROJECT) --no-title
-expect -exact $kittyQuery
-send -- $kittyResponse
-expect -exact $deviceQuery
-send -- $deviceResponse
-expect -exact $colorQuery
-send -- $colorResponse
-expect -exact $deviceQuery
-send -- $deviceResponse
-expect -exact $syncQuery
-send -- $syncResponse
-expect -exact $deviceQuery
-send -- $deviceResponse
-expect -exact $unicodeQuery
-send -- $unicodeResponse
-expect -exact $deviceQuery
-send -- $deviceResponse
-expect -exact $appearanceQuery
-send -- $appearanceResponse
-expect -exact $deviceQuery
-send -- $deviceResponse
-expect -exact $notificationsQuery
-send -- $notificationsResponse
-expect -exact $deviceQuery
-send -- $deviceResponse
-expect -exact $notificationsFilterQuery
-send -- $notificationsFilterResponse
-expect -exact $deviceQuery
-send -- $deviceResponse
-expect -exact $cellSizeQuery
-send -- $cellSizeResponse
-expect -re "Welcome back"
-after 1000
-send_text "/hooks-st"
-after 500
-send -- "\t"
-after 500
-send -- "\r"
-drain 1
-send -- "\033\[117;5u"
-send_text "/hooks-status omp-lazy-i"
-after 500
-send -- "\t"
-after 500
-send -- "\r"
-drain 1
-exec cp $env(OMP_SMOKE_REFRESHED) $env(OMP_SMOKE_PROJECT)/.omp/hook/hooks.yaml
-send -- "\033\[117;5u"
-send_text "/hooks-status omp-lazy-r"
-after 500
-send -- "\t"
-after 500
-send -- "\r"
-drain 1
-close
-wait
-EXPECT
-expect -f "$SMOKE_ROOT/tui.exp" > "$SMOKE_ROOT/tui-expect.out" 2> "$SMOKE_ROOT/tui-expect.err"
+sleep 6
+for _ in $(seq 1 5); do
+  "$TMUX_BIN" -S "$TMUX_SOCKET" send-keys -t omp-smoke Escape
+  sleep 0.5
+done
+for _ in $(seq 1 100); do
+  "$TMUX_BIN" -S "$TMUX_SOCKET" capture-pane -p -t omp-smoke > "$SMOKE_ROOT/tmux-startup.txt"
+  if grep -q "/ for commands" "$SMOKE_ROOT/tmux-startup.txt"; then
+    break
+  fi
+  sleep 0.1
+done
+if ! grep -q "/ for commands" "$SMOKE_ROOT/tmux-startup.txt"; then
+  cat "$SMOKE_ROOT/tmux-startup.txt" >&2
+  fail "OMP tmux TUI did not leave isolated-profile setup"
+fi
+
+"$TMUX_BIN" -S "$TMUX_SOCKET" send-keys -t omp-smoke -l "/hooks-status omp-lazy-i"
+for _ in $(seq 1 50); do
+  "$TMUX_BIN" -S "$TMUX_SOCKET" capture-pane -p -S - -t omp-smoke > "$SMOKE_ROOT/tmux-initial.txt"
+  if grep -q "omp-lazy-initial" "$SMOKE_ROOT/tmux-initial.txt"; then
+    break
+  fi
+  sleep 0.1
+done
+if ! grep -q "omp-lazy-initial" "$SMOKE_ROOT/tmux-initial.txt"; then
+  cat "$SMOKE_ROOT/tmux-initial.txt" >&2
+  fail "real OMP tmux TUI did not render the initial hook-ID completion"
+fi
+
+cp "$SMOKE_ROOT/refreshed-hooks.yaml" "$PROJECT_CONFIG"
+"$TMUX_BIN" -S "$TMUX_SOCKET" send-keys -t omp-smoke C-u
+sleep 0.2
+"$TMUX_BIN" -S "$TMUX_SOCKET" send-keys -t omp-smoke -l "/hooks-status omp-lazy-r"
+for _ in $(seq 1 50); do
+  "$TMUX_BIN" -S "$TMUX_SOCKET" capture-pane -p -t omp-smoke > "$SMOKE_ROOT/tmux-refreshed.txt"
+  if grep -q "omp-lazy-refreshed" "$SMOKE_ROOT/tmux-refreshed.txt"; then
+    break
+  fi
+  sleep 0.1
+done
+grep -q "omp-lazy-refreshed" "$SMOKE_ROOT/tmux-refreshed.txt" || fail "real OMP tmux TUI did not render the lazily refreshed hook-ID completion"
+cat "$SMOKE_ROOT/tmux-initial.txt" "$SMOKE_ROOT/tmux-refreshed.txt" > "$TUI_TRANSCRIPT"
+"$TMUX_BIN" -S "$TMUX_SOCKET" kill-server
+if "$TMUX_BIN" -S "$TMUX_SOCKET" has-session 2>/dev/null; then
+  fail "private tmux server remained after TUI capture"
+fi
+TMUX_ACTIVE=0
 cp "$VALID_FIXTURE" "$PROJECT_CONFIG"
 
 TUI_EVIDENCE="$(TUI_LOG="$TUI_TRANSCRIPT" bun --eval '
@@ -501,10 +491,10 @@ TUI_EVIDENCE="$(TUI_LOG="$TUI_TRANSCRIPT" bun --eval '
     .replace(/\x1b\][^\x07]*(?:\x07|\x1b\\)/g, "")
     .replace(/[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]/g, "");
   for (const expected of ["/hooks-status", "omp-lazy-initial", "omp-lazy-refreshed"]) {
-    if (!text.includes(expected)) throw new Error(`TUI autocomplete evidence missing: ${expected}`);
+    if (!text.includes(expected)) throw new Error(`real OMP TUI autocomplete evidence missing: ${expected}`);
   }
   if (/extension error|failed to load extension|cannot find module/i.test(text)) throw new Error("TUI transcript contains extension/load error");
-  console.log("/hooks-status,omp-lazy-initial->omp-lazy-refreshed");
+  console.log("tmux-pty:/hooks-status,omp-lazy-initial->omp-lazy-refreshed");
 ')"
 
 [[ -f "$EVENT_FILE" ]] || fail "hook event trace was not created"
@@ -531,7 +521,7 @@ printf 'Event trace: %s\n' "$EVENT_TRACE"
 printf 'TUI trace: %s\n' "$TUI_EVIDENCE"
 printf 'A23 PASS: isolated HOME/profile, packed HTTP install, native manifest discovery, and OMP trust\n'
 printf 'A24 PASS: commands, valid/invalid config, paths, UI RPC, lifecycle, deferred idle, user_bash, and reload\n'
-printf 'A25 PASS: assertion-driven RPC headless degradation plus PTY autocomplete/lazy refresh; no real model call\n'
+printf 'A25 PASS: assertion-driven RPC headless degradation plus tmux PTY autocomplete/lazy refresh; no real model call\n'
 
 cleanup
 trap - EXIT INT TERM
@@ -539,4 +529,4 @@ trap - EXIT INT TERM
 if [[ -n "$SERVER_PID" ]] && kill -0 "$SERVER_PID" 2>/dev/null; then
   fail "local tarball server remained after cleanup"
 fi
-printf 'A26 PASS: versions and evidence printed; PASS count=4; cleanup proof=root-absent,server-stopped\n'
+printf 'A26 PASS: versions and evidence printed; PASS count=4; cleanup proof=root-absent,server-stopped,tmux-stopped\n'

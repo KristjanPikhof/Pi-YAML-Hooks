@@ -77,7 +77,8 @@
     "test:internal": "npm run build && node scripts/run-tests.mjs",
     "compat:sdk-matrix": "bash scripts/check-sdk-matrix.sh",
     "compat:sdk-matrix:dry-run": "bash scripts/check-sdk-matrix.sh --dry-run",
-    "compat:sdk-matrix:future": "bash scripts/check-sdk-matrix.sh --include-future"
+    "compat:sdk-matrix:future": "bash scripts/check-sdk-matrix.sh --include-future",
+    "compat:host-matrix": "bash scripts/check-host-matrix.sh"
   },
   "repository": {
     "type": "git",
