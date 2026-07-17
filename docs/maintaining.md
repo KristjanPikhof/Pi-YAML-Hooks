@@ -65,7 +65,7 @@ Default-profile and named-profile OMP storage are both covered by internal tests
 
 Current standalone runtime evidence used Pi `0.80.7` with SDK `0.80.7`, and OMP CLI `17.0.1` with the printed Bun and installed plugin versions. The OMP SDK `17.0.1` claim comes from the host matrix, not the standalone runtime smoke. The Pi observation does not replace the published `0.74.0`/`0.79.3` compatibility matrix.
 
-The completed `2026-07-17` gate recorded `test_files=21 pass=21 fail=0` for each Pi pair and OMP `17.0.1`, OMP runtime `A23` through `A26` at `4/4`, and a package inventory of `140` files with `11` required entries, `0` missing, and `0` forbidden. Cleanup and package-file drift checks passed.
+The completed `2026-07-17` gate recorded `test_files=24 pass=24 fail=0` for each Pi pair and OMP `17.0.1`, OMP runtime `A23` through `A26` at `4/4`, and a package inventory of `140` files with `11` required entries, `0` missing, and `0` forbidden. Cleanup and package-file drift checks passed.
 
 ## Widen a host claim
 
