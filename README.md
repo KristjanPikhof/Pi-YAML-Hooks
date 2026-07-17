@@ -161,8 +161,8 @@ When an event matches, `pi-yaml-hooks` evaluates conditions and runs the configu
 |---|---|
 | `/hooks-status` | Active hooks, config paths, trust state, and log path |
 | `/hooks-validate` | Validation results for active hooks and skipped untrusted project hooks |
-| `/hooks-trust` | Adds the current repo/worktree anchor to `~/.pi/agent/trusted-projects.json` |
-| `/hooks-reload` | Asks PI to reload extensions; edited hooks also refresh lazily on the next relevant event |
+| `/hooks-trust` | Adds the current repo/worktree anchor to the active Pi or OMP profile's trust store |
+| `/hooks-reload` | Asks the active host to reload extensions; edited hooks also refresh lazily on the next relevant event |
 | `/hooks-tail-log` | Log path plus a ready-to-run `tail -F` command; `--follow` starts a detached live tail, and `--path` prints only the path |
 
 `/hooks-status`, `/hooks-validate`, and hook-load validation errors persist as custom entries on the Pi 0.80-capable TUI path. These entries do not enter model context. Older Pi and non-TUI paths retain the custom-message fallback.
@@ -184,13 +184,13 @@ Keep those rules in mind when authoring hooks. They explain most surprising beha
 
 ### What trust grants when user_bash is enabled
 
-When `PI_YAML_HOOKS_ENABLE_USER_BASH=1` is set, every human `!` / `!!` shell command typed in PI is routed through `tool.before.bash` hooks before PI executes it. This expands the trust surface significantly:
+When `PI_YAML_HOOKS_ENABLE_USER_BASH=1` is set, every human `!` / `!!` shell command typed in Pi or OMP is routed through `tool.before.bash` hooks before the host executes it. This expands the trust surface significantly:
 
 - **Observation**: hooks receive the typed command in stdin JSON as `tool_args.command`, so a trusted-project bash hook can read the full text of every command you type.
 - **Blocking**: a `tool.before.bash` hook that exits with code `2` will prevent the command from running. A misconfigured or malicious hook can silently block commands.
 - **Exfiltration risk**: the same bash hook can forward `tool_args.command` to an external service. Only enable `PI_YAML_HOOKS_ENABLE_USER_BASH=1` if you trust every hook in every trusted project.
 
-`pi-yaml-hooks` emits a one-time stderr warning on startup listing which trusted projects will have access when this env var is set, and shows a PI UI warning on the first intercepted command when a UI is available. The warning fires once per process and names the projects currently in `~/.pi/agent/trusted-projects.json`.
+`pi-yaml-hooks` emits a one-time stderr warning on startup listing which trusted projects will have access when this env var is set, and shows a host UI warning on the first intercepted command when a UI is available. The warning fires once per process and reads projects from the active Pi or OMP profile's `trusted-projects.json`.
 
 This mode is disabled by default. Agent-generated `bash` tool calls are always intercepted regardless of this setting.
 

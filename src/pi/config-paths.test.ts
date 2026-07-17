@@ -556,8 +556,6 @@ const cases: Case[] = [
         const expected = [
           path.join(profile.agentDir, "hook", "hooks.yaml"),
           path.join(profile.agentDir, "hooks.yaml"),
-          path.join(homeDir, ".pi", "agent", "hook", "hooks.yaml"),
-          path.join(homeDir, ".pi", "agent", "hooks.yaml"),
           path.join(profile.agentDir, "trusted-projects.json"),
         ]
         for (const dir of [cwd, path.dirname(cwd), worktreeRoot]) {

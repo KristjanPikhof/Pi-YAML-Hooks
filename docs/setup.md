@@ -231,8 +231,6 @@ Global:
 
 1. `<active-agent-dir>/hook/hooks.yaml`
 2. `<active-agent-dir>/hooks.yaml`
-3. `~/.pi/agent/hook/hooks.yaml`
-4. `~/.pi/agent/hooks.yaml`
 
 Project:
 
@@ -241,7 +239,7 @@ Project:
 3. `<project>/.pi/hook/hooks.yaml`
 4. `<project>/.pi/hooks.yaml`
 
-OMP's `.pi` entries are legacy fallbacks. A native `.omp` candidate wins before a legacy candidate, and only one file from each scope loads. OMP never layers a native and legacy root in the same scope.
+OMP's project-level `.pi` entries are legacy fallbacks. A native `.omp` project candidate wins before a legacy candidate, and only one project file loads. Global discovery stays inside the active OMP profile's agent directory.
 
 Windows is not a supported runtime, even if some internal path discovery code recognizes Windows-style locations.
 
