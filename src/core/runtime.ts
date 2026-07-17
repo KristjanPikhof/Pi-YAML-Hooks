@@ -244,9 +244,14 @@ export function createHooksRuntime(host: HostAdapter, options: CreateHooksRuntim
 
     lastLoadedSignature = nextLoaded.signature
     if (nextLoaded.errors.length > 0) {
+      const retainedHooks = retainHooksFromAuthorizedFiles(hooks, new Set(nextLoaded.files))
+      if (retainedHooks !== hooks) {
+        hooks = retainedHooks
+        globMatcherCache = createGlobMatcherCache(nextLoaded.signature)
+      }
       if (lastReportedInvalidSignature !== nextLoaded.signature) {
         console.error(formatHookReloadErrors(nextLoaded.errors))
-        logger.error("config_reload", "Hook reload failed; keeping last known good hooks.", {
+        logger.error("config_reload", "Hook reload failed; keeping last known good hooks from authorized sources.", {
           cwd: projectDir,
           details: {
             signature: nextLoaded.signature,
@@ -534,6 +539,26 @@ export function createHooksRuntime(host: HostAdapter, options: CreateHooksRuntim
 }
 
 
+
+function retainHooksFromAuthorizedFiles(hooks: HookMap, authorizedFiles: ReadonlySet<string>): HookMap {
+  let retainedHooks: HookMap | undefined
+
+  for (const [event, eventHooks] of hooks) {
+    const retainedEventHooks = eventHooks.filter((hook) => authorizedFiles.has(hook.source.filePath))
+    if (retainedEventHooks.length === eventHooks.length) {
+      continue
+    }
+
+    retainedHooks ??= new Map(hooks)
+    if (retainedEventHooks.length > 0) {
+      retainedHooks.set(event, retainedEventHooks)
+    } else {
+      retainedHooks.delete(event)
+    }
+  }
+
+  return retainedHooks ?? hooks
+}
 
 // Cheap stat-only fingerprint for the runtime refresh gate. Nanosecond mtime
 // and ctime distinguish rapid same-size rewrites that can share millisecond

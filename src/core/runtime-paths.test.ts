@@ -95,9 +95,9 @@ function writeWatchedFile(filePath: string, content: string): void {
   utimesSync(filePath, modified, modified)
 }
 
-function notificationHooks(message: string): string {
+function notificationHooks(message: string, id = "runtime-reload"): string {
   return `hooks:
-  - id: runtime-reload
+  - id: ${id}
     event: session.created
     actions:
       - notify: ${JSON.stringify(message)}
@@ -569,6 +569,63 @@ hooks: []
               ok: false,
               detail: `discovery instrumentation was not exercised counts=${counts()}`,
             }
+      } finally {
+        rmSync(sandbox, { recursive: true, force: true })
+      }
+    },
+  },
+  {
+    name: "invalid reload removes hooks from a project whose trust was revoked",
+    run: async () => {
+      const sandbox = mkdtempSync(path.join(os.tmpdir(), "pi-hooks-runtime-invalid-revocation-"))
+      const homeDir = path.join(sandbox, "home")
+      const agentDir = path.join(homeDir, ".pi", "agent")
+      const projectDir = path.join(sandbox, "repo")
+      const globalPath = path.join(agentDir, "hook", "hooks.yaml")
+      const projectPath = path.join(projectDir, ".pi", "hook", "hooks.yaml")
+      const trustPath = path.join(agentDir, "trusted-projects.json")
+
+      try {
+        mkdirSync(projectDir, { recursive: true })
+        writeWatchedFile(trustPath, `${JSON.stringify([projectDir])}\n`)
+        writeWatchedFile(globalPath, notificationHooks("global-good", "global-hook"))
+        writeWatchedFile(projectPath, notificationHooks("project-trusted", "project-hook"))
+
+        const records: string[] = []
+        const runtime = createHooksRuntime(createFakeHost(records), {
+          directory: projectDir,
+          configDiscovery: {
+            homeDir,
+            profile: Object.freeze({ kind: "pi", agentDir }),
+            resolveGitWorktreeRoot: () => projectDir,
+          },
+        })
+        let dispatchNumber = 0
+        const dispatchCreated = async (): Promise<void> => {
+          dispatchNumber += 1
+          await runtime.event({
+            event: {
+              type: "session.created",
+              properties: { info: { id: `invalid-revocation-${dispatchNumber}` } },
+            },
+          })
+        }
+
+        await dispatchCreated()
+        writeWatchedFile(globalPath, `hooks:
+  - id: global-broken
+    event: not.a.real.event
+    actions:
+      - notify: should-not-run
+`)
+        await dispatchCreated()
+        writeWatchedFile(trustPath, "[]\n")
+        await dispatchCreated()
+
+        const expected = ["global-good", "project-trusted", "global-good", "project-trusted", "global-good"]
+        return JSON.stringify(records) === JSON.stringify(expected)
+          ? { ok: true }
+          : { ok: false, detail: `records=${JSON.stringify(records)} expected=${JSON.stringify(expected)}` }
       } finally {
         rmSync(sandbox, { recursive: true, force: true })
       }
