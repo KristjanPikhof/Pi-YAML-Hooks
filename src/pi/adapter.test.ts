@@ -628,6 +628,63 @@ const cases: Case[] = [
       }),
   },
   {
+    name: "OMP cancelled before_switch defers deletion until a successful session_switch",
+    run: async () =>
+      await withIsolatedProject(true, async (projectDir) => {
+        writeProjectHooks(
+          projectDir,
+          `hooks:
+  - event: session.deleted
+    actions:
+      - notify: "deleted"
+`,
+        )
+        const logFile = path.join(projectDir, "cancelled-switch.ndjson")
+        const previousDebug = process.env.PI_YAML_HOOKS_DEBUG
+        const previousLogFile = process.env.PI_YAML_HOOKS_LOG_FILE
+        process.env.PI_YAML_HOOKS_DEBUG = "1"
+        process.env.PI_YAML_HOOKS_LOG_FILE = logFile
+        try {
+          const harness = new FakePiHarness(projectDir, "old-session", "omp")
+          harness.register()
+          await harness.sessionBeforeSwitch("resume")
+          const cancelledDidNotDelete = harness.notifications.length === 0
+
+          harness.replaceSession("resumed-session")
+          await harness.sessionSwitch("resume")
+
+          const deletedDispatches = readFileSync(logFile, "utf8")
+            .trim()
+            .split("\n")
+            .map((line) => JSON.parse(line) as {
+              kind?: string
+              event?: string
+              sessionId?: string
+              details?: { reason?: string }
+            })
+            .filter((entry) => entry.kind === "dispatch_start" && entry.event === "session.deleted")
+          const captured = deletedDispatches[0]
+          return cancelledDidNotDelete &&
+              harness.notifications.join(",") === "deleted" &&
+              deletedDispatches.length === 1 &&
+              captured?.sessionId === "old-session" &&
+              captured.details?.reason === "resume"
+            ? { ok: true }
+            : {
+                ok: false,
+                detail:
+                  `cancelledDidNotDelete=${cancelledDidNotDelete}, notifications=${JSON.stringify(harness.notifications)}, ` +
+                  `deletedDispatches=${JSON.stringify(deletedDispatches)}`,
+              }
+        } finally {
+          if (previousDebug === undefined) delete process.env.PI_YAML_HOOKS_DEBUG
+          else process.env.PI_YAML_HOOKS_DEBUG = previousDebug
+          if (previousLogFile === undefined) delete process.env.PI_YAML_HOOKS_LOG_FILE
+          else process.env.PI_YAML_HOOKS_LOG_FILE = previousLogFile
+        }
+      }),
+  },
+  {
     name: "OMP retry agent_end does not dispatch idle while session_stop-armed agent_end does",
     run: async () =>
       await withIsolatedProject(true, async (projectDir) => {
