@@ -106,6 +106,7 @@ export interface CreateHooksRuntimeOptions {
   readonly directory: string
   readonly hooks?: HookMap
   readonly initialSignature?: string
+  readonly initialFiles?: readonly string[]
   readonly reloadDiscoveredHooks?: boolean
   readonly executeBash?: ExecuteBashHook
   readonly configDiscovery?: Omit<HookConfigDiscoveryOptions, "projectDir">
@@ -148,7 +149,9 @@ export function createHooksRuntime(host: HostAdapter, options: CreateHooksRuntim
   // topology markers, and imports resolved by the last load. It is built once
   // and only rediscovered after a stat change, keeping git/project discovery
   // entirely off unchanged event dispatches (including empty configurations).
-  const initiallyLoadedFiles: readonly string[] = "files" in loaded ? loaded.files : []
+  const initiallyLoadedFiles: readonly string[] = "files" in loaded
+    ? loaded.files
+    : options.initialFiles ?? []
   let watchedFiles = options.hooks && !shouldReloadDiscoveredHooks
     ? []
     : mergeUnique(resolveHookConfigWatchPaths(configDiscovery).paths, initiallyLoadedFiles)

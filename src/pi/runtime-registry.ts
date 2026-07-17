@@ -170,6 +170,7 @@ export function createRuntimeRegistry(pi: ExtensionAPI): RuntimeRegistry {
         directory: cwd,
         hooks: loaded.hooks,
         initialSignature: loaded.signature,
+        initialFiles: loaded.files,
         reloadDiscoveredHooks: true,
       });
       runtimes.set(cwd, runtime);
