@@ -462,7 +462,8 @@ const api = {
 const extension = (await import(pathToFileURL(entry).href)).default;
 extension(api);
 let idle = false;
-let pendingMessages = true;
+let pendingMessages = false;
+let requestContinuation = true;
 const ctx = {
   cwd: projectDir,
   hasUI: true,
@@ -531,6 +532,16 @@ appendFileSync(eventFile, `${JSON.stringify({
   systemPromptShape: "array",
 })}\n`);
 
+const sessionStopHandlers = handlers.get("session_stop") ?? [];
+sessionStopHandlers.push(async () => {
+  await Promise.resolve();
+  if (requestContinuation) {
+    requestContinuation = false;
+    pendingMessages = true;
+  }
+});
+handlers.set("session_stop", sessionStopHandlers);
+
 const readEventRows = () => {
   if (!existsSync(eventFile)) return [];
   return readFileSync(eventFile, "utf8").trim().split("\n").filter(Boolean).map(JSON.parse);
@@ -544,12 +555,16 @@ const assertNoNewIdle = async (phase) => {
 
 for (const handler of handlers.get("agent_start") ?? []) await handler({}, ctx);
 for (const handler of handlers.get("session_stop") ?? []) await handler({}, ctx);
-for (const handler of handlers.get("session_shutdown") ?? []) await handler({ reason: "quit" }, ctx);
-await assertNoNewIdle("session stop/shutdown control phase");
+await assertNoNewIdle("session_stop continuation phase");
+for (const handler of handlers.get("agent_end") ?? []) await handler({}, ctx);
+await assertNoNewIdle("continuation agent_end");
 pendingMessages = false;
+for (const handler of handlers.get("session_stop") ?? []) await handler({}, ctx);
 for (const handler of handlers.get("agent_end") ?? []) await handler({}, ctx);
 await assertNoNewIdle("non-idle agent_end");
 idle = true;
+for (const handler of handlers.get("session_stop") ?? []) await handler({}, ctx);
+for (const handler of handlers.get("agent_end") ?? []) await handler({}, ctx);
 for (const handler of handlers.get("agent_end") ?? []) await handler({}, ctx);
 const finalIdleCount = readEventRows().filter((row) => row.event === "session.idle").length;
 if (finalIdleCount !== idleCountBefore + 1) {
@@ -670,7 +685,7 @@ EVENT_TRACE="$(EVENT_FILE="$EVENT_FILE" bun --eval '
   const deletedIndex = indexOf("event", "session.deleted", deferredSession);
   const idleIndex = indexOf("event", "session.idle", deferredSession);
   const deferredIndex = indexOf("evidence", "deferred-macrotask", deferredSession);
-  if (!(createdIndex < promptIndex && promptIndex < deletedIndex && deletedIndex < idleIndex && idleIndex < deferredIndex)) {
+  if (!(createdIndex < promptIndex && promptIndex < idleIndex && idleIndex < deferredIndex) || deletedIndex !== -1) {
     throw new Error(`deferred lifecycle order mismatch: ${JSON.stringify({ promptIndex, createdIndex, deletedIndex, idleIndex, deferredIndex })}`);
   }
   const promptRow = rows[promptIndex];
