@@ -191,6 +191,135 @@ const cases: Case[] = [
         : { ok: false, detail: JSON.stringify({ args, paths }) };
     },
   },
+  {
+    name: "failed OMP write without resolved path exposes no mutation paths or file.changed trigger",
+    run: () => {
+      const mapped = mapToolResultToAfterInput(
+        {
+          toolName: "write",
+          toolCallId: "omp-write-failed",
+          input: {
+            path: "/repo/src/requested.ts",
+            content: "not written",
+            requestTag: "retain-write-metadata",
+          },
+          isError: true,
+          details: {},
+        } as unknown as ToolResultMapperEvent,
+        "session-omp",
+      );
+
+      const args = mapped.args ?? {};
+      const changes = getToolFileChanges(mapped.tool, args);
+      const paths = getToolAffectedPaths(mapped.tool, args);
+      const ok = Array.isArray(args.edits) &&
+        args.edits.length === 0 &&
+        changes.length === 0 &&
+        paths.length === 0 &&
+        !Object.hasOwn(args, "path") &&
+        args.content === "not written" &&
+        args.requestTag === "retain-write-metadata";
+
+      return ok ? { ok: true } : { ok: false, detail: JSON.stringify({ args, changes, paths }) };
+    },
+  },
+  {
+    name: "OMP write resolved filesystem path is authoritative for partial and URI-backed success",
+    run: () => {
+      const evidenceCases = [
+        {
+          name: "partial aggregate error",
+          requestedPath: "/repo/src/requested.ts",
+          resolvedPath: "/repo/src/partially-written.ts",
+          isError: true,
+        },
+        {
+          name: "successful internal URI",
+          requestedPath: "local://reports/output.txt",
+          resolvedPath: "/repo/.pi/local/reports/output.txt",
+          isError: false,
+        },
+      ] as const;
+
+      for (const evidenceCase of evidenceCases) {
+        const mapped = mapToolResultToAfterInput(
+          {
+            toolName: "write",
+            toolCallId: `omp-write-${evidenceCase.name}`,
+            input: {
+              path: evidenceCase.requestedPath,
+              content: "written",
+            },
+            isError: evidenceCase.isError,
+            details: {
+              resolvedPath: evidenceCase.resolvedPath,
+            },
+          } as unknown as ToolResultMapperEvent,
+          "session-omp",
+        );
+        const paths = getToolAffectedPaths(mapped.tool, mapped.args ?? {});
+        if (paths.length !== 1 || paths[0] !== evidenceCase.resolvedPath) {
+          return {
+            ok: false,
+            detail: JSON.stringify({ evidence: evidenceCase.name, args: mapped.args, paths }),
+          };
+        }
+      }
+
+      return { ok: true };
+    },
+  },
+  {
+    name: "successful OMP write to internal URI without resolved filesystem path emits no file change",
+    run: () => {
+      const mapped = mapToolResultToAfterInput(
+        {
+          toolName: "write",
+          toolCallId: "omp-write-xd-success",
+          input: {
+            path: "xd://mounted-tool",
+            content: "{\"subject\":\"example\"}",
+          },
+          isError: false,
+          details: {},
+        } as unknown as ToolResultMapperEvent,
+        "session-omp",
+      );
+
+      const args = mapped.args ?? {};
+      const changes = getToolFileChanges(mapped.tool, args);
+      const paths = getToolAffectedPaths(mapped.tool, args);
+      const ok = Array.isArray(args.edits) &&
+        args.edits.length === 0 &&
+        changes.length === 0 &&
+        paths.length === 0 &&
+        !Object.hasOwn(args, "path");
+
+      return ok ? { ok: true } : { ok: false, detail: JSON.stringify({ args, changes, paths }) };
+    },
+  },
+  {
+    name: "successful ordinary filesystem write preserves requested path without result details",
+    run: () => {
+      const mapped = mapToolResultToAfterInput(
+        {
+          toolName: "write",
+          toolCallId: "omp-write-filesystem-success",
+          input: {
+            path: "/repo/src/written.ts",
+            content: "written",
+          },
+          isError: false,
+          details: {},
+        } as unknown as ToolResultMapperEvent,
+        "session-omp",
+      );
+      const paths = getToolAffectedPaths(mapped.tool, mapped.args ?? {});
+      return paths.length === 1 && paths[0] === "/repo/src/written.ts"
+        ? { ok: true }
+        : { ok: false, detail: JSON.stringify({ args: mapped.args, paths }) };
+    },
+  },
 ];
 
 export function main(): number {
