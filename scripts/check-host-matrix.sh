@@ -23,6 +23,8 @@ OMP_INSTALL_COMMAND=(
 TYPECHECK_COMMAND=(npm run typecheck)
 INTERNAL_COMMAND=(npm run test:internal)
 OMP_SMOKE_COMMAND=(bash scripts/smoke/omp-runtime-smoke.sh)
+OMP_SMOKE_TIMEOUT_SECONDS="${OMP_SMOKE_TIMEOUT_SECONDS:-300}"
+OMP_SMOKE_TIMEOUT_GRACE_SECONDS="${OMP_SMOKE_TIMEOUT_GRACE_SECONDS:-5}"
 PACK_COMMAND=(npm pack --json --dry-run --ignore-scripts)
 
 print_dry_command() {
@@ -85,10 +87,12 @@ PLAN
 PLAN
     print_dry_command "${NPM_INSTALL_COMMAND[@]}"
     print_dry_command "${OMP_INSTALL_COMMAND[@]}"
-    print_dry_command node --input-type=module - "$OMP_SDK_SPEC"
+    print_dry_command node --input-type=module - '<isolated>/omp-copy' "$OMP_SDK_SPEC"
     print_dry_command "${TYPECHECK_COMMAND[@]}"
     print_dry_command "${INTERNAL_COMMAND[@]}"
-    print_dry_command "${OMP_SMOKE_COMMAND[@]}"
+    printf '[dry-run] OMP runtime smoke outer timeout: %ss (Node), then SIGTERM + %ss grace + SIGKILL\n' \
+      "$OMP_SMOKE_TIMEOUT_SECONDS" "$OMP_SMOKE_TIMEOUT_GRACE_SECONDS"
+    print_dry_command node --input-type=module - "$OMP_SMOKE_TIMEOUT_SECONDS" "$OMP_SMOKE_TIMEOUT_GRACE_SECONDS" "${OMP_SMOKE_COMMAND[@]}"
     print_dry_command "${PACK_COMMAND[@]}"
     print_dry_command node --input-type=module - '<isolated>/npm-pack.json' '<isolated>/package.json' "$EXPECTED_PACK_FILES"
     cat <<'PLAN'
@@ -281,10 +285,12 @@ install_omp_sdk() {
     cd "$OMP_COPY"
     "${NPM_INSTALL_COMMAND[@]}"
     "${OMP_INSTALL_COMMAND[@]}"
-    node --input-type=module - "$OMP_SDK_SPEC" <<'NODE'
+    node --input-type=module - "$OMP_COPY" "$OMP_SDK_SPEC" <<'NODE'
 import { readFileSync } from "node:fs";
-const expected = process.argv[2];
-const packageVersion = (name) => JSON.parse(readFileSync(`node_modules/${name}/package.json`, "utf8")).version;
+import path from "node:path";
+const [root, expected] = process.argv.slice(2);
+const packageVersion = (name) =>
+  JSON.parse(readFileSync(path.join(root, "node_modules", name, "package.json"), "utf8")).version;
 const codingAgent = packageVersion("@oh-my-pi/pi-coding-agent");
 const tui = packageVersion("@oh-my-pi/pi-tui");
 if (codingAgent !== expected || tui !== expected) {
@@ -325,11 +331,67 @@ console.log(`OMP internal summary: version=17.0.1 test_files=${discovered[0][1]}
 NODE
 }
 
+run_with_node_timeout() {
+  local timeout_seconds="$1"
+  local grace_seconds="$2"
+  shift 2
+  node --input-type=module - "$timeout_seconds" "$grace_seconds" "$@" <<'NODE'
+import { spawn } from "node:child_process";
+
+const [timeoutText, graceText, command, ...args] = process.argv.slice(2);
+const timeoutMs = Number(timeoutText) * 1000;
+const graceMs = Number(graceText) * 1000;
+if (!Number.isFinite(timeoutMs) || timeoutMs <= 0 || !Number.isFinite(graceMs) || graceMs < 0 || !command) {
+  throw new Error(`invalid timeout invocation: timeout=${timeoutText} grace=${graceText} command=${command ?? ""}`);
+}
+
+const child = spawn(command, args, { stdio: ["ignore", "inherit", "inherit"] });
+let timedOut = false;
+let spawnError;
+let killTimer;
+const closed = new Promise((resolve) => {
+  child.once("error", (error) => { spawnError = error; });
+  child.once("close", (code, signal) => resolve({ code, signal }));
+});
+const deadlineTimer = setTimeout(() => {
+  timedOut = true;
+  console.error(`[TIMEOUT] command exceeded ${timeoutText}s; sending SIGTERM: ${[command, ...args].join(" ")}`);
+  child.kill("SIGTERM");
+  killTimer = setTimeout(() => {
+    if (child.exitCode === null && child.signalCode === null) {
+      console.error(`[TIMEOUT] command ignored SIGTERM for ${graceText}s; sending SIGKILL`);
+      child.kill("SIGKILL");
+    }
+  }, graceMs);
+}, timeoutMs);
+for (const signal of ["SIGHUP", "SIGINT", "SIGTERM"]) {
+  process.once(signal, () => child.kill(signal));
+}
+const { code, signal } = await closed;
+clearTimeout(deadlineTimer);
+if (killTimer) clearTimeout(killTimer);
+if (spawnError) throw spawnError;
+if (timedOut) {
+  console.error(`[TIMEOUT] command reaped after deadline; code=${code}; signal=${signal}`);
+  process.exitCode = 124;
+} else if (signal) {
+  console.error(`command exited from signal ${signal}`);
+  process.exitCode = 1;
+} else {
+  process.exitCode = code ?? 1;
+}
+NODE
+}
+
 run_omp_runtime_smoke() {
   local log_file="$MATRIX_ROOT/omp-runtime-smoke.log"
   local pipeline_status
 
-  (cd "$OMP_COPY" && "${OMP_SMOKE_COMMAND[@]}") 2>&1 | tee "$log_file"
+  printf 'OMP runtime smoke outer timeout: %ss (Node), SIGTERM grace: %ss\n' \
+    "$OMP_SMOKE_TIMEOUT_SECONDS" "$OMP_SMOKE_TIMEOUT_GRACE_SECONDS"
+  (cd "$OMP_COPY" && run_with_node_timeout \
+    "$OMP_SMOKE_TIMEOUT_SECONDS" "$OMP_SMOKE_TIMEOUT_GRACE_SECONDS" \
+    "${OMP_SMOKE_COMMAND[@]}") 2>&1 | tee "$log_file"
   pipeline_status=${PIPESTATUS[0]}
   if [[ "$pipeline_status" -ne 0 ]]; then
     return "$pipeline_status"
