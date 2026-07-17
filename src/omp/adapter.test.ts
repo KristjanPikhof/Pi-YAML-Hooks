@@ -2,6 +2,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync,
 import os from "node:os"
 import path from "node:path"
 
+import { getActiveHookPolicy, setActiveHookPolicy } from "../core/load-hooks.js"
 import { __resetTrustListCacheForTests } from "../core/config-paths.js"
 import {
   __resetHookHostProfileForTests,
@@ -11,6 +12,7 @@ import { getPiHooksLogFilePath, resetPiHooksLoggerForTests } from "../core/logge
 import piHooksExtension from "../index.js"
 import { resetHookAutocompleteForTests } from "../pi/autocomplete.js"
 import { _resetUserBashWarningForTests } from "../pi/user-bash.js"
+import { ompHookPolicy, piHookPolicy } from "../pi/unsupported.js"
 import ompHooksExtension from "./index.js"
 
 interface Case {
@@ -280,6 +282,7 @@ function resetState(): void {
   _resetUserBashWarningForTests()
   __resetTrustListCacheForTests()
   __resetHookHostProfileForTests()
+  setActiveHookPolicy(piHookPolicy)
 }
 
 function restoreEnv(name: string, value: string | undefined): void {
@@ -363,6 +366,7 @@ const cases: Case[] = [
       await withSandbox(async ({ projectDir, homeDir, defaultAgentDir }) => {
         process.env.PI_YAML_HOOKS_DEBUG = "1"
         const harness = new FakeOmpHarness(projectDir, defaultAgentDir)
+        const agentDirExistedBeforeRegistration = existsSync(defaultAgentDir)
         harness.register()
         const profile = getConfiguredHookHostProfile()
         const logPath = getPiHooksLogFilePath()
@@ -370,8 +374,10 @@ const cases: Case[] = [
         const expectedLog = path.join(expectedAgentDir, "logs", "pi-yaml-hooks.ndjson")
         const piLog = path.join(realpathSync.native(homeDir), ".pi", "agent", "logs", "pi-yaml-hooks.ndjson")
         evidence.profilePaths.add(expectedAgentDir)
-        return profile?.kind === "omp" &&
+        return !agentDirExistedBeforeRegistration &&
+            profile?.kind === "omp" &&
             profile.agentDir === expectedAgentDir &&
+            getActiveHookPolicy() === ompHookPolicy &&
             logPath === expectedLog &&
             existsSync(expectedLog) &&
             !existsSync(piLog) &&
@@ -457,10 +463,13 @@ const cases: Case[] = [
     name: "invalid or throwing getAgentDir fails clearly before registration",
     run: async () =>
       await withSandbox(async ({ projectDir, defaultAgentDir }) => {
-        const invalidResults: unknown[] = [undefined, null, 42, "", "   "]
+        const nonStringOrBlankResults: unknown[] = [undefined, null, 42, "", "   "]
+        const relativeResults: unknown[] = [".", "relative/agent"]
+        const invalidHarnesses: FakeOmpHarness[] = []
         const errors: string[] = []
-        for (const result of invalidResults) {
+        for (const result of [...nonStringOrBlankResults, ...relativeResults]) {
           const harness = new FakeOmpHarness(projectDir, defaultAgentDir)
+          invalidHarnesses.push(harness)
           try {
             harness.register(() => result)
           } catch (error) {
@@ -468,6 +477,7 @@ const cases: Case[] = [
           }
         }
         const throwingHarness = new FakeOmpHarness(projectDir, defaultAgentDir)
+        invalidHarnesses.push(throwingHarness)
         try {
           throwingHarness.register(() => {
             throw new Error("profile unavailable")
@@ -475,13 +485,36 @@ const cases: Case[] = [
         } catch (error) {
           errors.push(error instanceof Error ? error.message : String(error))
         }
-        const invalidErrors = errors.slice(0, invalidResults.length)
-        return invalidErrors.length === invalidResults.length &&
-            invalidErrors.every((message) => message.includes("non-empty string")) &&
+        const blankErrors = errors.slice(0, nonStringOrBlankResults.length)
+        const relativeErrors = errors.slice(
+          nonStringOrBlankResults.length,
+          nonStringOrBlankResults.length + relativeResults.length,
+        )
+        const noRegistrationSideEffects = invalidHarnesses.every(
+          (harness) =>
+            harness.handlers.size === 0 &&
+            harness.commands.size === 0 &&
+            harness.messageRenderers.size === 0 &&
+            harness.autocompleteProviders.length === 0,
+        )
+        return blankErrors.length === nonStringOrBlankResults.length &&
+            blankErrors.every((message) => message.includes("non-empty string")) &&
+            relativeErrors.length === relativeResults.length &&
+            relativeErrors.every((message) => message.includes("absolute agentDir path")) &&
             errors.at(-1)?.includes("could not resolve the active agentDir") === true &&
-            getConfiguredHookHostProfile() === undefined
+            noRegistrationSideEffects &&
+            getConfiguredHookHostProfile() === undefined &&
+            getActiveHookPolicy() === piHookPolicy
           ? { ok: true }
-          : { ok: false, detail: JSON.stringify({ errors, profile: getConfiguredHookHostProfile() }) }
+          : {
+              ok: false,
+              detail: JSON.stringify({
+                errors,
+                profile: getConfiguredHookHostProfile(),
+                activePolicyIsPi: getActiveHookPolicy() === piHookPolicy,
+                noRegistrationSideEffects,
+              }),
+            }
       }),
   },
   {
