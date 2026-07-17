@@ -482,11 +482,12 @@ const runtimeCases: RuntimeCase[] = [
     },
   },
   {
-    name: "OMP adapter denies a never-resolving confirmation at the shared deadline",
+    name: "OMP adapter denies a never-resolving confirmation at the remaining dispatch deadline",
     run: async () => {
       __resetHookHostProfileForTests()
       configureHookHostProfile({ kind: "omp", agentDir: "/tmp/.omp/agent" })
       try {
+        const remainingBudget = OMP_SYNCHRONOUS_BASH_BUDGET_MS - 15_000
         let scheduledDelay: number | undefined
         let receivedOptions: { timeout?: number; signal?: AbortSignal } | undefined
         let cancelled = false
@@ -519,10 +520,14 @@ const runtimeCases: RuntimeCase[] = [
           },
         )
 
-        const approved = await host.confirm?.({ title: "Approve", message: "continue?" })
+        const approved = await host.confirm?.({
+          title: "Approve",
+          message: "continue?",
+          timeout: remainingBudget,
+        })
         return approved === false &&
-            scheduledDelay === OMP_SYNCHRONOUS_BASH_BUDGET_MS &&
-            receivedOptions?.timeout === OMP_SYNCHRONOUS_BASH_BUDGET_MS &&
+            scheduledDelay === remainingBudget &&
+            receivedOptions?.timeout === remainingBudget &&
             receivedOptions.signal?.aborted === true &&
             cancelled
           ? { ok: true }
