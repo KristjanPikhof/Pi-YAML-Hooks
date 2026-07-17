@@ -64,7 +64,14 @@ function ansiSequenceLength(text: string, offset: number): number {
 
 function graphemeWidth(grapheme: string): number {
   const codePoint = grapheme.codePointAt(0)
-  if (codePoint === undefined || codePoint < 0x20 || (codePoint >= 0x7f && codePoint < 0xa0)) return 0
+  if (
+    codePoint === undefined ||
+    codePoint < 0x20 ||
+    (codePoint >= 0x7f && codePoint < 0xa0) ||
+    /^\p{Mark}/u.test(grapheme)
+  ) {
+    return 0
+  }
   if (
     /\p{Extended_Pictographic}/u.test(grapheme) ||
     (codePoint >= 0x1f1e6 && codePoint <= 0x1f1ff) ||
@@ -119,8 +126,13 @@ function wrapLine(text: string, width: number): string[] {
         row = ""
         rowWidth = 0
       }
-      row += segment
-      rowWidth += segmentWidth
+      if (segmentWidth > width) {
+        row += "?"
+        rowWidth += 1
+      } else {
+        row += segment
+        rowWidth += segmentWidth
+      }
     }
     plain = ""
   }
@@ -167,9 +179,12 @@ class DiagnosticsRows implements DiagnosticsComponent {
     const rows: string[] = [this.background(" ".repeat(boundedWidth))]
 
     for (const contentRow of this.contentRows) {
-      for (const wrappedRow of wrapLine(contentRow.replace(/\t/g, "   "), contentWidth)) {
-        const line = leftPadding + wrappedRow
-        rows.push(this.background(line + " ".repeat(Math.max(0, boundedWidth - visibleWidth(line)))))
+      const logicalRows = contentRow.replace(/\r\n?/g, "\n").replace(/\t/g, "   ").split("\n")
+      for (const logicalRow of logicalRows) {
+        for (const wrappedRow of wrapLine(logicalRow, contentWidth)) {
+          const line = leftPadding + wrappedRow
+          rows.push(this.background(line + " ".repeat(Math.max(0, boundedWidth - visibleWidth(line)))))
+        }
       }
     }
     rows.push(this.background(" ".repeat(boundedWidth)))

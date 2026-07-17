@@ -260,7 +260,7 @@ const cases: Case[] = [
       }
       const component = renderer(
         {
-          content: "content that must wrap without overflowing",
+          content: "content that must wrap without overflowing\nemoji: 🙂",
           details: {
             title: "diagnostic title",
             level: "warning",
@@ -274,23 +274,24 @@ const cases: Case[] = [
       const wideRows = component.render(40)
       const narrowRows = component.render(12)
       const cachedRows = component.render(12)
-      const singleColumnRows = component.render(1)
       const ansi = /\x1b\[[0-?]*[ -/]*[@-~]/g
-      const bounded = [
-        { width: 40, rows: wideRows },
-        { width: 12, rows: narrowRows },
-        { width: 1, rows: singleColumnRows },
-      ].every(({ width, rows }) => rows.every((row) => row.replace(ansi, "").length <= width))
       const renderedText = wideRows.map((row) => row.replace(ansi, "").trimEnd()).join("\n")
       const hasContent =
         renderedText.includes("[WARNING] diagnostic title") &&
         renderedText.includes("content that must wrap") &&
+        renderedText.includes("emoji: 🙂") &&
         renderedText.includes("details") &&
         renderedText.includes("section line")
       const cached = cachedRows === narrowRows
       component.invalidate()
       const invalidatedRows = component.render(12)
       const invalidated = invalidatedRows !== narrowRows && JSON.stringify(invalidatedRows) === JSON.stringify(narrowRows)
+      const singleColumnRows = component.render(1)
+      const bounded = [
+        { width: 40, rows: wideRows },
+        { width: 12, rows: narrowRows },
+        { width: 1, rows: singleColumnRows },
+      ].every(({ width, rows }) => rows.every((row) => row.replace(ansi, "").length <= width))
       const themed =
         colorCalls.includes("warning:[WARNING]") &&
         colorCalls.includes("dim:details") &&
