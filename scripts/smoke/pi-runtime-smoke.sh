@@ -6,7 +6,7 @@ VALID_FIXTURE="$ROOT_DIR/scripts/smoke/pi-runtime-smoke-hooks.yaml"
 INVALID_FIXTURE="$ROOT_DIR/scripts/smoke/pi-runtime-smoke-invalid-hooks.yaml"
 MODE="manual"
 MANUAL_DIR=""
-PI_TARGET_VERSION="0.80.10"
+PI_TARGET_VERSION="${PI_TARGET_VERSION:-0.84.1}"
 
 case "${1:-}" in
   --automated)

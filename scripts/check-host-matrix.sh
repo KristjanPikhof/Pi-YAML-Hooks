@@ -2,8 +2,9 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-PI_SDK_SPECS=("0.74.0" "0.79.3" "0.80.10")
-OMP_SDK_SPEC="17.0.1"
+PI_SDK_SPECS=("0.74.0" "0.79.3" "0.80.10" "0.84.1")
+OMP_SDK_SPECS=("17.0.1" "17.2.12")
+LATEST_OMP_SDK_SPEC="${OMP_SDK_SPECS[${#OMP_SDK_SPECS[@]} - 1]}"
 DRY_RUN=0
 MATRIX_ROOT=""
 OMP_COPY=""
@@ -15,22 +16,12 @@ EXPECTED_TEST_PASS=24
 EXPECTED_PACK_FILES=140
 PI_MATRIX_COMMAND=(bash scripts/check-sdk-matrix.sh --versions "${PI_SDK_SPECS[*]}")
 NPM_INSTALL_COMMAND=(npm install --no-audit --no-fund)
-OMP_INSTALL_COMMAND=(
-  npm install --no-audit --no-fund --no-save
-  "@oh-my-pi/pi-coding-agent@$OMP_SDK_SPEC"
-  "@oh-my-pi/pi-tui@$OMP_SDK_SPEC"
-)
 TYPECHECK_COMMAND=(npm run typecheck)
 INTERNAL_COMMAND=(npm run test:internal)
 OMP_SMOKE_COMMAND=(bash scripts/smoke/omp-runtime-smoke.sh)
 OMP_SMOKE_TIMEOUT_SECONDS="${OMP_SMOKE_TIMEOUT_SECONDS:-300}"
 OMP_SMOKE_TIMEOUT_GRACE_SECONDS="${OMP_SMOKE_TIMEOUT_GRACE_SECONDS:-5}"
 PACK_COMMAND=(npm pack --json --dry-run --ignore-scripts)
-PACKED_IMPORT_INSTALL_COMMAND=(
-  npm install --no-audit --no-fund --ignore-scripts --no-save
-  "@oh-my-pi/pi-coding-agent@$OMP_SDK_SPEC"
-  "@oh-my-pi/pi-tui@$OMP_SDK_SPEC"
-)
 
 print_dry_command() {
   printf '[dry-run]'
@@ -42,8 +33,8 @@ usage() {
   cat <<'USAGE'
 Usage: scripts/check-host-matrix.sh [--dry-run]
 
-Runs the unchanged Pi SDK compatibility matrix and an isolated OMP 17.0.1
-compile, internal-test, runtime-smoke, and package-content matrix. All installs,
+Runs the Pi SDK compatibility matrix and isolated OMP 17.0.1 and 17.2.12
+compile, internal-test, and runtime-smoke checks, followed by package checks. All installs,
 build output, caches, host state, and temporary copies stay outside the checkout.
 
 Options:
@@ -76,7 +67,7 @@ Pi and OMP host compatibility matrix
 root: $ROOT_DIR
 dry_run: $DRY_RUN
 Pi SDK versions: ${PI_SDK_SPECS[*]}
-OMP SDK version: $OMP_SDK_SPEC
+OMP SDK versions: ${OMP_SDK_SPECS[*]}
 copy exclusions: .git/ .trekoon/ node_modules/ dist/
 PLAN
 
@@ -90,19 +81,25 @@ PLAN
 [dry-run] unset NPM_CONFIG_GLOBAL npm_config_global NPM_CONFIG_PREFIX npm_config_prefix NPM_CONFIG_LOCATION npm_config_location
 [dry-run] export HOME=<isolated>/home USERPROFILE=<isolated>/home TMPDIR=<isolated> npm_config_cache=<isolated>/npm-cache npm_config_userconfig=<isolated>/npmrc npm_config_global=false NPM_CONFIG_GLOBAL=false
 PLAN
-    print_dry_command "${NPM_INSTALL_COMMAND[@]}"
-    print_dry_command "${OMP_INSTALL_COMMAND[@]}"
-    print_dry_command node --input-type=module - '<isolated>/omp-copy' "$OMP_SDK_SPEC"
-    print_dry_command "${TYPECHECK_COMMAND[@]}"
-    print_dry_command "${INTERNAL_COMMAND[@]}"
-    printf '[dry-run] OMP runtime smoke outer timeout: %ss (Node), then SIGTERM + %ss grace + SIGKILL\n' \
-      "$OMP_SMOKE_TIMEOUT_SECONDS" "$OMP_SMOKE_TIMEOUT_GRACE_SECONDS"
-    print_dry_command node --input-type=module - "$OMP_SMOKE_TIMEOUT_SECONDS" "$OMP_SMOKE_TIMEOUT_GRACE_SECONDS" "${OMP_SMOKE_COMMAND[@]}"
+    for spec in "${OMP_SDK_SPECS[@]}"; do
+      print_dry_command "${NPM_INSTALL_COMMAND[@]}"
+      print_dry_command npm install --no-audit --no-fund --no-save \
+        "@oh-my-pi/pi-coding-agent@$spec" "@oh-my-pi/pi-tui@$spec"
+      print_dry_command node --input-type=module - '<isolated>/omp-copy' "$spec"
+      print_dry_command "${TYPECHECK_COMMAND[@]}"
+      print_dry_command "${INTERNAL_COMMAND[@]}"
+      printf '[dry-run] OMP %s runtime smoke outer timeout: %ss (Node), then SIGTERM + %ss grace + SIGKILL\n' \
+        "$spec" "$OMP_SMOKE_TIMEOUT_SECONDS" "$OMP_SMOKE_TIMEOUT_GRACE_SECONDS"
+      print_dry_command env "OMP_EXPECTED_VERSION=$spec" "PATH=<isolated>/omp-copy/node_modules/.bin:<PATH>" \
+        node --input-type=module - "$OMP_SMOKE_TIMEOUT_SECONDS" "$OMP_SMOKE_TIMEOUT_GRACE_SECONDS" "${OMP_SMOKE_COMMAND[@]}"
+    done
     print_dry_command "${PACK_COMMAND[@]}"
     print_dry_command node --input-type=module - '<isolated>/npm-pack.json' '<isolated>/package.json' "$EXPECTED_PACK_FILES"
     print_dry_command npm pack --json --ignore-scripts --pack-destination '<isolated>'
     printf '[dry-run] create <isolated>/omp-packed-consumer/package.json\n'
-    print_dry_command "${PACKED_IMPORT_INSTALL_COMMAND[@]}" '<isolated>/pi-yaml-hooks-<version>.tgz'
+    print_dry_command npm install --no-audit --no-fund --ignore-scripts --no-save \
+      "@oh-my-pi/pi-coding-agent@$LATEST_OMP_SDK_SPEC" "@oh-my-pi/pi-tui@$LATEST_OMP_SDK_SPEC" \
+      '<isolated>/pi-yaml-hooks-<version>.tgz'
     printf '[dry-run] assert <consumer>/node_modules/@earendil-works is absent and import pi-yaml-hooks/extensions/omp-yaml-hooks\n'
     cat <<'PLAN'
 [dry-run] rm -rf <isolated temp root>
@@ -159,7 +156,7 @@ cleanup_and_verify() {
     status=1
   fi
   if [[ "$status" -eq 0 ]]; then
-    printf '[PASS] host matrix complete: Pi=%s OMP=%s\n' "${PI_SDK_SPECS[*]}" "$OMP_SDK_SPEC"
+    printf '[PASS] host matrix complete: Pi=%s OMP=%s\n' "${PI_SDK_SPECS[*]}" "${OMP_SDK_SPECS[*]}"
   fi
   exit "$status"
 }
@@ -291,11 +288,14 @@ NODE
 }
 
 install_omp_sdk() {
+  local spec="$1"
   (
     cd "$OMP_COPY"
     "${NPM_INSTALL_COMMAND[@]}"
-    "${OMP_INSTALL_COMMAND[@]}"
-    node --input-type=module - "$OMP_COPY" "$OMP_SDK_SPEC" <<'NODE'
+    npm install --no-audit --no-fund --no-save \
+      "@oh-my-pi/pi-coding-agent@$spec" \
+      "@oh-my-pi/pi-tui@$spec"
+    node --input-type=module - "$OMP_COPY" "$spec" <<'NODE'
 import { readFileSync } from "node:fs";
 import path from "node:path";
 const [root, expected] = process.argv.slice(2);
@@ -316,7 +316,8 @@ run_omp_typecheck() {
 }
 
 run_omp_internal() {
-  local log_file="$MATRIX_ROOT/omp-internal.log"
+  local spec="$1"
+  local log_file="$MATRIX_ROOT/omp-internal-$spec.log"
   local pipeline_status
 
   (cd "$OMP_COPY" && "${INTERNAL_COMMAND[@]}") 2>&1 | tee "$log_file"
@@ -325,11 +326,12 @@ run_omp_internal() {
     return "$pipeline_status"
   fi
 
-  node --input-type=module - "$log_file" "$EXPECTED_TEST_FILES" "$EXPECTED_TEST_PASS" <<'NODE'
+  node --input-type=module - "$log_file" "$EXPECTED_TEST_FILES" "$EXPECTED_TEST_PASS" "$spec" <<'NODE'
 import { readFileSync } from "node:fs";
 const text = readFileSync(process.argv[2], "utf8");
 const expectedFiles = Number(process.argv[3]);
 const expectedPass = Number(process.argv[4]);
+const version = process.argv[5];
 const discovered = [...text.matchAll(/\[run-tests\] discovered (\d+) test file\(s\)/g)];
 if (discovered.length !== 1) throw new Error("expected one OMP internal test-file count");
 const pass = [...text.matchAll(/^(?:#|ℹ) pass (\d+)$/gm)].reduce((sum, match) => sum + Number(match[1]), 0);
@@ -337,7 +339,7 @@ const fail = [...text.matchAll(/^(?:#|ℹ) fail (\d+)$/gm)].reduce((sum, match) 
 if (Number(discovered[0][1]) !== expectedFiles || pass !== expectedPass || fail !== 0) {
   throw new Error(`unexpected OMP totals: test_files=${discovered[0][1]} pass=${pass} fail=${fail}; expected=${expectedFiles}/${expectedPass}/0`);
 }
-console.log(`OMP internal summary: version=17.0.1 test_files=${discovered[0][1]} pass=${pass} fail=${fail}`);
+console.log(`OMP internal summary: version=${version} test_files=${discovered[0][1]} pass=${pass} fail=${fail}`);
 NODE
 }
 
@@ -401,12 +403,13 @@ NODE
 }
 
 run_omp_runtime_smoke() {
-  local log_file="$MATRIX_ROOT/omp-runtime-smoke.log"
+  local spec="$1"
+  local log_file="$MATRIX_ROOT/omp-runtime-smoke-$spec.log"
   local pipeline_status
 
   printf 'OMP runtime smoke outer timeout: %ss (Node), SIGTERM grace: %ss\n' \
     "$OMP_SMOKE_TIMEOUT_SECONDS" "$OMP_SMOKE_TIMEOUT_GRACE_SECONDS"
-  (cd "$OMP_COPY" && run_with_node_timeout \
+  (cd "$OMP_COPY" && OMP_EXPECTED_VERSION="$spec" PATH="$OMP_COPY/node_modules/.bin:$PATH" run_with_node_timeout \
     "$OMP_SMOKE_TIMEOUT_SECONDS" "$OMP_SMOKE_TIMEOUT_GRACE_SECONDS" \
     "${OMP_SMOKE_COMMAND[@]}") 2>&1 | tee "$log_file"
   pipeline_status=${PIPESTATUS[0]}
@@ -414,14 +417,15 @@ run_omp_runtime_smoke() {
     return "$pipeline_status"
   fi
 
-  node --input-type=module - "$log_file" <<'NODE'
+  node --input-type=module - "$log_file" "$spec" <<'NODE'
 import { readFileSync } from "node:fs";
 const text = readFileSync(process.argv[2], "utf8");
+const version = process.argv[3];
 const passes = [...text.matchAll(/^A(23|24|25|26) PASS:/gm)].map((match) => match[1]);
 if (passes.join(",") !== "23,24,25,26") {
   throw new Error(`expected OMP runtime A23-A26 PASS evidence, got ${passes.join(",")}`);
 }
-console.log(`OMP runtime summary: version=17.0.1 PASS_count=${passes.length} assertions=A23,A24,A25,A26`);
+console.log(`OMP runtime summary: version=${version} PASS_count=${passes.length} assertions=A23,A24,A25,A26`);
 NODE
 }
 
@@ -498,7 +502,10 @@ NODE
 
   (
     cd "$consumer"
-    "${PACKED_IMPORT_INSTALL_COMMAND[@]}" "$tarball"
+    npm install --no-audit --no-fund --ignore-scripts --no-save \
+      "@oh-my-pi/pi-coding-agent@$LATEST_OMP_SDK_SPEC" \
+      "@oh-my-pi/pi-tui@$LATEST_OMP_SDK_SPEC" \
+      "$tarball"
     node --input-type=module - <<'NODE'
 import { existsSync } from "node:fs";
 
@@ -521,9 +528,11 @@ PACKAGE_LOCK_BEFORE="$(checksum_file "$ROOT_DIR/package-lock.json")"
 run_setup_stage "host isolation setup" prepare_isolation
 run_stage "Pi SDK compile/internal matrix (${PI_SDK_SPECS[*]})" run_pi_matrix
 run_stage "OMP isolated copy (excludes .git/.trekoon/node_modules/dist)" copy_repo "$OMP_COPY"
-run_stage "OMP SDK substitution ($OMP_SDK_SPEC)" install_omp_sdk
-run_stage "OMP SDK typecheck ($OMP_SDK_SPEC)" run_omp_typecheck
-run_stage "OMP internal suite ($OMP_SDK_SPEC)" run_omp_internal
-run_stage "OMP runtime smoke ($OMP_SDK_SPEC)" run_omp_runtime_smoke
+for spec in "${OMP_SDK_SPECS[@]}"; do
+  run_stage "OMP SDK substitution ($spec)" install_omp_sdk "$spec"
+  run_stage "OMP SDK typecheck ($spec)" run_omp_typecheck
+  run_stage "OMP internal suite ($spec)" run_omp_internal "$spec"
+  run_stage "OMP runtime smoke ($spec)" run_omp_runtime_smoke "$spec"
+done
 run_stage "npm package-content verification" verify_package_contents
 run_stage "packed OMP subpath import without Earendil peers" verify_packed_omp_import

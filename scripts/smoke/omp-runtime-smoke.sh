@@ -27,6 +27,7 @@ TMUX_SOCKET="$SMOKE_ROOT/tmux.sock"
 SERVER_PID=""
 CLEANED=0
 TMUX_ACTIVE=0
+OMP_EXPECTED_VERSION="${OMP_EXPECTED_VERSION:-17.2.12}"
 
 fail() {
   printf 'FAIL: %s\n' "$*" >&2
@@ -117,7 +118,7 @@ import { readFileSync } from "node:fs";
 process.stdout.write(JSON.parse(readFileSync(process.argv[2], "utf8")).version);
 NODE
 )"
-[[ "$OMP_VERSION" == "omp/17.0.1" ]] || fail "expected omp/17.0.1, got $OMP_VERSION"
+[[ "$OMP_VERSION" == "omp/$OMP_EXPECTED_VERSION" ]] || fail "expected omp/$OMP_EXPECTED_VERSION, got $OMP_VERSION"
 CHECKOUT_SNAPSHOT_BEFORE="$(snapshot_checkout_build_surfaces "$ROOT_DIR")"
 
 mkdir -p "$HOME_DIR" "$PROJECT_DIR/.omp/hook" "$PACK_DIR" "$AGENT_DIR/hook"
