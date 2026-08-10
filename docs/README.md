@@ -19,6 +19,7 @@ Hook bash, follow-up prompts, and host UI actions onto tool calls and session ev
 - Show UI notifications and status entries when the active host exposes the required UI capability
 - Send follow-up prompts back into the current host session with `tool:` actions
 - React to session lifecycle events: `session.created`, `session.idle`, and `session.deleted`
+- Add system context to the current turn with `user.prompt.submit`
 - React to `file.changed`, which PI synthesizes after recognized file mutations, including `cp`/`git cp`, `mv`/`git mv`, `rm`/`git rm`, `touch`, and `mkdir`
 - Filter hooks by file extension or glob patterns, including post-tool mutation hooks with changed paths
 - Restrict hooks to `all`, `main`, or `child` sessions
