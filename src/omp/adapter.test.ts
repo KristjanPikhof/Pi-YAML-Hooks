@@ -193,11 +193,14 @@ class FakeOmpHarness {
     await this.emit("agent_end", { type: "agent_end", messages: [] })
   }
 
-  async beforeAgentStart(): Promise<unknown> {
+  async beforeAgentStart(
+    prompt = "inspect OMP hooks",
+    systemPrompt: string[] = ["base system prompt"],
+  ): Promise<unknown> {
     return await this.emit("before_agent_start", {
       type: "before_agent_start",
-      prompt: "inspect OMP hooks",
-      systemPrompt: ["base system prompt"],
+      prompt,
+      systemPrompt,
     })
   }
 
@@ -409,6 +412,34 @@ const cases: Case[] = [
         return ok
           ? { ok: true }
           : { ok: false, detail: JSON.stringify({ notifications: harness.notifications, messages, prompt, suggestions }) }
+      }),
+  },
+  {
+    name: "OMP appends prompt context without mutating host system prompts",
+    run: async () =>
+      await withSandbox(async ({ projectDir, namedAgentDir }) => {
+        const projectPath = writeOmpProjectHooks(
+          projectDir,
+          `hooks:
+  - event: user.prompt.submit
+    actions:
+      - bash: printf 'OMP prompt context'
+`,
+        )
+        writeTrust(namedAgentDir, projectDir)
+        const harness = new FakeOmpHarness(projectDir, namedAgentDir)
+        harness.register()
+        const hostPrompt = ["base system prompt", "project instructions"]
+        const original = [...hostPrompt]
+        const result = await harness.beforeAgentStart("expanded OMP prompt", hostPrompt)
+        const systemPrompt = (result as { systemPrompt?: string[] } | undefined)?.systemPrompt
+        return Array.isArray(systemPrompt) &&
+          systemPrompt !== hostPrompt &&
+          JSON.stringify(hostPrompt) === JSON.stringify(original) &&
+          systemPrompt.includes("Context from pi-yaml-hooks user.prompt.submit:\nOMP prompt context") &&
+          systemPrompt.join("\n").includes(projectPath)
+          ? { ok: true }
+          : { ok: false, detail: JSON.stringify({ hostPrompt, systemPrompt }) }
       }),
   },
   {

@@ -278,6 +278,7 @@ export async function dispatchHooks(
   return currentResult
 
   async function executeDispatchRequest(request: DispatchRequest): Promise<HookExecutionResult> {
+    const additionalContext: string[] = []
     for (const hook of hooksForEvent) {
       const result = await executeHook(
         hook,
@@ -293,12 +294,13 @@ export async function dispatchHooks(
         warnedAsyncStopSources,
         globMatcher,
       )
+      additionalContext.push(...(result.additionalContext ?? []))
       if (result.blocked) {
-        return result
+        return { ...result, ...(additionalContext.length > 0 ? { additionalContext } : {}) }
       }
     }
 
-    return { blocked: false }
+    return { blocked: false, ...(additionalContext.length > 0 ? { additionalContext } : {}) }
   }
 
   async function drainPendingRequests(): Promise<void> {
@@ -479,6 +481,7 @@ async function executeHook(
     return { blocked: false }
   }
 
+  const additionalContext: string[] = []
   for (const action of hook.actions) {
     const result = await executeAction(
       action,
@@ -494,6 +497,7 @@ async function executeHook(
       hookId,
       actionRecursionGuards,
     )
+    additionalContext.push(...(result.additionalContext ?? []))
     if (result.blocked && options.canBlock) {
       logger.warn("hook_block", "Hook action blocked event execution.", {
         cwd: projectDir,
@@ -506,11 +510,12 @@ async function executeHook(
       return {
         ...result,
         ...(hook.action === "stop" ? { stopSession: true } : {}),
+        ...(additionalContext.length > 0 ? { additionalContext } : {}),
       }
     }
   }
 
-  return { blocked: false }
+  return { blocked: false, ...(additionalContext.length > 0 ? { additionalContext } : {}) }
 }
 
 async function shouldRunHook(

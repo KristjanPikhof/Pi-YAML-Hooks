@@ -3,7 +3,7 @@ import {
   createHooksRuntime,
   OMP_SYNCHRONOUS_BASH_BUDGET_MS,
 } from "./runtime.js"
-import type { HookAction, HookConfig, HookEvent, HookMap, HostAdapter } from "./types.js"
+import type { HookAction, HookConfig, HookEvent, HookMap, HookScope, HostAdapter } from "./types.js"
 
 interface Case {
   readonly name: string
@@ -15,11 +15,12 @@ function addHook(
   event: HookEvent,
   actions: HookAction[],
   asynchronous = false,
+  scope: HookScope = "all",
 ): void {
   const hook: HookConfig = {
     event,
     actions,
-    scope: "all",
+    scope,
     runIn: "current",
     ...(asynchronous ? { async: true as const } : {}),
     source: { filePath: "/virtual/runtime-budget-hooks.yaml", index: hooks.size },
@@ -234,6 +235,115 @@ const cases: Case[] = [
       return blocked && !confirmCalled
         ? { ok: true }
         : { ok: false, detail: `blocked=${String(blocked)}, confirmCalled=${String(confirmCalled)}` }
+    },
+  },
+  {
+    name: "prompt hooks pass stdin and collect successful output in order",
+    run: async () => {
+      const hooks: HookMap = new Map()
+      addHook(hooks, "user.prompt.submit", [
+        { bash: "first" },
+        { bash: "empty" },
+        { bash: "failed" },
+        { bash: "blocked" },
+      ])
+      addHook(hooks, "user.prompt.submit", [
+        { bash: "timed-out" },
+        { bash: "spawn-failed" },
+        { bash: "truncated" },
+        { bash: "stdin-truncated" },
+        { bash: "last" },
+      ])
+      const requests: BashExecutionRequest[] = []
+      const runtime = createHooksRuntime(createFakeHost(), {
+        directory: "/repo",
+        hooks,
+        executeBash: async (request) => {
+          requests.push(request)
+          const variants: Record<string, Partial<BashHookResult>> = {
+            first: { stdout: "  first context  \n" },
+            empty: { stdout: " \n" },
+            failed: { status: "failed", exitCode: 1, stderr: "failed" },
+            blocked: { status: "blocked", exitCode: 2, blocking: true, stderr: "blocked" },
+            "timed-out": { status: "timed_out", exitCode: 124, timedOut: true, stderr: "timeout" },
+            "spawn-failed": { status: "failed", exitCode: 1, stderr: "spawn failure" },
+            truncated: { stdout: "partial", outputTruncated: true },
+            "stdin-truncated": { stdout: "context from incomplete stdin", stdinTruncated: true },
+            last: { stdout: "last context" },
+          }
+          return { ...successfulResult(request.command), ...variants[request.command] }
+        },
+      })
+
+      const result = await runtime["user.prompt.submit"]({ sessionID: "s1", prompt: "expanded prompt" })
+      const contexts = requests.map((request) => request.context)
+      const stdinMatches = contexts.every(
+        (context) => context.event === "user.prompt.submit" &&
+          context.session_id === "s1" &&
+          context.cwd === "/repo" &&
+          context.prompt === "expanded prompt",
+      )
+      return stdinMatches && JSON.stringify(result.additionalContext) === JSON.stringify(["first context", "last context"])
+        ? { ok: true }
+        : { ok: false, detail: JSON.stringify({ contexts, result }) }
+    },
+  },
+  {
+    name: "prompt hooks enforce the aggregate UTF-8 context limit without partial output",
+    run: async () => {
+      const hooks: HookMap = new Map()
+      addHook(hooks, "user.prompt.submit", [
+        { bash: "near-limit" },
+        { bash: "does-not-fit" },
+        { bash: "fills-limit" },
+      ])
+      const outputs: Record<string, string> = {
+        "near-limit": "é".repeat(32_765),
+        "does-not-fit": "1234567",
+        "fills-limit": "123456",
+      }
+      const runtime = createHooksRuntime(createFakeHost(), {
+        directory: "/repo",
+        hooks,
+        executeBash: async (request) => ({
+          ...successfulResult(request.command),
+          stdout: outputs[request.command] ?? "",
+        }),
+      })
+
+      const result = await runtime["user.prompt.submit"]({ sessionID: "s1", prompt: "prompt" })
+      const bytes = result.additionalContext.reduce((total, text) => total + Buffer.byteLength(text, "utf8"), 0)
+      return result.additionalContext.length === 2 &&
+        result.additionalContext[0] === outputs["near-limit"] &&
+        result.additionalContext[1] === outputs["fills-limit"] &&
+        bytes === 65_536
+        ? { ok: true }
+        : { ok: false, detail: JSON.stringify({ count: result.additionalContext.length, bytes }) }
+    },
+  },
+  {
+    name: "prompt hooks honor all main and child scope",
+    run: async () => {
+      const hooks: HookMap = new Map()
+      addHook(hooks, "user.prompt.submit", [{ bash: "all" }])
+      addHook(hooks, "user.prompt.submit", [{ bash: "main" }], false, "main")
+      addHook(hooks, "user.prompt.submit", [{ bash: "child" }], false, "child")
+      const host: HostAdapter = {
+        ...createFakeHost(),
+        getRootSessionId: (sessionID) => sessionID === "child-session" ? "main-session" : sessionID,
+      }
+      const runtime = createHooksRuntime(host, {
+        directory: "/repo",
+        hooks,
+        executeBash: async (request) => ({ ...successfulResult(request.command), stdout: request.command }),
+      })
+
+      const main = await runtime["user.prompt.submit"]({ sessionID: "main-session", prompt: "main" })
+      const child = await runtime["user.prompt.submit"]({ sessionID: "child-session", prompt: "child" })
+      return JSON.stringify(main.additionalContext) === JSON.stringify(["all", "main"]) &&
+        JSON.stringify(child.additionalContext) === JSON.stringify(["all", "child"])
+        ? { ok: true }
+        : { ok: false, detail: JSON.stringify({ main, child }) }
     },
   },
   {

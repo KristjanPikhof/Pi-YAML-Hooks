@@ -19,6 +19,7 @@ import { registerHookAutocomplete } from "./pi/autocomplete.js";
 import { registerCommands } from "./pi/commands.js";
 import { registerHookDiagnostics } from "./pi/diagnostics.js";
 import { registerPromptSupport } from "./pi/prompt-support.js";
+import { createRuntimeRegistry } from "./pi/runtime-registry.js";
 
 export type HookExtensionHostProfile =
   | { readonly kind: "pi"; readonly agentDir?: string }
@@ -29,12 +30,13 @@ export function registerHooksExtension(
   profile: HookExtensionHostProfile = { kind: "pi" },
 ): void {
   const configuredProfile = configureHookHostProfile(profile);
+  const runtimeRegistry = createRuntimeRegistry(pi);
   registerHookDiagnostics(pi);
-  registerPromptSupport(pi);
+  registerPromptSupport(pi, runtimeRegistry);
   registerCommands(pi);
   pi.on("session_start", (_event, ctx) => registerHookAutocomplete(ctx));
   pi.on("before_agent_start", (_event, ctx) => registerHookAutocomplete(ctx));
-  registerAdapter(pi, configuredProfile.kind);
+  registerAdapter(pi, configuredProfile.kind, runtimeRegistry);
 }
 
 export default function piHooksExtension(pi: ExtensionAPI): void {
@@ -70,6 +72,7 @@ export type {
   ToolHookEvent,
   ToolHookPhase,
   SessionHookEvent,
+  PromptHookEvent,
   HookScope,
   HookRunIn,
   HookBehavior,

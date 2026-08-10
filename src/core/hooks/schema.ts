@@ -75,7 +75,18 @@ export function parseHookDefinition(
 
   const conditionsResult = parseConditions(filePath, hookDefinition.conditions, event, index)
   const actionsResult = parseActions(filePath, hookDefinition.actions, index)
-  const errors = [...idResult.errors, ...overrideResult.errors, ...scopeResult.errors, ...runInResult.errors, ...actionResult.errors, ...asyncResult.errors, ...conditionsResult.errors, ...actionsResult.errors]
+  const promptActionsResult = validatePromptActions(filePath, event, actionsResult.actions, index)
+  const errors = [
+    ...idResult.errors,
+    ...overrideResult.errors,
+    ...scopeResult.errors,
+    ...runInResult.errors,
+    ...actionResult.errors,
+    ...asyncResult.errors,
+    ...conditionsResult.errors,
+    ...actionsResult.errors,
+    ...promptActionsResult.errors,
+  ]
 
   if (errors.length > 0 || actionsResult.actions.length === 0) {
     return { errors }
@@ -180,6 +191,12 @@ export function parseAsync(
     }
   }
 
+  if (event === "user.prompt.submit") {
+    return {
+      errors: [createError(filePath, "invalid_async", `hooks[${index}].async cannot be true for user.prompt.submit because context must be ready before the agent turn starts.`, `hooks[${index}].async`)],
+    }
+  }
+
   // P2 #21 fix: `action: stop` only takes effect on `tool.before.*` (those
   // events are already rejected above as async). For any other event the
   // combination is meaningless: the action runs after the tool has already
@@ -223,6 +240,28 @@ export function parseAsync(
   }
 
   return { async: normalized.config, errors: [] }
+}
+
+function validatePromptActions(
+  filePath: string,
+  event: HookConfig["event"],
+  actions: readonly HookAction[],
+  index: number,
+): { errors: HookValidationError[] } {
+  if (event !== "user.prompt.submit" || actions.every((action) => "bash" in action)) {
+    return { errors: [] }
+  }
+
+  return {
+    errors: [
+      createError(
+        filePath,
+        "invalid_action",
+        `hooks[${index}].actions must contain only bash actions for user.prompt.submit.`,
+        `hooks[${index}].actions`,
+      ),
+    ],
+  }
 }
 
 function normalizeAsyncConfig(

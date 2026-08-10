@@ -862,6 +862,8 @@ EOF
   assert_contains "$mock_requests" "pi-yaml-hooks loaded"
   assert_contains "$mock_requests" "$global_config"
   assert_contains "$mock_requests" "$project_config"
+  assert_contains "$mock_requests" "Context from pi-yaml-hooks user.prompt.submit:"
+  assert_contains "$mock_requests" "Pi runtime smoke prompt context"
 
   assert_file "$events_file"
   local event_sequence

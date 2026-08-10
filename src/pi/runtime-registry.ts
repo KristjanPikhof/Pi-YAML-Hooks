@@ -19,7 +19,11 @@ import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-a
 
 import { getHookHostProfile, type HookHostKind } from "../core/host-profile.js";
 import { getPiHooksLogger } from "../core/logger.js";
-import { formatHookLoadSummary, loadDiscoveredHooksSnapshot } from "../core/load-hooks.js";
+import {
+  formatHookLoadSummary,
+  loadDiscoveredHooksSnapshot,
+  type HookLoadSnapshot,
+} from "../core/load-hooks.js";
 import {
   createHooksRuntime,
   OMP_SYNCHRONOUS_BASH_BUDGET_MS,
@@ -36,6 +40,7 @@ export function resolveSynchronousBashBudgetMs(hostKind: HookHostKind): number |
 
 export interface RuntimeRegistry {
   getRuntimeFor(cwd: string): HooksRuntime;
+  getHookLoadFor(cwd: string): HookLoadSnapshot;
   rememberContext(cwd: string, ctx: ExtensionContext): void;
   getLatestContext(cwd: string): ExtensionContext | undefined;
 }
@@ -53,6 +58,9 @@ export function createRuntimeRegistry(pi: ExtensionAPI): RuntimeRegistry {
   // tooling) do not retain runtimes for cwds we will never see again. Maps
   // preserve insertion order, so we promote on access by re-setting the key.
   const runtimes = new Map<string, HooksRuntime>();
+  // Prompt awareness prepares the same snapshot used to construct a new
+  // runtime, avoiding an independent configuration load in that handler.
+  const preparedLoads = new Map<string, HookLoadSnapshot>();
   // P2-23: track cwds whose runtime construction is currently in-flight so
   // a re-entrant call (e.g. an early hook firing during construction) can
   // see and reuse the partially-built runtime instead of triggering a
@@ -79,6 +87,17 @@ export function createRuntimeRegistry(pi: ExtensionAPI): RuntimeRegistry {
     // map keeps both maps in sync as the oldest entries are dropped.
     evictLruEntries(latestContexts, MAX_CWD_ENTRIES, runtimes);
     evictLruEntries(runtimes, MAX_CWD_ENTRIES, latestContexts);
+    evictLruEntries(preparedLoads, MAX_CWD_ENTRIES);
+  }
+
+  function getHookLoadFor(cwd: string): HookLoadSnapshot {
+    const loaded = loadDiscoveredHooksSnapshot({ projectDir: cwd });
+    if (!runtimes.has(cwd)) {
+      if (preparedLoads.has(cwd)) preparedLoads.delete(cwd);
+      preparedLoads.set(cwd, loaded);
+      evictIfNeeded();
+    }
+    return loaded;
   }
 
   function rememberContext(cwd: string, ctx: ExtensionContext): void {
@@ -116,7 +135,8 @@ export function createRuntimeRegistry(pi: ExtensionAPI): RuntimeRegistry {
       const getLiveSessionManager = (): ReadonlySessionManager | undefined =>
         latestContexts.get(cwd)?.sessionManager;
       const host = createHostAdapter(pi, cwd, getLiveSessionManager, () => latestContexts.get(cwd));
-      const loaded = loadDiscoveredHooksSnapshot({ projectDir: cwd });
+      const loaded = preparedLoads.get(cwd) ?? loadDiscoveredHooksSnapshot({ projectDir: cwd });
+      preparedLoads.delete(cwd);
       if (loaded.advisories.length > 0) {
         sendHookDiagnostics(pi, {
           title: "Hook loader advisories",
@@ -195,6 +215,7 @@ export function createRuntimeRegistry(pi: ExtensionAPI): RuntimeRegistry {
 
   return {
     getRuntimeFor,
+    getHookLoadFor,
     rememberContext,
     getLatestContext: (cwd: string): ExtensionContext | undefined => latestContexts.get(cwd),
   };

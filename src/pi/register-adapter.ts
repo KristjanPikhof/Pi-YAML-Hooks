@@ -39,6 +39,7 @@ import { debugLog, isStaleSessionBoundError, safeGetSessionId } from "./host-ada
 import {
   createRuntimeRegistry,
   evictLruEntries,
+  type RuntimeRegistry,
   touchLruEntry,
 } from "./runtime-registry.js";
 import { installSessionLifecycleHandlers } from "./session-lifecycle.js";
@@ -62,7 +63,11 @@ import { registerUserBashInterception } from "./user-bash.js";
  *                    forward verbatim on the envelope so hook authors can
  *                    tell graceful shutdowns from session-replacement)
  */
-export function registerAdapter(pi: ExtensionAPI, hostKind: HookHostKind = "pi"): void {
+export function registerAdapter(
+  pi: ExtensionAPI,
+  hostKind: HookHostKind = "pi",
+  runtimeRegistry?: RuntimeRegistry,
+): void {
   const logger = getPiHooksLogger();
 
   if (process.platform === "win32") {
@@ -96,7 +101,7 @@ export function registerAdapter(pi: ExtensionAPI, hostKind: HookHostKind = "pi")
     details: { platform: process.platform, nodeVersion: process.version },
   });
 
-  const { getRuntimeFor, rememberContext } = createRuntimeRegistry(pi);
+  const { getRuntimeFor, rememberContext } = runtimeRegistry ?? createRuntimeRegistry(pi);
 
   const callIdsToSessionIds = new Map<string, { sessionId: string; expiresAt: number }>();
 

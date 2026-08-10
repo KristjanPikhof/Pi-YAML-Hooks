@@ -65,6 +65,7 @@ interface SynchronousBashBudget {
 }
 
 export interface RuntimeActionContext {
+  readonly prompt?: string
   readonly files?: readonly string[]
   readonly changes?: readonly FileChange[]
   readonly toolName?: string
@@ -84,6 +85,7 @@ export interface HookExecutionResult {
   readonly blocked: boolean
   readonly blockReason?: string
   readonly stopSession?: boolean
+  readonly additionalContext?: readonly string[]
 }
 
 export interface HookMatchDecision {
@@ -94,10 +96,12 @@ export interface HookMatchDecision {
 }
 
 export const OMP_SYNCHRONOUS_BASH_BUDGET_MS = 20_000
+export const MAX_PROMPT_CONTEXT_BYTES = 64 * 1024
 
 type ExecuteBashHook = (request: BashExecutionRequest) => Promise<BashHookResult>
 
 export interface HooksRuntime {
+  readonly "user.prompt.submit": (input: UserPromptSubmitInput) => Promise<UserPromptSubmitOutput>
   readonly "tool.execute.before": (
     input: ToolExecuteBeforeInput,
     output: ToolExecuteBeforeOutput,
@@ -108,6 +112,15 @@ export interface HooksRuntime {
   ) => Promise<void>
   readonly "user.bash.before": (input: ToolExecuteBeforeInput, output: ToolExecuteBeforeOutput) => Promise<void>
   readonly event: (envelope: RuntimeEventEnvelope) => Promise<void>
+}
+
+export interface UserPromptSubmitInput {
+  readonly sessionID: string
+  readonly prompt: string
+}
+
+export interface UserPromptSubmitOutput {
+  readonly additionalContext: readonly string[]
 }
 
 export interface CreateHooksRuntimeOptions {
@@ -309,6 +322,43 @@ export function createHooksRuntime(host: HostAdapter, options: CreateHooksRuntim
   }
 
   return {
+    "user.prompt.submit": async (input: UserPromptSubmitInput): Promise<UserPromptSubmitOutput> => {
+      const synchronousBashBudget = createSynchronousBashBudget()
+      const activeHooks = refreshHooks()
+      const promptBytes = Buffer.byteLength(input.prompt, "utf8")
+      logger.debug("dispatch_start", "Dispatching prompt submission hooks.", {
+        cwd: projectDir,
+        event: "user.prompt.submit",
+        sessionId: input.sessionID,
+        details: { promptBytes },
+      })
+
+      const result = await invokeDispatchHooks(
+        activeHooks,
+        "user.prompt.submit",
+        input.sessionID,
+        { prompt: input.prompt, synchronousBashBudget },
+        { canBlock: false },
+      )
+      const additionalContext = enforcePromptContextBudget(
+        result.additionalContext ?? [],
+        projectDir,
+        input.sessionID,
+      )
+
+      logger.debug("dispatch_end", "Finished prompt submission hooks.", {
+        cwd: projectDir,
+        event: "user.prompt.submit",
+        sessionId: input.sessionID,
+        details: {
+          promptBytes,
+          contributionCount: additionalContext.length,
+          contextBytes: additionalContext.reduce((total, text) => total + Buffer.byteLength(text, "utf8"), 0),
+        },
+      })
+      return { additionalContext }
+    },
+
     "tool.execute.before": async (
       eventInput: ToolExecuteBeforeInput,
       eventOutput: ToolExecuteBeforeOutput,
@@ -565,7 +615,36 @@ export function createHooksRuntime(host: HostAdapter, options: CreateHooksRuntim
   }
 }
 
+function enforcePromptContextBudget(
+  contributions: readonly string[],
+  projectDir: string,
+  sessionID: string,
+): readonly string[] {
+  const accepted: string[] = []
+  let usedBytes = 0
 
+  for (const contribution of contributions) {
+    const contributionBytes = Buffer.byteLength(contribution, "utf8")
+    if (usedBytes + contributionBytes > MAX_PROMPT_CONTEXT_BYTES) {
+      getPiHooksLogger().warn("prompt_context_skip", "Skipped prompt hook context that exceeded the per-turn limit.", {
+        cwd: projectDir,
+        event: "user.prompt.submit",
+        sessionId: sessionID,
+        details: {
+          contributionBytes,
+          usedBytes,
+          maxBytes: MAX_PROMPT_CONTEXT_BYTES,
+        },
+      })
+      continue
+    }
+
+    accepted.push(contribution)
+    usedBytes += contributionBytes
+  }
+
+  return accepted
+}
 
 function retainHooksFromAuthorizedFiles(hooks: HookMap, authorizedFiles: ReadonlySet<string>): HookMap {
   let retainedHooks: HookMap | undefined
@@ -652,5 +731,3 @@ function resolveToolArgs(
 
   return pendingArgs ?? eventArgs ?? {}
 }
-
-

@@ -459,6 +459,100 @@ const cases: Case[] = [
     },
   },
   {
+    name: "user.prompt.submit accepts synchronous bash scope and overrides",
+    run: () => {
+      const result = parseHooksFile(
+        "/virtual/hooks.yaml",
+        `hooks:
+  - id: prompt-base
+    event: user.prompt.submit
+    scope: main
+    actions:
+      - bash: printf base
+  - id: prompt-replacement
+    override: prompt-base
+    event: user.prompt.submit
+    scope: child
+    actions:
+      - bash: printf replacement
+`,
+      )
+      const hooks = result.hooks.get("user.prompt.submit") ?? []
+      const replacement = result.overrides[0]?.replacement
+      return result.errors.length === 0 &&
+        hooks.length === 1 &&
+        hooks[0]?.id === "prompt-base" &&
+        result.overrides[0]?.targetId === "prompt-base" &&
+        replacement?.id === "prompt-replacement" &&
+        replacement.scope === "child"
+        ? { ok: true }
+        : { ok: false, detail: JSON.stringify({ errors: result.errors, hooks, overrides: result.overrides }) }
+    },
+  },
+  {
+    name: "user.prompt.submit rejects asynchronous execution",
+    run: () => {
+      const result = parseHooksFile(
+        "/virtual/hooks.yaml",
+        `hooks:
+  - event: user.prompt.submit
+    async: true
+    actions:
+      - bash: printf context
+`,
+      )
+      return result.errors.some(
+        (error) => error.code === "invalid_async" && error.path === "hooks[0].async",
+      ) && (result.hooks.get("user.prompt.submit") ?? []).length === 0
+        ? { ok: true }
+        : { ok: false, detail: JSON.stringify(result.errors) }
+    },
+  },
+  {
+    name: "user.prompt.submit rejects every non-bash action",
+    run: () => {
+      const actions = [
+        "      - tool:\n          name: follow-up",
+        "      - notify: done",
+        "      - confirm:\n          message: continue?",
+        "      - setStatus: running",
+        "      - command: unsupported",
+      ]
+      const failures = actions.flatMap((action, index) => {
+        const result = parseHooksFile(
+          `/virtual/hooks-${index}.yaml`,
+          `hooks:\n  - event: user.prompt.submit\n    actions:\n${action}\n`,
+        )
+        const rejected = result.errors.some(
+          (error) => error.code === "invalid_action" && error.path === "hooks[0].actions",
+        ) && (result.hooks.get("user.prompt.submit") ?? []).length === 0
+        return rejected ? [] : [{ action, errors: result.errors }]
+      })
+      return failures.length === 0
+        ? { ok: true }
+        : { ok: false, detail: JSON.stringify(failures) }
+    },
+  },
+  {
+    name: "user.prompt.submit rejects action stop",
+    run: () => {
+      const result = parseHooksFile(
+        "/virtual/hooks.yaml",
+        `hooks:
+  - event: user.prompt.submit
+    action: stop
+    actions:
+      - bash: printf context
+`,
+      )
+      return result.errors.some(
+        (error) => error.code === "invalid_hook_action" && error.path === "hooks[0].action",
+      ) && (result.hooks.get("user.prompt.submit") ?? []).length === 0
+        ? { ok: true }
+        : { ok: false, detail: JSON.stringify(result.errors) }
+    },
+  },
+  {
     name: "path conditions stay rejected on tool.before events",
     run: () => {
       const result = parseHooksFile(

@@ -3,11 +3,14 @@ import os from "node:os"
 import path from "node:path"
 
 import { resetPiHooksLoggerForTests } from "../core/logger.js"
+import { loadDiscoveredHooksSnapshot } from "../core/load-hooks.js"
 import {
   __resetHookHostProfileForTests,
   configureHookHostProfile,
 } from "../core/host-profile.js"
 import { registerPromptSupport } from "./prompt-support.js"
+import type { HooksRuntime, UserPromptSubmitInput, UserPromptSubmitOutput } from "../core/runtime.js"
+import type { RuntimeRegistry } from "./runtime-registry.js"
 
 interface Case {
   readonly name: string
@@ -30,6 +33,18 @@ function createFakePi(): FakePi {
       list.push(handler)
       handlers.set(event, list)
     },
+  }
+}
+
+function createPromptRuntimeRegistry(
+  dispatch: (input: UserPromptSubmitInput) => Promise<UserPromptSubmitOutput>,
+): RuntimeRegistry {
+  const runtime = { "user.prompt.submit": dispatch } as HooksRuntime
+  return {
+    getRuntimeFor: () => runtime,
+    getHookLoadFor: (cwd) => loadDiscoveredHooksSnapshot({ projectDir: cwd }),
+    rememberContext: () => {},
+    getLatestContext: () => undefined,
   }
 }
 
@@ -97,6 +112,8 @@ async function invokeBeforeAgentStart(
   hasUI = true,
   basePrompt: string | string[] = "base system prompt",
   mode?: string,
+  prompt = "hi",
+  sessionID: string | undefined = "session",
 ): Promise<unknown> {
   const handlers = pi.handlers.get("before_agent_start") ?? []
   if (handlers.length === 0) {
@@ -107,14 +124,14 @@ async function invokeBeforeAgentStart(
     hasUI,
     ui: hasUI ? { notify: () => {}, confirm: async () => true, setStatus: () => {} } : undefined,
     ...(mode !== undefined ? { mode } : {}),
-    sessionManager: { getSessionId: () => "session", getHeader: () => ({ id: "session" }) },
+    sessionManager: { getSessionId: () => sessionID ?? "", getHeader: () => ({ id: sessionID ?? "" }) },
     isIdle: () => true,
     hasPendingMessages: () => false,
     reload: async () => {},
   }
   let result: unknown
   for (const handler of handlers) {
-    const r = await handler({ type: "before_agent_start", prompt: "hi", systemPrompt: basePrompt }, ctx)
+    const r = await handler({ type: "before_agent_start", prompt, systemPrompt: basePrompt }, ctx)
     if (r !== undefined) result = r
   }
   return result
@@ -404,6 +421,118 @@ const cases: Case[] = [
           hostPrompt === "base prompt   \n\n  " &&
           /base prompt\n\nHook-awareness for this session:/.test(sp)
         return ok ? { ok: true } : { ok: false, detail: JSON.stringify({ hostPrompt, sp }) }
+      }),
+  },
+  {
+    name: "appends Pi prompt hook context to the same turn in order",
+    run: async () =>
+      await withSandbox({ trusted: true }, async (projectDir) => {
+        const inputs: UserPromptSubmitInput[] = []
+        const registry = createPromptRuntimeRegistry(async (input) => {
+          inputs.push(input)
+          return { additionalContext: ["first block", "second block"] }
+        })
+        const pi = createFakePi()
+        registerPromptSupport(pi as never, registry)
+        const result = await invokeBeforeAgentStart(
+          pi,
+          projectDir,
+          true,
+          "base system prompt",
+          undefined,
+          "expanded prompt",
+        )
+        const systemPrompt = (result as { systemPrompt?: string } | undefined)?.systemPrompt
+        const expectedSuffix = [
+          "Context from pi-yaml-hooks user.prompt.submit:\nfirst block",
+          "Context from pi-yaml-hooks user.prompt.submit:\nsecond block",
+        ].join("\n\n")
+        return inputs.length === 1 &&
+          inputs[0]?.sessionID === "session" &&
+          inputs[0]?.prompt === "expanded prompt" &&
+          typeof systemPrompt === "string" &&
+          systemPrompt.endsWith(expectedSuffix)
+          ? { ok: true }
+          : { ok: false, detail: JSON.stringify({ inputs, systemPrompt }) }
+      }),
+  },
+  {
+    name: "awareness disable leaves Pi prompt hook context active",
+    run: async () =>
+      await withSandbox({ trusted: true, awareness: "0" }, async (projectDir) => {
+        const registry = createPromptRuntimeRegistry(async () => ({ additionalContext: ["hook context"] }))
+        const pi = createFakePi()
+        registerPromptSupport(pi as never, registry)
+        const result = await invokeBeforeAgentStart(pi, projectDir)
+        const systemPrompt = (result as { systemPrompt?: string } | undefined)?.systemPrompt
+        return systemPrompt === "base system prompt\n\nContext from pi-yaml-hooks user.prompt.submit:\nhook context"
+          ? { ok: true }
+          : { ok: false, detail: JSON.stringify(result) }
+      }),
+  },
+  {
+    name: "appends OMP prompt context to a copied system-prompt array",
+    run: async () =>
+      await withSandbox({ trusted: true, awareness: "0" }, async (projectDir, homeDir) => {
+        configureHookHostProfile({ kind: "omp", agentDir: path.join(homeDir, ".omp", "agent") })
+        const registry = createPromptRuntimeRegistry(async () => ({ additionalContext: ["OMP context"] }))
+        const pi = createFakePi()
+        registerPromptSupport(pi as never, registry)
+        const hostPrompt = ["base system prompt", "project instructions"]
+        const original = [...hostPrompt]
+        const result = await invokeBeforeAgentStart(pi, projectDir, true, hostPrompt)
+        const systemPrompt = (result as { systemPrompt?: string[] } | undefined)?.systemPrompt
+        return Array.isArray(systemPrompt) &&
+          systemPrompt !== hostPrompt &&
+          JSON.stringify(hostPrompt) === JSON.stringify(original) &&
+          JSON.stringify(systemPrompt) === JSON.stringify([
+            ...hostPrompt,
+            "Context from pi-yaml-hooks user.prompt.submit:\nOMP context",
+          ])
+          ? { ok: true }
+          : { ok: false, detail: JSON.stringify({ hostPrompt, systemPrompt }) }
+      }),
+  },
+  {
+    name: "prompt dispatch errors fail open with the original Pi system prompt",
+    run: async () =>
+      await withSandbox({ trusted: true }, async (projectDir) => {
+        const registry = createPromptRuntimeRegistry(async () => {
+          throw new Error("dispatch failed")
+        })
+        const pi = createFakePi()
+        registerPromptSupport(pi as never, registry)
+        const result = await invokeBeforeAgentStart(pi, projectDir, true, "original prompt")
+        const systemPrompt = (result as { systemPrompt?: string } | undefined)?.systemPrompt
+        return systemPrompt === "original prompt"
+          ? { ok: true }
+          : { ok: false, detail: JSON.stringify(result) }
+      }),
+  },
+  {
+    name: "missing session ID fails open without dispatching prompt hooks",
+    run: async () =>
+      await withSandbox({ trusted: true }, async (projectDir) => {
+        let dispatched = false
+        const registry = createPromptRuntimeRegistry(async () => {
+          dispatched = true
+          return { additionalContext: ["unexpected"] }
+        })
+        const pi = createFakePi()
+        registerPromptSupport(pi as never, registry)
+        const result = await invokeBeforeAgentStart(
+          pi,
+          projectDir,
+          true,
+          "original prompt",
+          undefined,
+          "submitted prompt",
+          "",
+        )
+        const systemPrompt = (result as { systemPrompt?: string } | undefined)?.systemPrompt
+        return !dispatched && systemPrompt === "original prompt"
+          ? { ok: true }
+          : { ok: false, detail: JSON.stringify({ dispatched, result }) }
       }),
   },
 ]

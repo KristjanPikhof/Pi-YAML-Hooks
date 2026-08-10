@@ -1,6 +1,12 @@
 # Copy this file to <smoke-project>/.pi/hook/hooks.yaml for the runtime PI smoke.
 # It only writes under .pi/hooks-smoke in the current smoke project.
 hooks:
+  - id: smoke-user-prompt-submit
+    event: user.prompt.submit
+    actions:
+      - bash: |
+          node -e 'let input=""; process.stdin.on("data", chunk => input += chunk); process.stdin.on("end", () => { const ctx = JSON.parse(input); if (ctx.prompt !== "Run the deterministic runtime smoke tool sequence now.") process.exit(1); process.stdout.write("Pi runtime smoke prompt context"); });'
+
   - id: smoke-session-created
     event: session.created
     actions:

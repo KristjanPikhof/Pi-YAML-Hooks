@@ -524,7 +524,8 @@ if (promptResults.length !== 1 || !Array.isArray(promptResults[0].systemPrompt))
   throw new Error(`OMP before_agent_start did not preserve array-shaped systemPrompt ABI: ${JSON.stringify(promptResults)}`);
 }
 if (promptResults[0].systemPrompt[0] !== "base system prompt" ||
-    !promptResults[0].systemPrompt.some((part) => String(part).includes("active hook host: OMP"))) {
+    !promptResults[0].systemPrompt.some((part) => String(part).includes("active hook host: OMP")) ||
+    !promptResults[0].systemPrompt.includes("Context from pi-yaml-hooks user.prompt.submit:\nOMP runtime smoke prompt context")) {
   throw new Error(`OMP before_agent_start prompt evidence mismatch: ${JSON.stringify(promptResults[0])}`);
 }
 appendFileSync(eventFile, `${JSON.stringify({
