@@ -1,25 +1,21 @@
-# Snapshot autocommit (pi-yaml-hooks example)
+# Snapshot autocommit worker
 
-A YAML-driven `pi-yaml-hooks` example that auto-commits every recognized `file.changed` event. One hook, one worker, one SQLite queue per worktree. The hook captures file edits, snapshots them into git objects, and replays them as real commits after a short quiet window.
+This repository-only example captures `file.changed` payloads, stores snapshots in a worktree-local SQLite queue, and publishes Git commits after a short quiet period.
 
-This is **not** a built-in feature of `pi-yaml-hooks`. It is an example you wire up yourself by adding the snippet below to your `hooks.yaml`.
+It is not part of the npm package and is not a built-in `pi-yaml-hooks` feature. Clone the repository and point your hook file at these scripts.
 
-> **Repository-only example.** This directory is **not** shipped with the npm package. Use it by cloning the [pi-yaml-hooks GitHub repository](https://github.com/KristjanPikhof/pi-yaml-hooks) and pointing your `hooks.yaml` at the on-disk path. `pi install pi-yaml-hooks` alone does not give you these scripts.
+## Requirements
 
-## Use as a pi-yaml-hooks hook
+- macOS or Linux
+- Python 3
+- Git 2
+- a repository with an existing branch and first commit
 
-### 1. Prerequisites
+The worker uses POSIX signals and `fcntl` locks. It does not support Windows, detached HEAD, unborn branches, or multiple worktrees editing the same branch.
 
-- macOS or Linux. The worker uses `fcntl` locks and POSIX signals; Windows is unsupported.
-- `python3` 3.x on `$PATH`
-- `git` 2.x
-- `sqlite3` (only needed if you want to inspect the queue manually)
+## Configure
 
-### 2. Wire it from `hooks.yaml`
-
-Use this example as a project-local hook unless you really want automatic commits in every trusted repo session. Put it in `<project>/.pi/hook/hooks.yaml` (preferred) or `<project>/.pi/hooks.yaml`, and make sure that repo or worktree is trusted before you expect the hook to load.
-
-You also need a real checkout or copied script directory on disk. `pi install` by itself does not give you a stable example-script path to point at. Replace `<snapshot-example-dir>` below with the actual path to the `examples/atomic-commit-snapshot-worker/` directory that contains `snapshot-hook.py`, `snapshot-worker.py`, and `snapshot_shared.py`.
+Copy [`hooks.yaml`](./hooks.yaml) into a trusted project hook file. Replace `<snapshot-example-dir>` with the absolute path to this directory:
 
 ```yaml
 hooks:
@@ -29,60 +25,77 @@ hooks:
     actions:
       - bash: 'python3 <snapshot-example-dir>/snapshot-hook.py'
 
-  # Best-effort flush on shutdown or session switch so commits do not trail too far behind.
   - id: snapshot-flush-on-exit
     event: session.deleted
     actions:
       - bash: 'python3 <snapshot-example-dir>/snapshot-worker.py --flush --repo "$PI_PROJECT_DIR"'
 ```
 
-A copy of these two hooks lives next to this README as [`hooks.yaml`](./hooks.yaml). Copy it as a starting point.
+The flush is best-effort because `session.deleted` may represent a shutdown or a session switch.
 
-### 3. Verify it works
+## Verify and operate
 
-From a PI session inside a git repo:
-
-1. Use the `write` or `edit` tool to touch a file.
-2. Wait roughly 1 second (the default `SNAPSHOTD_QUIET_SECONDS`).
-3. Check `git log --oneline`. You should see a fresh commit.
-4. Check the worker queue:
-
-   ```bash
-   python3 <snapshot-example-dir>/snapshot-worker.py \
-     --status --repo .
-   ```
-
-   Expect `published > 0` and `pending: 0`.
-
-### 4. Operating commands
+After an agent edits a file, wait about one second and inspect Git history and queue status:
 
 ```bash
-# Inspect queue
+git log --oneline -5
 python3 snapshot-worker.py --status --repo /path/to/repo
+```
 
-# Drain pending events synchronously (exit 0 = empty, exit 2 = work remains)
+Other commands:
+
+```bash
+# Drain the current branch queue. Exit 0 means empty; exit 2 means work remains.
 python3 snapshot-worker.py --flush --repo /path/to/repo
 
-# Run worker in foreground (debugging)
+# Run the worker in the foreground.
 python3 snapshot-worker.py --repo /path/to/repo
 ```
 
-### PI-specific caveat about the flush hook
+## Safety model
 
-The example uses `session.deleted` for the flush path. On PI that event is intentionally lossy: it fires on real shutdown, but also before session switches such as `/new`, `/resume`, and `/fork`.
+Each worktree has its own database, locks, logs, and worker under its Git directory. A shared branch registry tracks branch ownership and generation across worktrees.
 
-That means the flush hook is best-effort. It is useful for reducing trailing commits, but it is not a strict "flush only on final session exit" guarantee.
+The worker publishes only events whose branch generation and base ancestry still match. A reset, rebase, force move, branch recreation, or unsupported topology settles affected work as `blocked_conflict` instead of replaying it onto uncertain history. It records incomplete source payloads as best-effort; structured `changes[]` entries provide the strongest capture input.
 
-## Implementation details
+The main event states are `pending`, `publishing`, `published`, `blocked_conflict`, and `failed`. Startup reconciles interrupted publishing work before processing more events.
 
-The capture contract, branch generation rules, quarantine semantics, environment variable reference, and operational debugging notes live in [`INTERNALS.md`](./INTERNALS.md).
+## Configuration
 
-## Related files
+| Variable | Default | Effect |
+|---|---|---|
+| `SNAPSHOTD_QUIET_SECONDS` | `1.0` | Wait after the last enqueue before replay |
+| `SNAPSHOTD_IDLE_SECONDS` | `30.0` | Worker idle lifetime |
+| `SNAPSHOTD_POLL_SECONDS` | `0.35` | Queue poll interval |
+| `SNAPSHOTD_HEARTBEAT_STALE` | `15` | Age at which a heartbeat is stale |
+| `SNAPSHOTD_RETENTION_SECONDS` | `604800` | Settled-row retention |
+| `SNAPSHOTD_RECONCILE_RETRY_ATTEMPTS` | `3` | Deferred index-reset retry count |
+| `SNAPSHOTD_RECONCILE_RETRY_SLEEP` | `0.2` | Delay between reconciliation retries |
+| `SNAPSHOTD_DEBUG` | off | Write hook and worker debug logs |
+| `SNAPSHOTD_LOG_MAX_BYTES` | 2 MiB | Log rotation size |
+| `SNAPSHOTD_LOG_KEEP` | `3` | Rotated logs to retain |
+| `SNAPSHOTD_WORKER_PATH` | sibling script | Override the worker path |
+| `SNAPSHOTD_COMMIT_MESSAGE_CMD` | unset | Run a custom argv-style message command per event |
+| `SNAPSHOTD_AI_ENABLE` | off | Enable OpenAI-compatible commit-message batching |
+| `SNAPSHOTD_AI_MAX_QUEUE_DEPTH` | `2` | Skip AI generation above this backlog |
+| `SNAPSHOTD_AI_CHUNK_SIZE` | `20` | Events per AI request, clamped to 1 through 100 |
+| `SNAPSHOTD_SENSITIVE_GLOBS` | common secret files | Redact matching diffs before network requests |
+| `OPENAI_API_KEY` | unset | Authorize AI message generation |
+| `OPENAI_MODEL` | `gpt-5.4-mini` | Model for AI messages |
+| `OPENAI_BASE_URL` | `https://api.openai.com/v1` | HTTPS endpoint for AI messages |
+| `OPENAI_API_TIMEOUT` | `15` | Request timeout in seconds |
 
-- `snapshot-hook.py`
-- `snapshot-worker.py`
-- `snapshot_shared.py`
+AI generation is off unless both `SNAPSHOTD_AI_ENABLE=1` and `OPENAI_API_KEY` are set. Sensitive globs are redacted before network requests. If AI or a custom message command fails, the worker falls back to deterministic messages.
 
-## Scope note
+## Debug
 
-This README documents the `pi-yaml-hooks` wiring for this example. The worker itself can be adapted to other harnesses, but those integrations are out of scope here and are not part of the documented `pi-yaml-hooks` surface.
+Set `SNAPSHOTD_DEBUG=1`, then inspect:
+
+```bash
+git_dir=$(git rev-parse --absolute-git-dir)
+tail -n 200 "$git_dir/ai-snapshotd/logs/hook.log"
+tail -n 200 "$git_dir/ai-snapshotd/logs/worker.log"
+python3 snapshot-worker.py --status --repo .
+```
+
+Treat `blocked_conflict` as a manual-review state. The worker does not retry those events automatically.

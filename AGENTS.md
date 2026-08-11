@@ -19,6 +19,7 @@ Agent contract for `pi-yaml-hooks`. Facts only; tutorials in `docs/`.
 - `src/pi/`: shared Pi-compatible adapter/register/lifecycle/registry, host event mappers, commands, autocomplete, diagnostics, prompt, `user_bash`, session lineage, unsupported policy; `adapter.ts` is a barrel.
 - `extensions/`: native TS entrypoints. `extensions/pi-yaml-hooks/index.ts` selects Pi; `extensions/omp-yaml-hooks/index.ts` selects OMP; generic `extensions/index.ts` remains Pi-compatible.
 - `examples/`: shipped: `pre-tool-developer-guards`, `post-tool-developer-feedback`, `README.md`. Repo-only: `atomic-commit-snapshot-worker`, snapshot helpers; not built-ins.
+- `docs/`: `README.md` is the router; `setup.md` owns paths, trust, imports, and environment variables; `hooks-reference.md` owns the runtime contract; `examples.md` owns copyable YAML; `debugging-hooks.md` and `maintaining.md` cover operations.
 - `scripts/`: test runner, SDK/host matrices, tail-log, Pi/OMP smoke helpers.
 - `dist/`: generated; do not edit. `build`/`build:publish` regenerate extension stubs.
 
@@ -60,7 +61,7 @@ Agent contract for `pi-yaml-hooks`. Facts only; tutorials in `docs/`.
 - Key caps: YAML 1 MiB; import/canonicalize depth 32; snapshot LRU 16; runtime registry LRU 8; recursion depth 32; glob LRU 256; pending tool calls 1000 / 5 min TTL/FIFO; `tool_args` 64 KiB; session lineage 64 / depth 64 / header 64 KiB. Check constants/docs before changing limits.
 - `prepack` runs clean `build:publish` via `tsconfig.publish.json`. Package contents follow `package.json#files`; update it when adding shipped examples/scripts. `scripts/tail-hook-log.sh` backs `/hooks-tail-log` and is packaged.
 - Env vars canonical source: [`docs/setup.md#environment-variables`](docs/setup.md#environment-variables); do not duplicate env tables here.
-- Doc rules: built-ins are not examples; say `action: stop`; mark opt-in features; use cwd/project-root/repo-worktree trust-anchor terminology; `tool:` means the current matching Pi or OMP session receives a follow-up prompt.
+- Doc rules: keep the README short and route details to `docs/`; do not duplicate the environment table outside `docs/setup.md`; examples are not built-ins; say `action: stop`; mark opt-in features; use cwd/project-root/repo-worktree trust-anchor terminology; `tool:` means the current matching Pi or OMP session receives a follow-up prompt.
 - Keep both runtime smokes and matrix/SDK-widening evidence with release notes or SDK-widening PRs.
 
 ## Pitfalls

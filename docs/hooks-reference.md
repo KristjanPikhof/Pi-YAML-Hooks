@@ -1,195 +1,82 @@
 # Hooks reference
 
-This document describes the current `pi-yaml-hooks` behavior on Pi and OMP as implemented and runtime-tested in this repository.
+This page describes the YAML contract shared by Pi and OMP.
 
-## Contents
-
-- [Hook file shape](#hook-file-shape)
-- [`/hooks` command autocomplete](#hooks-command-autocomplete)
-- [Prompt submission context](#prompt-submission-context)
-- [Optional `user_bash` interception](#optional-user_bash-interception)
-- [`imports`](#imports)
-- [Hook fields](#hook-fields)
-- [Conditions](#conditions)
-- [Actions](#actions)
-- [Bash environment variables](#bash-environment-variables)
-- [Dual-host compatibility checks](#dual-host-compatibility-checks)
-- [Unsupported and advisory cases](#unsupported-and-advisory-cases)
-- [Debug logging](#debug-logging)
-
-## Hook file shape
-
-A hook file must parse to an object with a top-level `hooks:` array. It may also define an optional top-level `imports:` array.
+## File shape
 
 ```yaml
 imports:
   - ./hooks.d
-  - my-shared-hooks
 
 hooks:
   - id: example
-    event: session.idle
+    event: file.changed
     scope: all
-    runIn: current
     conditions:
-      - matchesCodeFiles
+      - matchesAnyPath:
+          - "src/**"
     actions:
-      - notify: "Done"
+      - notify: "Source changed"
 ```
 
-Each action entry must define exactly one action key.
-
-## `/hooks` command autocomplete
-
-On hosts that expose `ctx.ui.addAutocompleteProvider`, `pi-yaml-hooks` registers a guarded autocomplete provider for the built-in `/hooks-*` commands in the TUI editor (`ctx.mode === "tui"`, or older Pi SDKs with no `mode`). The provider is capability-detected, so RPC/headless contexts and supported hosts without this TUI-only surface continue to load.
-
-Autocomplete suggestions are deterministic and intentionally lightweight. Command names are static; event names use the supported event list; config paths and the current log path come from the active Pi or OMP host profile. Hook ID suggestions load lazily from the current global/project snapshot and are memoized by snapshot signature, so edits to root or imported hook files refresh suggestions after the next snapshot change.
-
-Useful completions include:
-
-- `/hooks-status`, `/hooks-validate`, `/hooks-trust`, `/hooks-reload`, `/hooks-tail-log`
-- loaded hook IDs such as `audit-write`
-- event names such as `session.idle`, `tool.before.bash`, and `tool.after.write`
-- global and project hook config paths
-- the resolved log path and a ready-to-run `tail -F` command produced by `/hooks-tail-log`
-
-## Agent-start awareness
-
-At agent start, `pi-yaml-hooks` appends a short hook-awareness note to the system prompt. It summarizes the active Pi or OMP host, loaded hook count, selected config paths, project trust state, and limitations that matter while authoring or debugging hooks.
-
-This is registered through the host's `before_agent_start` event. It is not a YAML hook event.
-
-Set `PI_YAML_HOOKS_PROMPT_AWARENESS=0` to disable the awareness note. This setting does not disable `user.prompt.submit` YAML hooks.
-
-## Prompt submission context
-
-`user.prompt.submit` runs after the host expands a text prompt and before the agent loop starts. Each matching bash action receives the prompt through stdin. Successful stdout is trimmed, and non-empty output is added to the system context for the same turn.
-
-Exact rules:
-
-- hooks and actions run synchronously in resolved configuration order
-- only `bash` actions are accepted
-- `async`, `action: stop`, `command`, `tool`, `notify`, `confirm`, and `setStatus` are rejected
-- `scope: all`, `scope: main`, and `scope: child` keep their normal session-lineage behavior
-- only output with `status: success` is eligible for injection
-- empty, failed, timed-out, blocked, or truncated output is ignored and logged
-- all accepted output is capped at 64 KiB of UTF-8 text per submission
-- an output that would exceed the remaining limit is skipped in full
-- failures are fail-open and do not stop the agent turn
-
-Pi appends each result to its string system prompt with blank-line separators. OMP appends entries to a copied system-prompt array. Every injected block starts with `Context from pi-yaml-hooks user.prompt.submit:`.
-
-This event adds context only. It does not rewrite the submitted prompt, block submission, create another user message, include attached images, or identify whether the prompt came from TUI, RPC, or another extension.
-
-## Optional `user_bash` interception
-
-Set `PI_YAML_HOOKS_ENABLE_USER_BASH=1` to run human `!` / `!!` shell commands through `tool.before.bash` hooks before Pi or OMP executes them.
-
-- this mode is opt-in and disabled by default
-- it applies only pre-bash safety hooks
-- it does not synthesize `tool.after.*` or `file.changed` for `user_bash`
-- headless confirm behavior stays fail-closed
-
-Enabling this feature expands the trust surface: hooks in trusted projects can observe, block, and potentially exfiltrate the typed command text. See [What trust grants when user_bash is enabled](../README.md#what-trust-grants-when-user_bash-is-enabled) in the main README for a full breakdown of the risks.
-
-## `imports`
-
-`imports` composes hook files before the current file's own hooks are merged.
-
-- imports load before local hooks
-- import order is preserved
-- directory imports expand files in lexical order, but only `*.yaml` / `*.yml` entries are loaded; dotfiles (e.g. `.DS_Store`) and other extensions are skipped
-- package imports (bare specifiers like `hook-pack`) use Node module resolution from the importing file, but are **disabled by default**; set `PI_YAML_HOOKS_ALLOW_PACKAGE_IMPORTS=1` to opt in
-- imports declared inside the **global** `hooks.yaml` are **refused by default**; set `PI_YAML_HOOKS_ALLOW_GLOBAL_IMPORTS=1` to opt in
-- imports declared inside a **project** `hooks.yaml` whose target (after symlink resolution) falls outside the project's trust anchor are **refused by default**; set `PI_YAML_HOOKS_ALLOW_PROJECT_IMPORTS_OUTSIDE_TRUST_ANCHOR=1` to opt in
-- duplicate imports are skipped by canonical path
-- cycles and missing imports produce load errors
-- import recursion is bounded at depth 32; deeper chains fail with `invalid_imports`
-- imported files inherit the importing root scope (`global` or `project`)
-
-### Trust expansion
-
-Trust is anchored at the repo or worktree anchor, not at every imported file. Once that anchor is trusted in the active host's trust store, all of the project root's `imports:` are loaded transitively under that same trust decision. Three safety rails keep that expansion narrow:
-
-1. The global hooks file (which always loads) cannot pull in additional files unless `PI_YAML_HOOKS_ALLOW_GLOBAL_IMPORTS=1` is set, so a global hook cannot silently extend its own footprint.
-2. Bare-specifier imports that resolve through `node_modules` are gated behind `PI_YAML_HOOKS_ALLOW_PACKAGE_IMPORTS=1`, so an arbitrary npm dependency cannot register hooks just by being installed.
-3. Project imports cannot escape the project's trust anchor (its repo or worktree anchor, or the discovered project root). The check follows symlinks, so a link that lives inside the project but points outside is still refused. Set `PI_YAML_HOOKS_ALLOW_PROJECT_IMPORTS_OUTSIDE_TRUST_ANCHOR=1` to opt in.
-
-All three gates fail closed with a `[PIYAMLHOOKS]` error message so operators see exactly which import was refused and which env var to set. When an import bypass env var is enabled, `pi-yaml-hooks` emits a one-time warning naming the affected trust boundary.
-
-## Load order and precedence
-
-`pi-yaml-hooks` discovers at most:
-
-- one global root hook file
-- one trusted project root hook file
-
-The order is always:
-
-1. global imports, then global root hooks
-2. project imports, then project root hooks
-
-Without overrides, hooks from both files stay active.
+`hooks` must be an array. `imports` is optional and is covered in [Setup](./setup.md#import-hook-files). Active and replacement hooks need a non-empty `actions` array. A disable-only override does not. Each action entry must contain exactly one action key.
 
 ## Hook fields
 
-| Field | Required | Type | Exact behavior |
+| Field | Required | Values | Behavior |
 |---|---|---|---|
-| `id` | no | string | Stable hook name used by later-file overrides. Strongly recommended for any hook you may replace or disable later. |
-| `event` | yes | string | One of the supported hook events listed below. |
-| `actions` | yes | array | Non-empty list of action objects. Actions run in order. |
-| `action` | no | `stop` | Accepted only on `tool.before.*` hooks. It does not add much beyond the normal pre-tool block behavior. |
-| `conditions` | no | array | Additional filters. All conditions must pass. |
-| `scope` | no | `all`, `main`, `child` | Filters which session lineage the hook itself runs in. Defaults to `all`. |
-| `runIn` | no | `current`, `main` | Compatibility field for action targeting. Defaults to `current`. Non-`bash` actions (`tool`, `notify`, `confirm`, `setStatus`) with `runIn: main` are rejected at load time and the hook is dropped. See the host notes below before relying on it. |
-| `async` | no | boolean or object | Queues the hook for background execution. `true` keeps serialized per-event behavior. `{ group?, concurrency? }` lets hooks share a named async queue with optional bounded concurrency. Only allowed on non-`tool.before` hooks, not on `session.idle` or `user.prompt.submit`, and only for `bash`-only hooks. |
-| `override` | no | string | Replaces a previously loaded hook with the given `id`. |
-| `disable` | no | boolean | When used with `override`, removes the targeted earlier hook instead of replacing it. |
+| `event` | yes | Supported event name | Selects when the hook runs |
+| `actions` | yes | Non-empty action array | Runs actions in order |
+| `id` | no | Non-empty string | Gives overrides and logs a stable name |
+| `scope` | no | `all`, `main`, `child` | Filters the session lineage; default is `all` |
+| `conditions` | no | Condition array | Requires every condition to pass |
+| `action` | no | `stop` | Accepted only on `tool.before.*` |
+| `async` | no | boolean or queue object | Runs supported bash-only hooks in a background queue |
+| `runIn` | no | `current`, `main` | Compatibility metadata; default is `current` |
+| `override` | no | Earlier hook `id` | Replaces or disables an earlier hook |
+| `disable` | no | boolean | Use with `override` to remove the earlier hook |
 
-## Host event and action mapping
+The `event` and `actions` fields are not required on `{ override: id, disable: true }` entries.
 
-The YAML surface is host-independent. The adapter translates Pi and OMP events into the same runtime contract:
+Prefer `scope` for routing. `runIn: main` is rejected for non-bash actions and does not change a bash process's session context.
 
-| YAML event or action | Pi source or target | OMP source or target | Exact adapter behavior |
-|---|---|---|---|
-| `user.prompt.submit` | `before_agent_start` | `before_agent_start` | Passes the expanded text prompt to synchronous bash hooks. Successful bounded stdout becomes system context for the same turn. Failures do not interrupt submission. |
-| `tool.before.*`, `tool.before.<name>` | `tool_call` | `tool_call` | Dispatches before the named tool. A blocking result is returned to the host, so this is the only event family where `action: stop`, exit code `2`, or a rejected `confirm` can block the tool. |
-| `tool.after.*`, `tool.after.<name>` | `tool_result` | `tool_result` | Dispatches after the named tool. The adapter retains the session ID recorded at `tool_call` so an after-hook is not silently routed to a replacement session. |
-| `file.changed` | Synthesized after `tool_result` | Synthesized after `tool_result` | Not a host event. It fires after `tool.after.*` for recognized mutations described below. Human `user_bash` commands never synthesize it. |
-| `session.created` | `session_start` only when `reason` is `startup` or `new` | `session_start` when `reason` is absent, `startup`, or `new`; also `session_switch` when `reason` is `new` | Emits once for the current session ID. Resume and fork events are excluded on both hosts. OMP startup and new-session signals are deduplicated, so no resume/fork created-event claim is implied. |
-| `session.idle` | `agent_settled`; `agent_end` is the compatibility path | `agent_end`, after `session_stop` control handlers finish | Requires the same live session, `isIdle()`, and no pending messages. Pi deduplicates `agent_end`/`agent_settled`. OMP waits until stop handlers have settled, so a queued continuation, `agent_start`, or replacement session suppresses the candidate; a later terminal `agent_end` can re-arm it. Accumulated file changes are consumed only after a successful idle dispatch. |
-| `session.deleted` | `session_before_switch` or `session_shutdown` | `session_before_switch` or `session_shutdown` | Best-effort and intentionally lossy. Duplicate switch/shutdown signals for one session are collapsed. If the host supplies `reason`, the adapter forwards that string verbatim on the internal envelope and records it in debug dispatch telemetry. Treat it as opaque: values such as `quit`, `reload`, `new`, `resume`, and `fork` are observations, not a closed enum, and matching is unaffected. |
-| opt-in human `user_bash` | `user_bash` | `user_bash` | With `PI_YAML_HOOKS_ENABLE_USER_BASH=1`, maps only to `tool.before.bash`. It does not produce `tool.after.*` or `file.changed`. |
-| agent-start awareness | `before_agent_start` | `before_agent_start` | Appends the hook-awareness text to the existing system prompt unless `PI_YAML_HOOKS_PROMPT_AWARENESS` disables it. This adapter behavior shares the handler with `user.prompt.submit`, but the environment setting affects only awareness text. |
-| `tool:` action | `pi.sendUserMessage(..., { deliverAs: "followUp" })` | Same extension API surface | Pi or OMP receives a follow-up prompt in the current matching session. The action does not execute a tool and cannot target another session. A replaced or stale session degrades without leaking the prompt into the new session. |
-| `notify:` action | `ctx.ui.notify` | `ctx.ui.notify` | Runs only when the current context reports UI and exposes the method. `success` maps to `info`. Without UI it degrades, warns once, and does not throw. |
-| `confirm:` action | `ctx.ui.confirm` | `ctx.ui.confirm` | Uses `Confirm` when the title is omitted. Without UI it denies by default, unless `PI_YAML_HOOKS_CONFIRM_AUTO_APPROVE=1` explicitly opts in. Rejection blocks only a `tool.before.*` hook. |
-| `setStatus:` action | `ctx.ui.setStatus` | `ctx.ui.setStatus` | Writes a per-hook status key when the method is available. Without UI it degrades, warns once, and does not throw. |
+## Events
 
-Tool names come from the host event. Built-in tools are not examples or a guaranteed closed set. Wildcard events match custom tool names too.
+| Event | When it runs | Notes |
+|---|---|---|
+| `user.prompt.submit` | After text expansion, before the agent loop | Bash-only; successful stdout becomes same-turn system context |
+| `tool.before.*` | Before every tool call | The only event family that can block a tool |
+| `tool.before.<name>` | Before the named tool | Tool names come from the host |
+| `tool.after.*` | After every tool result | Cannot block the completed tool |
+| `tool.after.<name>` | After the named tool result | May include changed paths for recognized mutation tools |
+| `file.changed` | After a recognized file mutation | Synthesized by the extension, after post-tool hooks |
+| `session.created` | At startup or a new session | Resume and fork signals are excluded |
+| `session.idle` | After the turn settles with no queued continuation | Collected file changes are available here |
+| `session.deleted` | During shutdown or session switch | Best-effort and deduplicated |
 
-### Exact `file.changed` behavior
+Custom tool names work with exact and wildcard tool events. Built-in tool names are not a closed set.
 
-`file.changed` is synthesized from the tool result payload.
+### Prompt context
 
-On stock PI, `pi-yaml-hooks` can synthesize it from:
+`user.prompt.submit` hooks run synchronously in config order. They accept only `bash` actions and cannot use `async` or `action: stop`.
 
-- `write`
-- `edit`
-- `bash`, but only when the command text looks like one of these operations:
-  - `rm` or `git rm`
-  - `mv` or `git mv`
-  - `cp` or `git cp`
-  - `touch`
-  - `mkdir`
+Each successful, non-empty stdout value becomes a system-context block for the current turn. Failed, timed-out, blocked, truncated, or empty output is ignored. The turn continues if a hook fails. Total accepted output is capped at 64 KiB per prompt; a block that does not fit is skipped in full.
 
-For direct `write` and `edit` tool calls, `pi-yaml-hooks` reports the target path as a `modify` change. Recognized `touch`, `cp`, and `mkdir` shell commands are reported as `create` changes for their target paths.
+The input contains expanded text only. Hooks cannot rewrite or reject the prompt, inspect attachments, or identify whether the prompt came from TUI, RPC, or another extension.
 
-If you install custom tools named `multiedit`, `patch`, or `apply_patch`, the runtime can also synthesize `file.changed` from them.
+### File changes
+
+`file.changed` is synthesized from recognized mutation results. Stock Pi and OMP support direct `write` and `edit` calls plus mutation-shaped bash commands using `rm`, `git rm`, `mv`, `git mv`, `cp`, `git cp`, `touch`, or `mkdir`.
+
+Custom tools named `multiedit`, `patch`, or `apply_patch` can also provide mutation paths. Unknown and non-mutating tools are pathless.
+
+### Session deletion
+
+`session.deleted` is a cleanup signal, not proof that a session was permanently removed. Duplicate switch and shutdown signals collapse into one dispatch. If the host supplies a reason, the extension forwards it as opaque telemetry. Do not match against a fixed reason list.
 
 ## Conditions
 
-Conditions are ANDed together. If any condition fails, the hook does not run.
+All conditions must pass.
 
 ### `matchesCodeFiles`
 
@@ -198,21 +85,7 @@ conditions:
   - matchesCodeFiles
 ```
 
-This passes when at least one known code or config file extension is present in the event's file list.
-
-Practical note:
-
-- it is most useful on `file.changed`, `tool.after.<mutation>`, and `session.idle`
-- on events with no file context, it will not match
-
-Path conditions are accepted on these events:
-
-- `file.changed`
-- `session.idle`
-- `tool.after.*`
-- `tool.after.<name>`
-
-For `tool.after.*` and `tool.after.<name>`, path conditions only match when `pi-yaml-hooks` can infer changed paths from the tool result. Stock PI path context is available for `write`, `edit`, and recognized mutation-shaped `bash` commands. Non-mutating tools such as `read`, `grep`, `find`, and `ls` have no changed paths, so path conditions on those events do not match.
+This passes when the event contains at least one known code or config extension. It fails on pathless events.
 
 ### `matchesAnyPath`
 
@@ -229,15 +102,10 @@ This passes when any changed path matches any listed glob.
 
 ```yaml
 conditions:
-  - matchesAllPaths:
-      - "src/**"
+  - matchesAllPaths: "docs/**"
 ```
 
-This passes when every changed path matches at least one glob in the list.
-
-Important detail: this is an allowlist over paths, not a per-path intersection of all patterns.
-
-If you want an intersection such as "all changed paths are under `src/` and all are `*.ts`", write two separate conditions:
+This passes when every changed path matches at least one listed glob. The patterns form an allowlist. Use separate conditions for an intersection:
 
 ```yaml
 conditions:
@@ -245,87 +113,45 @@ conditions:
   - matchesAllPaths: "**/*.ts"
 ```
 
-### Path normalization rules
-
-For path conditions:
-
-- paths inside the current project are matched as project-relative paths like `src/index.ts`
-- absolute paths outside the project stay absolute
-- path separators are normalized to forward slashes
+Path conditions work on `file.changed`, `session.idle`, and `tool.after.*` events that contain changed paths. Paths inside the project are normalized to project-relative paths with forward slashes. Absolute paths outside the project stay absolute.
 
 ## Actions
 
 ### `bash`
 
-Short form:
-
-```yaml
-actions:
-  - bash: "echo hi"
-```
-
-Long form:
-
 ```yaml
 actions:
   - bash:
-      command: "./script.sh"
+      command: "./scripts/check.sh"
       timeout: 15000
 ```
 
-Exact behavior:
+The short form is `bash: "command"`. Commands run through `bash -c` with a default 60-second timeout. JSON context is written to stdin, and stdout and stderr are captured separately.
 
-- the command runs through `bash -c`
-- default timeout is `60000` ms
-- hook context JSON is written to the process stdin
-- stdout and stderr are captured up to `PI_YAML_HOOKS_MAX_OUTPUT_BYTES` bytes total per stream buffer, default `1048576`
-- on `tool.before.*`, exit code `2` blocks the tool call
-- exit code `124` indicates the bash process exceeded its timeout; `127` indicates a spawn error (e.g. `bash` binary missing); both are logged as hook failures but do not block
-- other non-zero exits are logged as hook failures but do not block
-- on `user.prompt.submit`, only successful, non-empty, non-truncated stdout becomes context; all other results are ignored
+On `tool.before.*`, exit code `2` blocks the tool. Other non-zero codes report a failed hook but do not block. Timeout uses code `124`; a spawn failure uses `127`.
 
 ### `tool`
 
 ```yaml
 actions:
   - tool:
-      name: read
+      name: bash
       args:
-        path: README.md
+        command: "npm test"
 ```
 
-Exact Pi and OMP behavior:
-
-- this does not imperatively execute the tool
-- Pi or OMP receives a follow-up prompt in the current matching session asking it to use that tool with those arguments
-- cross-session targeting is not available
+This sends the current Pi or OMP session a follow-up prompt asking it to use the named tool. It does not execute the tool and cannot target another session.
 
 ### `notify`
-
-Short form:
-
-```yaml
-actions:
-  - notify: "Done"
-```
-
-Long form:
 
 ```yaml
 actions:
   - notify:
       text: "Build finished"
-      level: success
+      level: info
 ```
 
-Levels:
-
-- `info`
-- `success`
-- `warning`
-- `error`
-
-On both hosts, `success` is mapped to `info` because the shared UI API does not expose a separate success level. Notifications run whenever the current context reports `ctx.hasUI` and exposes `ctx.ui.notify`; no-UI/headless contexts degrade without throwing.
+The short form is `notify: "message"`. Levels are `info`, `success`, `warning`, and `error`; hosts map `success` to `info`. Without the required UI method, the action logs a degradation and continues.
 
 ### `confirm`
 
@@ -333,269 +159,143 @@ On both hosts, `success` is mapped to `info` because the shared UI API does not 
 actions:
   - confirm:
       title: "Run command?"
-      message: "Continue?"
+      message: "Approve this bash call."
 ```
 
-Exact behavior:
-
-- `message` is required
-- `title` is optional; the adapter uses `Confirm` when omitted
-- if the user rejects on a `tool.before.*` hook, the tool call is blocked
-- on non-blocking events, rejection does not abort the event and later actions can still run
-- confirm runs whenever the current context reports `ctx.hasUI` and exposes `ctx.ui.confirm`
-- without UI, confirm denies by default unless `PI_YAML_HOOKS_CONFIRM_AUTO_APPROVE=1`
+`message` is required. Rejection blocks only on `tool.before.*`. Without UI, confirmation denies unless `PI_YAML_HOOKS_CONFIRM_AUTO_APPROVE=1` is set.
 
 ### `setStatus`
 
-Short form:
-
 ```yaml
 actions:
-  - setStatus: "Watching changes"
+  - setStatus: "Checking changes"
 ```
 
-Long form:
+This writes a status entry keyed to the hook when the host exposes a status method. Without that method, it logs a degradation and continues.
+
+### Unsupported `command`
+
+`command:` actions are rejected while loading the hook. Use `bash:` to run a command or `tool:` to request a follow-up.
+
+## Blocking
+
+A hook can block only a `tool.before.*` event. Use a bash action that exits `2`, a rejected `confirm`, or `action: stop` with a blocking result.
 
 ```yaml
-actions:
-  - setStatus:
-      text: "Working"
+hooks:
+  - id: guard-bash
+    event: tool.before.bash
+    action: stop
+    actions:
+      - bash: "./scripts/check-command.sh"
 ```
 
-Exact behavior:
-
-- this updates a status/status-bar slot when the current context reports `ctx.hasUI` and exposes `ctx.ui.setStatus`
-- status entries are keyed per hook as `pi-yaml-hooks:<hook-id-or-fallback>@<source-file>`
-- when `id` is present, it contributes to a stable per-hook key without colliding with the same id reused in another file
-- when `id` is absent, pi-yaml-hooks falls back to a deterministic source-location key so hooks in the same file do not collide
-- the parser currently requires a non-empty status string
-
-### `command`
-
-```yaml
-actions:
-  - command: "/something"
-```
-
-This is rejected at load time on PI. The hook is dropped from the active hook map.
-
-## `scope` versus `runIn`
-
-These fields do different things.
-
-### `scope`
-
-`scope` filters where the hook itself is allowed to fire.
-
-```yaml
-scope: all
-scope: main
-scope: child
-```
-
-Exact behavior:
-
-- `all` means every session
-- `main` means only the root session in the current lineage
-- `child` means only non-root sessions
-
-### `runIn`
-
-`runIn` is a compatibility field intended to target another session.
-
-```yaml
-runIn: current
-runIn: main
-```
-
-Current PI caveats:
-
-- `runIn: main` on non-`bash` actions is rejected at load time
-- `tool:` actions still go to the current session because PI only exposes current-session prompt injection
-- `bash` actions currently run with the current event context; do not rely on `runIn` to change the bash process session context
-
-Practical guidance: prefer `scope` for real routing decisions and treat `runIn` as compatibility metadata unless you have verified the exact behavior you want.
+`action: stop` does not make a successful action block. It marks the hook's intended behavior; the action still needs to return a blocking result.
 
 ## Async hooks
 
 ```yaml
-- event: tool.after.write
-  async: true
-  actions:
-    - bash: "./slow-hook.sh"
-```
-
-Exact rules:
-
-- `async: true` is allowed only for non-`tool.before` hooks
-- `async: true` is not allowed on `session.idle`
-- `async: true` is not allowed on `user.prompt.submit`
-- `async: true` combined with `action: stop` is rejected at load time; the async queue runs after the dispatch loop has returned, so a stop directive could not block anything
-- async hooks must contain only `bash` actions; `command`, `tool`, `notify`, `confirm`, and `setStatus` actions are rejected at load time because they either have no timeout, require the live UI session, or block the agent turn, all of which would stall or misroute the async queue
-- `async: true` keeps the legacy serialized `event + session` queue
-- `async: { group: <name> }` makes hooks in the same session share a named queue
-- `async: { group: <name>, concurrency: N }` allows up to `N` hooks from that named queue to run at once; omit it to keep serialized behavior
-- `concurrency` requires `group`, and every hook in the same group must use the same concurrency value
-
-Use async for slow post-processing that should not block the agent turn.
-
-## Overrides and disable behavior
-
-Overrides target hooks that were already loaded earlier.
-
-That means the main supported pattern is:
-
-- define a hook in the global file
-- replace or disable it in the project file
-
-### Replace an earlier hook
-
-Global file:
-
-```yaml
 hooks:
-  - id: idle-message
-    event: session.idle
+  - id: upload-result
+    event: tool.after.write
+    async:
+      group: uploads
+      concurrency: 2
     actions:
-      - notify: "Global idle"
+      - bash: "./scripts/upload.sh"
 ```
 
-Project file:
+Async hooks accept only bash actions. They are not allowed on `tool.before.*`, `session.idle`, or `user.prompt.submit`.
+
+`async: true` creates a serialized queue per event and session. A named `group` lets hooks share a queue. `concurrency` must be a positive integer and applies to that group. The pending cap defaults to 1,000 per lane; excess work is dropped with a warning.
+
+The optional watchdog logs slow runs but does not cancel them. See `PI_YAML_HOOKS_ASYNC_WATCHDOG_MS` in [Setup](./setup.md#environment-variables).
+
+## Overrides
+
+A project file can replace a global hook by `id`:
 
 ```yaml
 hooks:
-  - override: idle-message
+  - override: idle-notify
     event: session.idle
     actions:
       - notify: "Project idle"
 ```
 
-### Disable an earlier hook
+Or disable it:
 
 ```yaml
 hooks:
-  - override: idle-message
+  - override: idle-notify
     disable: true
 ```
 
-Important detail: overrides resolve against hooks loaded from earlier files. Same-file override entries are not a reliable authoring pattern.
+The target must have loaded earlier. Duplicate IDs and missing targets fail validation.
 
-## Bash hook stdin contract
+## Bash input
 
-Every `bash` action receives JSON on stdin.
-
-Example shape for a `file.changed` hook:
+Every bash action receives a JSON object on stdin:
 
 ```json
 {
   "session_id": "session-123",
-  "event": "file.changed",
+  "event": "tool.before.bash",
   "cwd": "/Users/me/project",
-  "files": ["src/index.ts"],
-  "changes": [
-    {"operation": "modify", "path": "src/index.ts"}
-  ],
-  "tool_name": "edit",
+  "tool_name": "bash",
   "tool_args": {
-    "path": "src/index.ts"
+    "command": "npm test"
   }
 }
 ```
 
-Fields are omitted when unavailable.
-
-For `user.prompt.submit`, stdin contains the expanded text prompt and no image data:
+Optional fields are `prompt`, `files`, `changes`, `tool_name`, and `tool_args`. `changes` entries use these shapes:
 
 ```json
-{
-  "event": "user.prompt.submit",
-  "session_id": "session-123",
-  "cwd": "/Users/me/project",
-  "prompt": "Review the current database migration"
-}
+{ "operation": "create", "path": "src/new.ts" }
+{ "operation": "modify", "path": "src/index.ts" }
+{ "operation": "delete", "path": "src/old.ts" }
+{ "operation": "rename", "fromPath": "old.ts", "toPath": "new.ts" }
 ```
 
-The submitted prompt itself is not logged by `pi-yaml-hooks`. Bash stdout and stderr still use the normal sanitized result log, so a hook should not echo sensitive prompt text.
+Before serialization, `tool_args` is redacted and capped at 64 KiB. The full stdin payload defaults to a 256 KiB cap. An oversized payload becomes a reduced placeholder with truncation metadata.
 
-`tool_args` is shallow-cloned with sensitive keys (`password`, `token`, `api_key`, `secret`, `authorization`, `auth`, `private_key`, `bearer`) redacted before serialization, and the JSON encoding is capped at 64 KiB. When the cap is exceeded, `tool_args` collapses to a placeholder of the form:
+## Bash environment
 
-```json
-{
-  "_pi_hooks_tool_args_truncated": true,
-  "_pi_hooks_tool_args_original_byte_length": 123456,
-  "_pi_hooks_tool_args_max_byte_length": 65536,
-  "note": "<truncated>"
-}
-```
-
-If the entire stdin payload still exceeds `PI_YAML_HOOKS_MAX_STDIN_BYTES` (default 262144, 256 KiB), large fields are dropped or replaced and a `_pi_hooks_truncated: true` marker is added at the top level.
-
-Change objects use one of these shapes:
-
-```json
-{"operation": "create", "path": "..."}
-{"operation": "modify", "path": "..."}
-{"operation": "delete", "path": "..."}
-{"operation": "rename", "fromPath": "old", "toPath": "new"}
-```
-
-## Bash environment variables
-
-These environment variables are injected into every `bash` hook:
-
-| Variable | Legacy alias | Meaning |
-|---|---|---|
-| `PI_PROJECT_DIR` | `OPENCODE_PROJECT_DIR` | Current project directory |
-| `PI_WORKTREE_DIR` | `OPENCODE_WORKTREE_DIR` | Git worktree root when resolvable |
-| `PI_SESSION_ID` | `OPENCODE_SESSION_ID` | Current session id |
-| `PI_GIT_COMMON_DIR` | `OPENCODE_GIT_COMMON_DIR` | Git common dir for worktrees when resolvable |
-
-The process working directory is the current project directory.
-
-By default, bash hooks inherit the full host process environment for backwards compatibility. Set `PI_YAML_HOOKS_ENV_ALLOWLIST` to a comma-separated list to opt into filtered inheritance. In allowlist mode, only named inherited variables are passed; `PATH` and `HOME` are not special and must be listed explicitly if a hook needs them. The PI/OPENCODE context variables above are always injected.
-
-Async hook lanes are bounded: each lane keeps at most `PI_YAML_HOOKS_ASYNC_MAX_PENDING` pending runs (default `1000`) and drops additional queued runs with a warning. Set `PI_YAML_HOOKS_ASYNC_WATCHDOG_MS` to a positive millisecond value to log a `watchdog_timeout` warning for a still-running async hook; it does not cancel the hook, and the lane remains occupied until it settles.
-
-## Dual-host compatibility checks
-
-Use the repeatable host matrix and runtime smoke gates in [`maintaining.md`](./maintaining.md) before changing event, lifecycle, UI, prompt, command, storage, or host-version claims.
-
-The current evidence separates compile compatibility from live runtime proof:
-
-- Pi compatibility is pinned to exact `0.74.0`, `0.79.3`, `0.80.10`, and `0.84.1` SDK matrix rows. The live Pi `0.84.1` smoke also covers native package discovery and an isolated `--no-builtin-tools` lifecycle scenario.
-- OMP compile, internal-suite, RPC, and TUI smoke evidence is pinned to exact `17.0.1` and `17.2.12` rows. Package-install verification uses `17.2.12`.
-- Pi startup/new and OMP startup/new produce `session.created`; resume/fork do not.
-- OMP derives idle from the post-stop `agent_end`, after continuation-capable `session_stop` handlers have settled.
-- Both hosts prove `tool.before.bash`, `tool.after.read`, `tool.after.write`, synthesized `file.changed`, current-session `tool:` follow-up prompts, opt-in `user_bash`, UI capability degradation, and lifecycle cleanup.
-- OMP fallback tests prove a legacy `.pi` project config still requires OMP trust. Pi trust never authorizes it.
-
-The scripts and exact evidence required before widening either host claim are documented in [`maintaining.md`](./maintaining.md).
-
-## Unsupported and advisory cases
-
-| Case | Behavior |
+| Variable | Value |
 |---|---|
-| `command:` action | hard load error; hook is dropped |
-| `runIn: main` with `tool:`, `notify:`, `confirm:`, or `setStatus:` | hard load error; hook is dropped |
-| `tool.before.<name>` without a host tool of that name | advisory only; it will not fire |
-| `session.deleted` | supported but lossy; reason is opaque telemetry |
-| `confirm:` without a UI capability | deny by default |
+| `PI_PROJECT_DIR` | Project directory for the event |
+| `PI_WORKTREE_DIR` | Resolved worktree directory |
+| `PI_SESSION_ID` | Current session ID |
+| `PI_GIT_COMMON_DIR` | Shared Git directory when available |
 
-## Debug logging
+Legacy `OPENCODE_*` aliases are also injected for compatibility. By default, the process inherits the host environment. Set `PI_YAML_HOOKS_ENV_ALLOWLIST` to restrict inherited variables; required hook context variables are always added.
 
-When you start either host with `PI_YAML_HOOKS_DEBUG=1`, `pi-yaml-hooks` writes persistent NDJSON logs under the active agent directory:
+## Optional human bash interception
 
-| Host | Default log |
+Set `PI_YAML_HOOKS_ENABLE_USER_BASH=1` to route human `!` and `!!` commands through `tool.before.bash` hooks. This mode is off by default.
+
+It runs pre-bash hooks only. It does not emit `tool.after.*` or `file.changed`. Trusted project hooks can read, block, or leak the typed command, so enable it only when every loaded hook is trusted.
+
+## Limits
+
+| Limit | Value |
 |---|---|
-| Pi | `~/.pi/agent/logs/pi-yaml-hooks.ndjson` |
-| OMP default profile | `~/.omp/agent/logs/pi-yaml-hooks.ndjson` |
-| OMP named profile | `~/.omp/profiles/<profile>/agent/logs/pi-yaml-hooks.ndjson` |
+| Root or imported YAML file | 1 MiB |
+| Import depth | 32 |
+| Prompt context per submission | 64 KiB |
+| Serialized `tool_args` | 64 KiB |
+| Bash stdin | 256 KiB by default |
+| Bash stdout and stderr | 1 MiB each by default |
+| Bash timeout | 60 seconds by default |
+| Async pending work | 1,000 per lane by default |
 
-A non-empty `PI_YAML_HOOKS_LOG_FILE` overrides every default; an empty or whitespace-only value is treated as unset. For active profile paths, trust diagnostics, `/hooks-tail-log`, and host-aware tail commands, see [`debugging-hooks.md`](./debugging-hooks.md).
+Configurable defaults are listed in [Setup](./setup.md#environment-variables).
 
+## Host UI and diagnostics
 
-## Best next steps
+UI actions require `ctx.hasUI` and the matching method. RPC may expose UI methods; headless contexts may not. The extension capability-checks notifications, confirmation, status, custom diagnostics, and TUI autocomplete separately.
 
-- For installation and trust: [`setup.md`](./setup.md)
-- For authoring advice: [`agent-authoring-guide.md`](./agent-authoring-guide.md)
-- For copy-paste snippets: [`examples/`](./examples/)
+At agent start, it adds a short hook-awareness note to the system prompt. Set `PI_YAML_HOOKS_PROMPT_AWARENESS=0` to disable that note without disabling `user.prompt.submit` hooks.
+
+For runtime traces and skip reasons, see [Debugging hooks](./debugging-hooks.md).

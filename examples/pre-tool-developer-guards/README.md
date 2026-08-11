@@ -1,45 +1,33 @@
 # Pre-tool developer guards
 
-This is an opt-in example pack, not a built-in `pi-yaml-hooks` feature. Copy or adapt the snippets below into your own `hooks.yaml`.
+This pack reads pre-tool JSON and exits with code `2` when a rule blocks the call. It covers obvious destructive shell commands, protected file paths, and dependency-install commands.
 
-Use this pack when you want fast checks before PI runs tools that can mutate a project.
-
-## Good use cases
-
-| Hook | Use it when |
-|---|---|
-| `guard-risky-bash` | You want to block obviously dangerous shell commands before they run. |
-| `guard-protected-write` | You want to stop direct writes to secrets, certificates, keys, and local environment files. |
-| `guard-protected-edit` | You want the same protection for edit-based file changes. |
-| `guard-package-install` | You want package installs and dependency updates to be explicit human actions. |
+The patterns are guardrails, not a security boundary. Shell quoting, variables, aliases, and indirect execution can bypass string matching. Use operating-system isolation for hostile code.
 
 ## Install
 
-Copy `hooks.yaml` into your global hook file or a trusted project hook file.
+Copy this directory into your project, or keep it at the same repo-relative path. Merge [`hooks.yaml`](./hooks.yaml) into the project's `.pi/hook/hooks.yaml` or `.omp/hook/hooks.yaml`, then run:
 
-If you keep the script in this repository, run PI from the repository root or update this path in `hooks.yaml`:
-
-```yaml
-bash: 'node ./examples/pre-tool-developer-guards/pre-tool-policy.mjs'
+```text
+/hooks-trust
+/hooks-validate
+/hooks-status
 ```
 
-For another project, copy `pre-tool-policy.mjs` into that project and point the YAML at the copied path.
+The YAML expects this script at:
 
-## Behavior
+```text
+./examples/pre-tool-developer-guards/pre-tool-policy.mjs
+```
 
-- Exit code `2` blocks the matching pre-tool call.
-- These hooks inspect the tool payload before execution; they do not run on `tool.after.*`.
-- The risky-bash regex matches commands following whitespace, start-of-string, or a shell separator (`;`, `&`, `|`, `` ` ``, `(`). It is a coarse heuristic, not a security boundary; quoting, env var indirection, `eval`, and aliasing can all defeat it. Use OS-level controls if you need real isolation.
-- `isProtectedPath` runs a path-segment check, so `config/.env`, `app/secrets/db.yml`, and `home/.ssh/id_rsa` are all protected.
+Update the path if you place the pack elsewhere.
 
-## Quick test
+## Rules
 
-1. Add the hooks.
-2. Ask PI to run `git reset --hard`.
-3. Confirm the bash tool call is blocked.
-4. Ask PI to write `.env`.
-5. Confirm the write tool call is blocked.
-6. Ask PI to run `npm install left-pad`.
-7. Confirm the package install is blocked.
-8. Ask PI to run a harmless command like `pwd`.
-9. Confirm it still runs.
+| Hook | Blocks |
+|---|---|
+| `guard-risky-bash` | Hard resets, destructive clean commands, broad `rm -rf`, recursive `chmod 777`, and pipe-to-shell installs |
+| `guard-protected-write` and `guard-protected-edit` | Common environment, credential, key, certificate, `.ssh`, and `secrets` paths |
+| `guard-package-install` | Common JavaScript, Python, Rust, and Go dependency changes |
+
+To test safely, ask the agent to run a harmless command, then a command that matches one rule. Confirm the first runs and the second is blocked with the expected reason.
