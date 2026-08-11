@@ -1,231 +1,110 @@
 # pi-yaml-hooks
 
-Run `bash` around tool calls, block risky commands, and post UI notifications, confirmations, and status entries from one `hooks.yaml` file. The same `pi-yaml-hooks` package installs natively in the [Pi coding agent](https://www.npmjs.com/package/@earendil-works/pi-coding-agent) and [Oh My Pi (OMP)](https://github.com/can1357/oh-my-pi).
+`pi-yaml-hooks` runs YAML-configured hooks in [Pi](https://www.npmjs.com/package/@earendil-works/pi-coding-agent) and [Oh My Pi (OMP)](https://github.com/can1357/oh-my-pi). Use it to guard tool calls, react to file and session events, add context to a prompt, or show UI feedback.
 
-This repo is the Pi and OMP port of [OpenCode-Hooks](https://github.com/KristjanPikhof/OpenCode-Hooks). The hook model is familiar, each host uses its native package manifest, and there is no extension path to wire manually.
-
-## What it does
-
-- Run hooks on `user.prompt.submit`, `tool.before.*`, `tool.after.*`, `file.changed`, `session.created`, `session.idle`, and `session.deleted`
-- Use `bash`, `tool`, `notify`, `confirm`, and `setStatus` actions
-- Filter hooks with `matchesCodeFiles`, `matchesAnyPath`, and `matchesAllPaths`
-- Load one global root config and one trusted project root config; imports are gated by trust and opt-in env vars
-- Show built-in diagnostics with `/hooks-status`, `/hooks-validate`, `/hooks-trust`, `/hooks-reload`, and `/hooks-tail-log`
-- Persist diagnostics as context-free custom entries on Pi 0.80-capable TUI hosts, with custom-message fallback on older or non-TUI hosts
-- Inject a short hook-awareness note before agent start (disable with `PI_YAML_HOOKS_PROMPT_AWARENESS=0`)
+The same package and hook format work in both hosts.
 
 ## Quick start
 
-Choose the host you use. Both native installs load the same package and the same YAML.
-
-**Pi**
+Install the package for your host:
 
 ```bash
+# Pi
 pi install npm:pi-yaml-hooks
 
-mkdir -p ~/.pi/agent/hook
-cat > ~/.pi/agent/hook/hooks.yaml <<'YAML'
-hooks:
-  - event: session.idle
-    actions:
-      - notify: "Agent is idle"
-YAML
-
-pi
+# OMP
+omp plugin install pi-yaml-hooks
 ```
 
-**OMP, default profile**
+Create a global hook file:
 
 ```bash
-omp plugin install pi-yaml-hooks
+# Pi
+mkdir -p ~/.pi/agent/hook
 
+# OMP default profile
 mkdir -p ~/.omp/agent/hook
-cat > ~/.omp/agent/hook/hooks.yaml <<'YAML'
-hooks:
-  - event: session.idle
-    actions:
-      - notify: "Agent is idle"
-YAML
-
-omp
 ```
 
-In the agent, run:
+Save this as `~/.pi/agent/hook/hooks.yaml` for Pi or `~/.omp/agent/hook/hooks.yaml` for OMP:
+
+```yaml
+hooks:
+  - id: idle-notify
+    event: session.idle
+    actions:
+      - notify: "Agent is idle"
+```
+
+Start the host and run:
 
 ```text
 /hooks-status
 ```
 
-The status output identifies the active global file. Startup also reports:
+The command shows which files loaded, the project trust state, and the active log path.
 
-```text
-[pi-yaml-hooks] Loaded 1 hook (global: 1, project: 0).
-```
+## What you can configure
 
-If a trusted project also has project hooks, the summary includes both scopes:
-
-```text
-[pi-yaml-hooks] Loaded 3 hooks (global: 1, project: 2).
-```
-
-## Requirements
-
-- macOS or Linux
-- Node.js `>=22.19.0`
-- `bash` on `$PATH` (override with `PI_YAML_HOOKS_BASH_EXECUTABLE`)
-- Pi with the verified SDK compatibility pairs described below, or OMP
-
-The Pi SDK matrix verifies exact 0.74.0, 0.79.3, 0.80.10, and 0.84.1 pairs. The end-to-end runtime smoke covers Pi 0.84.1, including an isolated `--no-builtin-tools` scenario. The OMP matrix covers exact 17.0.1 and 17.2.12 compile, internal-test, and runtime-smoke checks. These are tested versions, not a broader support claim.
-
-Windows is unsupported.
-
-## Install
-
-Use the native package command for your host:
-
-```bash
-pi install npm:pi-yaml-hooks
-omp plugin install pi-yaml-hooks
-```
-
-One published package contains both host manifests. Neither install needs `-e` or `--extension`, a manual extension path, a symlink, or an environment override. See [`docs/setup.md`](./docs/setup.md) for named OMP profiles, updates, removal, and local development.
-
-The existing Pi alternatives remain available:
-
-```bash
-pi install https://github.com/KristjanPikhof/pi-yaml-hooks   # latest unreleased
-pi -e npm:pi-yaml-hooks                                     # one-off run
-```
-
-Add `-l` to `pi install` to write to project settings (`.pi/settings.json`) instead of global settings (`~/.pi/agent/settings.json`).
-
-### SDK compatibility matrix
-
-Before widening Pi peer support or merging SDK-sensitive changes, run:
-
-```bash
-npm run compat:sdk-matrix
-```
-
-The matrix checks exact Pi 0.74.0, 0.79.3, 0.80.10, and 0.84.1 SDK pairs (`@earendil-works/pi-coding-agent` and `@earendil-works/pi-tui`). It creates a temporary copy of the repository, installs and asserts each requested pair in that copy only, then runs `npm run typecheck` and `npm run test:internal`. The working checkout's `package.json`, `package-lock.json`, and normal `node_modules` are not mutated.
-
-`npm test` remains a consumer-facing no-op. Use `npm run test:internal` directly in the working checkout for full validation.
-
-To preview the matrix workflow without installing anything:
-
-```bash
-npm run compat:sdk-matrix:dry-run
-```
-
-The runtime smoke checklist covers surfaces unit tests cannot fully emulate:
-
-```bash
-scripts/smoke/pi-runtime-smoke.sh
-scripts/smoke/omp-runtime-smoke.sh
-```
-
-Maintainer-facing details live in [`docs/maintaining.md`](./docs/maintaining.md). Future Pi SDK lines remain gated. Try them explicitly with `npm run compat:sdk-matrix:future`, and do not widen compatibility claims until the future matrix and runtime smoke pass.
-
-## How it works
-
-`pi-yaml-hooks` discovers at most one global root config and one project root config. Project hooks and project-root imports load only when the repo or worktree trust anchor is trusted through `/hooks-trust`, the active host's `trusted-projects.json`, or `PI_YAML_HOOKS_TRUST_PROJECT=1`. This hook trust is separate from host package trust. Global-root imports require `PI_YAML_HOOKS_ALLOW_GLOBAL_IMPORTS=1`, package imports require `PI_YAML_HOOKS_ALLOW_PACKAGE_IMPORTS=1`, and project imports outside the trust anchor require `PI_YAML_HOOKS_ALLOW_PROJECT_IMPORTS_OUTSIDE_TRUST_ANCHOR=1`. The project root is repo/worktree-aware, not exact-cwd-only.
-
-When an event matches, `pi-yaml-hooks` evaluates conditions and runs the configured actions. `bash` actions receive hook context JSON on stdin plus injected `PI_*` environment variables such as `PI_PROJECT_DIR`, `PI_WORKTREE_DIR`, `PI_SESSION_ID`, and `PI_GIT_COMMON_DIR`. A `user.prompt.submit` hook can return extra system context for the same turn through successful stdout. At agent start, the extension also appends a short hook-awareness note to the system prompt so the host has the current hook and trust context while it works.
-
-## Shared Pi and OMP surface
-
-### Events
-
-| Event | Meaning |
+| Surface | Supported values |
 |---|---|
-| `user.prompt.submit` | After prompt expansion and before the agent loop; successful bash stdout becomes system context for the same turn |
-| `tool.before.*` | Before a tool call |
-| `tool.after.*` | After a tool call |
-| `file.changed` | Synthesized after recognized file mutations |
-| `session.created` | Host startup or a genuinely new session; resume and fork signals are excluded |
-| `session.idle` | Agent turn has settled with no retry, compaction retry, or queued continuation remaining; older Pi falls back to `agent_end` behavior |
-| `session.deleted` | Best-effort cleanup on shutdown or session switch; forwards the host's opaque reason string when available |
+| Events | `user.prompt.submit`, `tool.before.*`, `tool.after.*`, `file.changed`, `session.created`, `session.idle`, `session.deleted` |
+| Actions | `bash`, `tool`, `notify`, `confirm`, `setStatus` |
+| Conditions | `matchesCodeFiles`, `matchesAnyPath`, `matchesAllPaths` |
+| Session scope | `all`, `main`, `child` |
+| Commands | `/hooks-status`, `/hooks-validate`, `/hooks-trust`, `/hooks-reload`, `/hooks-tail-log` |
 
-### Actions
+`bash` actions receive JSON on stdin and `PI_*` context variables. A `tool.before.*` bash action can block a tool call by exiting with code `2`. A `user.prompt.submit` bash action can return system context for the same turn on stdout.
 
-| Action | Host behavior |
-|---|---|
-| `bash` | Runs a shell command with injected context |
-| `tool` | Sends a follow-up prompt into the current Pi or OMP session |
-| `notify` | Shows a host notification when `ctx.hasUI` and the UI method exist |
-| `confirm` | Shows a confirmation dialog before a tool runs when UI exists; headless/no-UI contexts fail closed |
-| `setStatus` | Sets a host status-bar/status entry keyed to the hook when the UI method exists |
+See [examples](./docs/examples.md) for copyable hooks and [the reference](./docs/hooks-reference.md) for the full schema.
 
-### Slash commands
+## Config files and trust
 
-| Command | What it shows |
-|---|---|
-| `/hooks-status` | Active hooks, config paths, trust state, and log path |
-| `/hooks-validate` | Validation results for active hooks and skipped untrusted project hooks |
-| `/hooks-trust` | Adds the current repo/worktree anchor to the active Pi or OMP profile's trust store |
-| `/hooks-reload` | Asks the active host to reload extensions; edited hooks also refresh lazily on the next relevant event |
-| `/hooks-tail-log` | Log path plus a ready-to-run `tail -F` command; `--follow` starts a detached live tail, and `--path` prints only the path |
+`pi-yaml-hooks` loads at most one global root file and one project root file.
 
-`/hooks-status`, `/hooks-validate`, and hook-load validation errors persist as context-free custom entries when the host exposes that surface, with a custom-message fallback on older or non-TUI hosts.
-
-Pi and OMP expose `ctx.ui.addAutocompleteProvider` in their TUI editors. `pi-yaml-hooks` layers guarded `/hooks` autocomplete only when `ctx.mode` is `"tui"` (or absent on older SDKs) and the method exists. Suggestions include command names plus contextual hook IDs, event names, config paths, and log-tail options. Hook IDs are loaded lazily and memoized by hook-snapshot signature, not fixed at extension registration time.
-
-## Important limitations
-
-These constraints apply to both hosts unless noted:
-
-- `command:` actions are unsupported and rejected at load time
-- `user.prompt.submit` is synchronous and accepts only `bash`; it adds context but cannot rewrite or block the submitted prompt
-- prompt hooks receive the expanded text prompt, not attached images or information about whether it came from TUI, RPC, or another extension
-- prompt hook failures are fail-open, so the agent turn continues without that context
-- `tool:` sends a follow-up prompt into the current host session; it does not execute a tool or target another session
-- `action: stop` only has real effect on `tool.before.*`
-- `runIn: main` is unsupported for non-`bash` actions
-- `session.deleted` is best-effort and intentionally lossy; duplicate switch/shutdown signals are collapsed and any host-provided reason is forwarded as an opaque string
-- `user_bash` interception is opt-in with `PI_YAML_HOOKS_ENABLE_USER_BASH=1`
-
-Keep those rules in mind when authoring hooks. They explain most surprising behavior.
-
-### What trust grants when user_bash is enabled
-
-When `PI_YAML_HOOKS_ENABLE_USER_BASH=1` is set, every human `!` / `!!` shell command typed in Pi or OMP is routed through `tool.before.bash` hooks before the host executes it. This expands the trust surface significantly:
-
-- **Observation**: hooks receive the typed command in stdin JSON as `tool_args.command`, so a trusted-project bash hook can read the full text of every command you type.
-- **Blocking**: a `tool.before.bash` hook that exits with code `2` will prevent the command from running. A misconfigured or malicious hook can silently block commands.
-- **Exfiltration risk**: the same bash hook can forward `tool_args.command` to an external service. Only enable `PI_YAML_HOOKS_ENABLE_USER_BASH=1` if you trust every hook in every trusted project.
-
-`pi-yaml-hooks` emits a one-time stderr warning on startup listing which trusted projects will have access when this env var is set, and shows a host UI warning on the first intercepted command when a UI is available. The warning fires once per process and reads projects from the active Pi or OMP profile's `trusted-projects.json`.
-
-This mode is disabled by default. Agent-generated `bash` tool calls are always intercepted regardless of this setting.
-
-## Config paths and trust
-
-The preferred root config paths are:
-
-| Host | Global | Project |
+| Host | Global root | Project root |
 |---|---|---|
 | Pi | `~/.pi/agent/hook/hooks.yaml` | `<project>/.pi/hook/hooks.yaml` |
 | OMP default profile | `~/.omp/agent/hook/hooks.yaml` | `<project>/.omp/hook/hooks.yaml` |
 | OMP named profile | `~/.omp/profiles/<profile>/agent/hook/hooks.yaml` | `<project>/.omp/hook/hooks.yaml` |
 
-The same YAML works in every listed location. Each host loads at most one global root and one project root. OMP global discovery stays inside the active profile's agent directory. Project discovery walks upward from the working directory; within each directory, native `.omp` candidates precede trust-gated legacy `.pi` candidates. A nearer `.pi` file therefore wins over a parent directory's `.omp` file.
+Project hooks can execute shell commands, so they do not load until you trust the repo or worktree anchor. Run `/hooks-trust` in the matching host. Pi and OMP keep separate trust stores.
 
-Project hooks are gated by pi-yaml-hooks trust because they can run arbitrary `bash` with your user permissions. Trust is evaluated against the repo or worktree trust anchor, not an arbitrary nested directory string. `trusted-projects.json` entries must be absolute paths; relative entries such as `.` are ignored.
+Root files may import other YAML files. Global imports, package imports, and project imports outside the trust anchor each require an explicit environment opt-in. [Setup](./docs/setup.md) explains paths, trust, imports, and all environment variables.
 
-Run `/hooks-trust` in the active host to trust the current project. Pi writes `~/.pi/agent/trusted-projects.json`. OMP writes the active profile's trust store, either `~/.omp/agent/trusted-projects.json` or `~/.omp/profiles/<profile>/agent/trusted-projects.json`. OMP does not inherit Pi trust, including when OMP loads a legacy `.pi` project config.
+## Important behavior
 
-The temporary `PI_YAML_HOOKS_TRUST_PROJECT=1` opt-in remains available on both hosts. All `PI_YAML_HOOKS_*` environment variable names are retained for compatibility.
+- `tool:` sends a follow-up prompt to the current session. It does not call a tool directly.
+- `command:` is unsupported and rejected while loading hooks.
+- `action: stop` works only on `tool.before.*`.
+- `user.prompt.submit` is synchronous, bash-only, and fail-open. It cannot rewrite or block the prompt.
+- `runIn: main` does not change bash process context. Prefer `scope` for routing.
+- UI actions run only when the current host context exposes the required UI method. `confirm` denies by default without UI.
+- `session.deleted` is best-effort. Treat its optional host reason as an opaque string.
+- Human `!` and `!!` commands are intercepted only when `PI_YAML_HOOKS_ENABLE_USER_BASH=1` is set. Trusted hooks can then read and block those commands.
 
-## Examples
+## Requirements and compatibility
 
-Example workflows live under [`examples/`](./examples/) and [`docs/examples/`](./docs/examples/). Start with [`docs/examples/inject-prompt-context.md`](./docs/examples/inject-prompt-context.md) to add same-turn prompt context, or [`examples/README.md`](./examples/README.md) for complete example packs.
+- macOS or Linux
+- Node.js `>=22.19.0`
+- `bash` on `PATH`
 
-These packs are opt-in examples, not built-in PI features.
+The compatibility matrix tests exact Pi SDK pairs `0.74.0`, `0.79.3`, `0.80.10`, and `0.84.1`. Runtime smoke testing uses Pi `0.84.1`. OMP compile, test, and runtime rows cover exact `17.0.1` and `17.2.12`. These are verified versions, not an open-ended support range.
 
-## Docs
+Windows is unsupported.
 
-Full reference and reading order live in [`docs/README.md`](./docs/README.md).
+## Documentation
+
+| Need | Read |
+|---|---|
+| Install, paths, trust, imports, environment | [Setup](./docs/setup.md) |
+| Events, fields, actions, payloads | [Hooks reference](./docs/hooks-reference.md) |
+| Copyable configurations | [Examples](./docs/examples.md) |
+| Diagnose loading and runtime behavior | [Debugging hooks](./docs/debugging-hooks.md) |
+| Release and compatibility checks | [Maintaining](./docs/maintaining.md) |
+
+Complete script-backed examples live in [`examples/`](./examples/).
 
 ## License
 
-MIT.
+MIT

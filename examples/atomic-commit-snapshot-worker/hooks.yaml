@@ -1,8 +1,8 @@
 # pi-yaml-hooks example: atomic-commit-snapshot-worker
 #
-# Drop these two hooks into <project>/.pi/hook/hooks.yaml (preferred) or
-# <project>/.pi/hooks.yaml. Trust that repo/worktree first, then replace
-# <snapshot-example-dir> with the path to this example directory on disk.
+# Drop these hooks into <project>/.pi/hook/hooks.yaml for Pi or
+# <project>/.omp/hook/hooks.yaml for OMP. Trust the repo or worktree first,
+# then replace <snapshot-example-dir> with this directory's path on disk.
 #
 # See the README in this directory for prerequisites and verification steps.
 

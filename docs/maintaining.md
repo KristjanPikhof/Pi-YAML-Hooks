@@ -1,48 +1,45 @@
 # Maintaining pi-yaml-hooks
 
-> Maintainers only. Skip this file if you are using `pi-yaml-hooks` rather than releasing it.
+This page is for release work and host-sensitive changes. Users can skip it.
 
-This guide defines the dual-host compatibility gate, runtime smoke evidence, and claim-widening policy.
+## Verification levels
 
-## Run the host matrix
+| Change | Minimum check |
+|---|---|
+| Documentation only | Link check, example validation, `git diff --check` |
+| TypeScript source | `npm run typecheck` and focused tests |
+| Runtime or adapter behavior | `npm run test:internal` |
+| Pi SDK compatibility | `npm run compat:sdk-matrix` |
+| Host paths, manifests, lifecycle, UI, commands, or packaging | `npm run compat:host-matrix` |
+| Release candidate | Both runtime smokes and package inspection |
 
-Use the integrated matrix before merging changes to host adapters, lifecycle mapping, package entries, storage paths, commands, UI actions, prompts, or autocomplete:
+`npm test` is a consumer no-op. It is not a validation command.
 
-```bash
-npm run compat:host-matrix
-```
+## Host matrix
 
-For a no-install preview of the exact pinned versions and commands:
+Preview the isolated workflow without installing dependencies:
 
 ```bash
 npm run compat:host-matrix -- --dry-run
 ```
 
-The matrix uses isolated temporary copies, excludes `.git`, `.trekoon`, `node_modules`, and `dist`, isolates npm and home state, cleans up on success or failure, and verifies that `package.json` and `package-lock.json` did not drift.
+Run the full gate:
 
-| Gate | Pinned evidence | What must pass |
-|---|---|---|
-| Pi SDK compatibility | `@earendil-works/pi-coding-agent` and `@earendil-works/pi-tui` at exact `0.74.0`, `0.79.3`, `0.80.10`, and `0.84.1` | Exact installed-version assertions, typecheck, and all discovered internal test files for each pair. |
-| OMP SDK compatibility | `@oh-my-pi/pi-coding-agent` and `@oh-my-pi/pi-tui` at exact `17.0.1` and `17.2.12` | Isolated dependency substitution, typecheck, the complete internal suite, and runtime smoke for each pair. |
-| OMP runtime | Observed OMP CLI, Bun, and installed `pi-yaml-hooks` versions | `scripts/smoke/omp-runtime-smoke.sh`, including native packed install, RPC behavior, real TUI autocomplete, lifecycle mapping, active named-profile paths, trust, and cleanup. |
-| Package contract | Current `package.json`, canonical `package-lock.json`, and packed artifact | Both host manifest entries and public extension stubs exist; declared files are packed; tests, build debris, and undeclared targets are absent. |
+```bash
+npm run compat:host-matrix
+```
 
-`npm test` is a consumer-facing no-op. The matrix intentionally runs `npm run test:internal`.
+The matrix verifies:
 
-### Keep package and manifest checks exact
+- exact Pi SDK pairs `0.74.0`, `0.79.3`, `0.80.10`, and `0.84.1`
+- exact OMP SDK pairs `17.0.1` and `17.2.12`
+- typecheck and all discovered internal tests for each row
+- OMP runtime smoke on both supported rows
+- native package manifests, exports, packed files, cleanup, and lockfile drift
 
-The package gate must confirm:
+The workflow uses temporary copies and isolated home and npm state. A pass does not mutate the working checkout's package files.
 
-- `pi.extensions` points to `./extensions/pi-yaml-hooks/index.ts`
-- `omp.extensions` points to `./extensions/omp-yaml-hooks/index.ts`
-- Pi and OMP host peers remain optional so installing one host does not force the other runtime
-- dev SDK specs resolve to Pi `0.84.1` and OMP `17.2.12`
-- source entries, generated `dist` entries, and public exports are present in `npm pack`
-- package inventory has no `*.test.*`, `*.tsbuildinfo`, or other build debris
-
-If an intentional package-content change alters the inventory, update the verifier and record the new pack summary in the same change. Do not weaken the assertion to make an unexplained count pass.
-
-## Run both runtime smoke gates
+## Runtime smokes
 
 Run both from the repository root:
 
@@ -51,73 +48,38 @@ bash scripts/smoke/pi-runtime-smoke.sh --automated
 bash scripts/smoke/omp-runtime-smoke.sh
 ```
 
-Both scripts stage a checkout copy, then use isolated home, project, profile, npm, and log state. They install the staged packed artifact through the host's native discovery path, reject manual `-e` or `--extension` evidence, and verify that packing did not change the checkout's package files or `dist`.
+These scripts verify native package discovery instead of manual extension paths. Together they cover config and trust paths, tool and lifecycle events, prompt behavior, diagnostics, UI degradation, TUI autocomplete, opt-in human bash interception, logs, package state, and cleanup.
 
-| Runtime evidence | Pi smoke | OMP smoke |
-|---|---|---|
-| Host versions | Records Pi, both `@earendil-works` SDK packages, and Node | Records the OMP CLI, Bun, and installed `pi-yaml-hooks` package |
-| Storage and trust | `.pi` global/project paths, active Pi trust store, default and override logs | Active named-profile `.omp` runtime paths, native project paths, OMP trust store, default log, and no Pi-state leakage |
-| Events | Tool before/after, synthesized file changes, created/idle/deleted, opt-in `user_bash`; a separate `--no-builtin-tools` RPC process proves created/deleted lifecycle | Tool before, created/idle/deleted, and opt-in `user_bash` |
-| UI and prompts | RPC actions, prompt awareness, diagnostics, and real PTY autocomplete | RPC actions/headless degradation, prompt awareness, diagnostics, and real tmux TUI autocomplete with same-process lazy refresh |
-| Cleanup | Temporary install and process cleanup; real-home and checkout package/`dist` checksums unchanged | Temporary profile, package stage, HTTP server, and private tmux cleanup; checkout package/`dist` checksum unchanged |
+The Pi smoke uses exact `0.84.1` host and SDK evidence, including an isolated `--no-builtin-tools` process. The host matrix runs OMP smoke against exact `17.0.1` and `17.2.12` rows.
 
-Default-profile and named-profile OMP storage are both covered by internal tests. The standalone OMP smoke records runtime evidence only for its active named profile.
+## Widen compatibility claims
 
-Current standalone runtime evidence uses Pi `0.84.1` with coding-agent and TUI SDK `0.84.1`, and OMP CLI `17.2.12` with the printed Bun and installed plugin versions. The Pi smoke covers native package discovery, RPC commands and diagnostics, PTY autocomplete, lifecycle hooks, and a graceful isolated `--no-builtin-tools` process. The host matrix runs the OMP smoke once with `17.0.1` and once with `17.2.12`.
+Do not widen a host claim from typecheck alone. For each new exact host line:
 
-The completed `2026-07-18` gates recorded `test_files=24 pass=24 fail=0` for each exact Pi `0.74.0`, `0.79.3`, and `0.80.10` pair and OMP `17.0.1`. The Pi runtime smoke recorded `A23P` through `A26P` at `4/4`, exact Pi/coding-agent/TUI `0.80.10`, and unchanged checkout and real Pi home surfaces. The OMP runtime recorded `A23` through `A26` at `4/4`; package verification recorded `140` files with `11` required entries, `0` missing, and `0` forbidden. Cleanup and package-file drift checks passed.
+1. Pin the host, coding-agent SDK, and TUI SDK in an isolated matrix row.
+2. Pass typecheck and every internal test.
+3. Pack the same artifact and install it through native discovery.
+4. Verify global, project, profile, trust, and log paths.
+5. Exercise lifecycle, tool, prompt, diagnostics, RPC, headless behavior, TUI autocomplete, and cleanup.
+6. Record exact versions and results with the release or pull request.
 
-## Widen a host claim
+`npm run compat:sdk-matrix:future` is advisory. A pass does not widen support by itself.
 
-Do not widen an OMP claim from typechecking alone. Before naming a newer OMP line:
+## Package checks
 
-1. Pin that exact CLI, coding-agent SDK, and TUI SDK in an isolated matrix run.
-2. Pass typecheck and every internal test file with zero failures.
-3. Pack the same artifact and install it through normal OMP package discovery, without a manual extension path.
-4. Prove native default and named-profile config, trust, and log paths.
-5. Prove native-over-legacy precedence and that Pi trust/config state does not leak into OMP.
-6. Prove tool, lifecycle, `user_bash`, prompt, diagnostic, RPC UI, no-UI, and real TUI autocomplete rows.
-7. Keep exact version output, event/log excerpts, path selections, package inventory, and cleanup assertions.
+The packed artifact must contain both host entries, public exports, source declarations, and declared examples. It must not contain tests, TypeScript build info, or undeclared build debris.
 
-Apply the same rule to a future Pi line: the advisory future SDK probe is not enough. Keep the exact `0.74.0`, `0.79.3`, `0.80.10`, and `0.84.1` claims until that line's exact matrix and live runtime smoke both pass.
+```bash
+npm run build:publish
+npm pack --dry-run
+```
 
-## Handle the known timed-hook flake
+If an intentional change alters package contents, update `package.json#files` and the package verifier in the same commit.
 
-`timed out bash hooks kill descendant background processes on POSIX` is a known timing-sensitive Pi matrix test. It is not an allowed failure.
+## Timed-hook flake policy
 
-If it is the only failing test:
-
-1. Keep the first failing output.
-2. Re-run the same matrix stage once in the same isolated environment.
-3. If the rerun passes, record both outputs and label the result as the known timed-hook flake.
-4. If it fails again, or any other test fails, treat the gate as failed. Do not edit expected counts, skip the test, or report the matrix as passing.
+The POSIX descendant-cleanup test is timing-sensitive but is not an allowed failure. If it is the only failing test, retain the first output and rerun that exact matrix stage once. A second failure fails the gate. A passing rerun must still be reported as the known timed-hook flake.
 
 ## Evidence to keep
 
-For every host-sensitive change, retain:
-
-- exact command and exit status
-- CLI, SDK, Node or Bun, and package versions
-- discovered test-file, pass, and fail counts
-- selected global/project config, trust, and log paths
-- representative ordered event and UI traces
-- package manifest targets and `npm pack` summary
-- cleanup assertions and package-file drift result
-- the first failure and one rerun when the known timed-hook policy applies
-
-## Verification commands
-
-| Command | Use |
-|---|---|
-| `npm run typecheck` | TypeScript verification after source changes |
-| `npm run build` | Build before direct `dist/**/*.test.js` execution |
-| `npm run test:internal` | Complete internal suite; the timed-hook policy above applies |
-| `npm run compat:sdk-matrix` | Exact Pi `0.74.0`/`0.79.3`/`0.80.10`/`0.84.1` compatibility |
-| `npm run compat:sdk-matrix:future` | Advisory Pi future-line probe; never widens claims by itself |
-| `npm run compat:host-matrix -- --dry-run` | Print exact dual-host matrix versions and commands without installs |
-| `npm run compat:host-matrix` | Full Pi/OMP compile, test, runtime, package, cleanup, and drift gate |
-| `bash scripts/smoke/pi-runtime-smoke.sh --automated` | Isolated native Pi runtime smoke |
-| `bash scripts/smoke/omp-runtime-smoke.sh` | Isolated native OMP `17.2.12` runtime smoke |
-| `npm run build:publish && npm pack --dry-run` | Inspect publish output and package inventory |
-
-Keep [`hooks-reference.md`](./hooks-reference.md) and [`debugging-hooks.md`](./debugging-hooks.md) aligned with the evidence.
+Keep exact commands, exit codes, host and SDK versions, test counts, selected paths, representative event traces, package inventory, cleanup assertions, and drift results. Do not copy dated evidence into this guide; attach it to the release or pull request where it can stay tied to the tested revision.
