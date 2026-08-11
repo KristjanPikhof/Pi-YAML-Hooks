@@ -19,6 +19,7 @@ Hook bash, follow-up prompts, and host UI actions onto tool calls and session ev
 - Show UI notifications and status entries when the active host exposes the required UI capability
 - Send follow-up prompts back into the current host session with `tool:` actions
 - React to session lifecycle events: `session.created`, `session.idle`, and `session.deleted`
+- Add system context to the current turn with `user.prompt.submit`
 - React to `file.changed`, which PI synthesizes after recognized file mutations, including `cp`/`git cp`, `mv`/`git mv`, `rm`/`git rm`, `touch`, and `mkdir`
 - Filter hooks by file extension or glob patterns, including post-tool mutation hooks with changed paths
 - Restrict hooks to `all`, `main`, or `child` sessions
@@ -29,7 +30,7 @@ Hook bash, follow-up prompts, and host UI actions onto tool calls and session ev
 
 These are the details that matter most when authoring hooks in Pi or OMP:
 
-- The Pi SDK compatibility matrix covers exact 0.74.0, 0.79.3, and 0.80.10 pairs. Runtime smoke testing used Pi 0.80.10 and OMP 17.0.1; this does not claim support for a wider version range.
+- The Pi SDK compatibility matrix covers exact 0.74.0, 0.79.3, 0.80.10, and 0.84.1 pairs. Runtime smoke testing uses Pi 0.84.1 and exact OMP 17.0.1 and 17.2.12 rows; this does not claim support for a wider version range.
 - Only one global root config and one project root config are discovered.
 - Project-root imports require pi-yaml-hooks project-hook trust. Host package trust is separate and does not activate project hooks here. Global-root imports require `PI_YAML_HOOKS_ALLOW_GLOBAL_IMPORTS=1`; package imports require `PI_YAML_HOOKS_ALLOW_PACKAGE_IMPORTS=1`; project imports outside the trust anchor require `PI_YAML_HOOKS_ALLOW_PROJECT_IMPORTS_OUTSIDE_TRUST_ANCHOR=1`.
 - OMP uses the active profile's agent directory and separate trust store. Global discovery stays inside that agent directory. Project discovery checks native `.omp` before legacy `.pi` within each directory while walking upward; a legacy fallback still requires OMP trust.

@@ -1,4 +1,10 @@
 hooks:
+  - id: omp-smoke-user-prompt-submit
+    event: user.prompt.submit
+    actions:
+      - bash: |
+          node -e 'let input=""; process.stdin.on("data", chunk => input += chunk); process.stdin.on("end", () => { const ctx = JSON.parse(input); if (ctx.prompt !== "inspect installed OMP hook awareness") process.exit(1); process.stdout.write("OMP runtime smoke prompt context"); });'
+
   - id: omp-lazy-initial
     event: session.created
     actions:

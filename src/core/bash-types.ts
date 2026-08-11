@@ -6,6 +6,7 @@ export interface BashHookContext {
   readonly session_id: string
   readonly event: string
   readonly cwd: string
+  readonly prompt?: string
   readonly files?: readonly string[]
   readonly changes?: readonly FileChange[]
   readonly tool_name?: string

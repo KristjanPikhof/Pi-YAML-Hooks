@@ -6,6 +6,7 @@ These examples are designed to be copied into `hooks.yaml` with minimal editing.
 
 | File | What it covers |
 |---|---|
+| [`inject-prompt-context.md`](./inject-prompt-context.md) | Add prompt-aware system context to the same agent turn |
 | [`notify-on-idle.md`](./notify-on-idle.md) | The simplest possible visible hook |
 | [`confirm-before-bash.md`](./confirm-before-bash.md) | Require user approval before any `bash` tool call |
 | [`block-destructive-bash.md`](./block-destructive-bash.md) | Block selected `bash` commands with exit code `2` |

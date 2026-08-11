@@ -11,7 +11,7 @@ import {
 } from "../core/config-paths.js"
 import { loadDiscoveredHooksSnapshot } from "../core/load-hooks.js"
 import { getHookHostProfile } from "../core/host-profile.js"
-import { SESSION_HOOK_EVENTS } from "../core/types.js"
+import { PROMPT_HOOK_EVENTS, SESSION_HOOK_EVENTS } from "../core/types.js"
 import { getPiHooksLogFilePath } from "../core/logger.js"
 
 const HOOK_COMMANDS = [
@@ -210,7 +210,7 @@ function getOrComputeAutocompleteState(cwd: string): HookAutocompleteState {
     projectDir,
     commandItems: HOOK_COMMANDS,
     hookIdItems: Array.from(hookIds.values()).sort(compareAutocompleteItems),
-    eventItems: [...SESSION_HOOK_EVENTS, ...TOOL_HOOK_EVENTS].map((event) => ({
+    eventItems: [...SESSION_HOOK_EVENTS, ...PROMPT_HOOK_EVENTS, ...TOOL_HOOK_EVENTS].map((event) => ({
       value: event,
       label: event,
       description: "pi-yaml-hooks event name",

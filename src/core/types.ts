@@ -1,4 +1,5 @@
 export const SESSION_HOOK_EVENTS = ["session.idle", "session.created", "session.deleted", "file.changed"] as const
+export const PROMPT_HOOK_EVENTS = ["user.prompt.submit"] as const
 
 /**
  * Reason values forwarded with `session.deleted` envelopes.
@@ -18,9 +19,10 @@ export const HOOK_RUN_IN = ["current", "main"] as const
 export const HOOK_BEHAVIORS = ["stop"] as const
 
 export type SessionHookEvent = (typeof SESSION_HOOK_EVENTS)[number]
+export type PromptHookEvent = (typeof PROMPT_HOOK_EVENTS)[number]
 export type ToolHookPhase = "before" | "after"
 export type ToolHookEvent = `tool.${ToolHookPhase}.*` | `tool.${ToolHookPhase}.${string}`
-export type HookEvent = SessionHookEvent | ToolHookEvent
+export type HookEvent = SessionHookEvent | PromptHookEvent | ToolHookEvent
 export type HookLegacyCondition = (typeof LEGACY_HOOK_CONDITIONS)[number]
 export type HookPathConditionKey = (typeof PATH_HOOK_CONDITION_KEYS)[number]
 /**
@@ -259,7 +261,11 @@ export interface HookPolicy {
 }
 
 export function isHookEvent(value: unknown): value is HookEvent {
-  return typeof value === "string" && (SESSION_HOOK_EVENTS.includes(value as SessionHookEvent) || /^tool\.(before|after)\.(\*|.+)$/.test(value))
+  return typeof value === "string" && (
+    SESSION_HOOK_EVENTS.includes(value as SessionHookEvent) ||
+    PROMPT_HOOK_EVENTS.includes(value as PromptHookEvent) ||
+    /^tool\.(before|after)\.(\*|.+)$/.test(value)
+  )
 }
 
 export function isHookLegacyCondition(value: unknown): value is HookLegacyCondition {

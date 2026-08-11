@@ -9,16 +9,18 @@ Use this guide when a person or another agent needs to write or modify `hooks.ya
 3. Use `bash` for deterministic automation.
 4. Use `tool:` only when you intentionally want to send the current PI session a follow-up instruction.
 5. Use `tool.before.*` only for checks that must happen before execution.
-6. Use `file.changed` or `session.idle` for post-processing work.
-7. Add `conditions` so hooks do not fire more broadly than intended.
-8. Use `async: true` for slow post-processing bash hooks.
-9. Assume project hooks are disabled until the project is trusted.
-10. Verify with a small manual test after editing the file.
+6. Use `user.prompt.submit` only for context needed in the current turn.
+7. Use `file.changed` or `session.idle` for post-processing work.
+8. Add `conditions` so hooks do not fire more broadly than intended.
+9. Use `async: true` for slow post-processing bash hooks.
+10. Assume project hooks are disabled until the project is trusted.
+11. Verify with a small manual test after editing the file.
 
 ## Choosing the right event
 
 | Goal | Preferred event |
 |---|---|
+| Add context before the agent starts a turn | `user.prompt.submit` |
 | Guard a command before it runs | `tool.before.<name>` |
 | React to any tool call | `tool.before.*` or `tool.after.*` |
 | React only to file mutations | `file.changed` |
@@ -65,6 +67,14 @@ Bad uses:
 - slow network calls
 - long formatting jobs
 - expensive repository scans
+
+### Keep prompt hooks fast and local
+
+`user.prompt.submit` runs synchronously before the agent loop. Every action adds to prompt latency, so avoid network calls and expensive repository scans.
+
+The bash action receives the expanded text prompt as `prompt` in stdin JSON. Treat it as sensitive input. Project trust allows the hook to read that text and run arbitrary shell commands.
+
+Use this event to add context for the current turn. It cannot rewrite the prompt, block submission, add another user message, inspect attached images, or identify whether the prompt came from TUI, RPC, or another extension.
 
 ### Use `file.changed` for exact-ish file workflows
 
@@ -134,6 +144,7 @@ hooks:
 Avoid building important workflows around these assumptions:
 
 - `command:` actions working on PI
+- `user.prompt.submit` rewriting or rejecting a prompt
 - `tool:` calling a tool directly
 - `session.deleted` meaning "the session was definitely closed"
 - `runIn: main` switching the actual bash execution context

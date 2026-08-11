@@ -6,7 +6,7 @@ This repo is the Pi and OMP port of [OpenCode-Hooks](https://github.com/Kristjan
 
 ## What it does
 
-- Run hooks on `tool.before.*`, `tool.after.*`, `file.changed`, `session.created`, `session.idle`, and `session.deleted`
+- Run hooks on `user.prompt.submit`, `tool.before.*`, `tool.after.*`, `file.changed`, `session.created`, `session.idle`, and `session.deleted`
 - Use `bash`, `tool`, `notify`, `confirm`, and `setStatus` actions
 - Filter hooks with `matchesCodeFiles`, `matchesAnyPath`, and `matchesAllPaths`
 - Load one global root config and one trusted project root config; imports are gated by trust and opt-in env vars
@@ -75,7 +75,7 @@ If a trusted project also has project hooks, the summary includes both scopes:
 - `bash` on `$PATH` (override with `PI_YAML_HOOKS_BASH_EXECUTABLE`)
 - Pi with the verified SDK compatibility pairs described below, or OMP
 
-The Pi SDK matrix verifies exact 0.74.0, 0.79.3, and 0.80.10 pairs. The end-to-end runtime smoke passed with Pi 0.80.10, including an isolated `--no-builtin-tools` scenario, and with OMP 17.0.1. These are tested versions, not a broader support claim.
+The Pi SDK matrix verifies exact 0.74.0, 0.79.3, 0.80.10, and 0.84.1 pairs. The end-to-end runtime smoke covers Pi 0.84.1, including an isolated `--no-builtin-tools` scenario. The OMP matrix covers exact 17.0.1 and 17.2.12 compile, internal-test, and runtime-smoke checks. These are tested versions, not a broader support claim.
 
 Windows is unsupported.
 
@@ -107,7 +107,7 @@ Before widening Pi peer support or merging SDK-sensitive changes, run:
 npm run compat:sdk-matrix
 ```
 
-The matrix checks exact Pi 0.74.0, 0.79.3, and 0.80.10 SDK pairs (`@earendil-works/pi-coding-agent` and `@earendil-works/pi-tui`). It creates a temporary copy of the repository, installs and asserts each requested pair in that copy only, then runs `npm run typecheck` and `npm run test:internal`. The working checkout's `package.json`, `package-lock.json`, and normal `node_modules` are not mutated.
+The matrix checks exact Pi 0.74.0, 0.79.3, 0.80.10, and 0.84.1 SDK pairs (`@earendil-works/pi-coding-agent` and `@earendil-works/pi-tui`). It creates a temporary copy of the repository, installs and asserts each requested pair in that copy only, then runs `npm run typecheck` and `npm run test:internal`. The working checkout's `package.json`, `package-lock.json`, and normal `node_modules` are not mutated.
 
 `npm test` remains a consumer-facing no-op. Use `npm run test:internal` directly in the working checkout for full validation.
 
@@ -130,7 +130,7 @@ Maintainer-facing details live in [`docs/maintaining.md`](./docs/maintaining.md)
 
 `pi-yaml-hooks` discovers at most one global root config and one project root config. Project hooks and project-root imports load only when the repo or worktree trust anchor is trusted through `/hooks-trust`, the active host's `trusted-projects.json`, or `PI_YAML_HOOKS_TRUST_PROJECT=1`. This hook trust is separate from host package trust. Global-root imports require `PI_YAML_HOOKS_ALLOW_GLOBAL_IMPORTS=1`, package imports require `PI_YAML_HOOKS_ALLOW_PACKAGE_IMPORTS=1`, and project imports outside the trust anchor require `PI_YAML_HOOKS_ALLOW_PROJECT_IMPORTS_OUTSIDE_TRUST_ANCHOR=1`. The project root is repo/worktree-aware, not exact-cwd-only.
 
-When an event matches, `pi-yaml-hooks` evaluates conditions and runs the configured actions. `bash` actions receive hook context JSON on stdin plus injected `PI_*` environment variables such as `PI_PROJECT_DIR`, `PI_WORKTREE_DIR`, `PI_SESSION_ID`, and `PI_GIT_COMMON_DIR`. At agent start, the extension also appends a short hook-awareness note to the system prompt so the host has the current hook and trust context while it works.
+When an event matches, `pi-yaml-hooks` evaluates conditions and runs the configured actions. `bash` actions receive hook context JSON on stdin plus injected `PI_*` environment variables such as `PI_PROJECT_DIR`, `PI_WORKTREE_DIR`, `PI_SESSION_ID`, and `PI_GIT_COMMON_DIR`. A `user.prompt.submit` hook can return extra system context for the same turn through successful stdout. At agent start, the extension also appends a short hook-awareness note to the system prompt so the host has the current hook and trust context while it works.
 
 ## Shared Pi and OMP surface
 
@@ -138,6 +138,7 @@ When an event matches, `pi-yaml-hooks` evaluates conditions and runs the configu
 
 | Event | Meaning |
 |---|---|
+| `user.prompt.submit` | After prompt expansion and before the agent loop; successful bash stdout becomes system context for the same turn |
 | `tool.before.*` | Before a tool call |
 | `tool.after.*` | After a tool call |
 | `file.changed` | Synthesized after recognized file mutations |
@@ -174,6 +175,9 @@ Pi and OMP expose `ctx.ui.addAutocompleteProvider` in their TUI editors. `pi-yam
 These constraints apply to both hosts unless noted:
 
 - `command:` actions are unsupported and rejected at load time
+- `user.prompt.submit` is synchronous and accepts only `bash`; it adds context but cannot rewrite or block the submitted prompt
+- prompt hooks receive the expanded text prompt, not attached images or information about whether it came from TUI, RPC, or another extension
+- prompt hook failures are fail-open, so the agent turn continues without that context
 - `tool:` sends a follow-up prompt into the current host session; it does not execute a tool or target another session
 - `action: stop` only has real effect on `tool.before.*`
 - `runIn: main` is unsupported for non-`bash` actions
@@ -214,7 +218,7 @@ The temporary `PI_YAML_HOOKS_TRUST_PROJECT=1` opt-in remains available on both h
 
 ## Examples
 
-Example workflows live under [`examples/`](./examples/). Start with [`examples/README.md`](./examples/README.md) for complete example packs, including pre-tool developer guards and post-tool developer feedback hooks.
+Example workflows live under [`examples/`](./examples/) and [`docs/examples/`](./docs/examples/). Start with [`docs/examples/inject-prompt-context.md`](./docs/examples/inject-prompt-context.md) to add same-turn prompt context, or [`examples/README.md`](./examples/README.md) for complete example packs.
 
 These packs are opt-in examples, not built-in PI features.
 

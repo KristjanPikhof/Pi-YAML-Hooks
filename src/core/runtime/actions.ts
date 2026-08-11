@@ -460,6 +460,7 @@ const handleBash: ActionHandler = async ({
       session_id: sessionID,
       event,
       cwd: executionDirectory,
+      ...(context.prompt === undefined ? {} : { prompt: context.prompt }),
       files: context.files,
       changes: context.changes,
       tool_name: context.toolName,
@@ -485,6 +486,30 @@ const handleBash: ActionHandler = async ({
       stderr: redactSensitiveContent(result.stderr),
     },
   })
+
+  if (event === "user.prompt.submit") {
+    const additionalContext = result.stdout.trim()
+    const outputUsable = !result.outputTruncated && !result.stdinTruncated
+    if (result.status === "success" && outputUsable && additionalContext.length > 0) {
+      return { blocked: false, additionalContext: [additionalContext] }
+    }
+    if (result.outputTruncated || result.stdinTruncated) {
+      logger.warn("action_result", "Discarded prompt hook output from a truncated execution.", {
+        cwd: projectDir,
+        event,
+        sessionId: sessionID,
+        hookId,
+        hookSource: sourceFilePath,
+        action: actionType,
+        details: {
+          status: result.status,
+          outputTruncated: result.outputTruncated ?? false,
+          stdinTruncated: result.stdinTruncated ?? false,
+        },
+      })
+    }
+    return { blocked: false }
+  }
 
   if (result.blocking) {
     return { blocked: true, blockReason: redactSensitiveContent(result.stderr.trim()) || "Blocked by hook" }

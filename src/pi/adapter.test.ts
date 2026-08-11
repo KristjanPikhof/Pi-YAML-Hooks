@@ -972,6 +972,64 @@ const cases: Case[] = [
       }),
   },
   {
+    name: "before_agent_start injects trusted prompt context and reloads changes",
+    run: async () =>
+      await withIsolatedProject(true, async (projectDir) => {
+        writeProjectHooks(
+          projectDir,
+          `hooks:
+  - event: user.prompt.submit
+    actions:
+      - bash: printf 'first context'
+`,
+        )
+
+        const harness = new FakePiHarness(projectDir)
+        harness.register()
+        const first = await harness.beforeAgentStart("expanded prompt", "base system prompt")
+        writeProjectHooks(
+          projectDir,
+          `hooks:
+  - event: user.prompt.submit
+    actions:
+      - bash: printf 'reloaded context'
+`,
+        )
+        const second = await harness.beforeAgentStart("expanded prompt", "base system prompt")
+        const firstPrompt = (first as { systemPrompt?: string } | undefined)?.systemPrompt
+        const secondPrompt = (second as { systemPrompt?: string } | undefined)?.systemPrompt
+        return firstPrompt?.includes("Context from pi-yaml-hooks user.prompt.submit:\nfirst context") === true &&
+          secondPrompt?.includes("Context from pi-yaml-hooks user.prompt.submit:\nreloaded context") === true &&
+          !secondPrompt.includes("first context")
+          ? { ok: true }
+          : { ok: false, detail: JSON.stringify({ firstPrompt, secondPrompt }) }
+      }),
+  },
+  {
+    name: "before_agent_start excludes untrusted prompt hooks",
+    run: async () =>
+      await withIsolatedProject(false, async (projectDir) => {
+        writeProjectHooks(
+          projectDir,
+          `hooks:
+  - event: user.prompt.submit
+    actions:
+      - bash: printf 'untrusted context'
+`,
+        )
+
+        const harness = new FakePiHarness(projectDir)
+        harness.register()
+        const result = await harness.beforeAgentStart("sensitive prompt", "base system prompt")
+        const systemPrompt = (result as { systemPrompt?: string } | undefined)?.systemPrompt
+        return typeof systemPrompt === "string" &&
+          !systemPrompt.includes("Context from pi-yaml-hooks user.prompt.submit:") &&
+          !systemPrompt.includes("untrusted context")
+          ? { ok: true }
+          : { ok: false, detail: JSON.stringify(result) }
+      }),
+  },
+  {
     name: "before_agent_start mentions UI degradation in headless mode",
     run: async () =>
       await withIsolatedProject(true, async (projectDir) => {

@@ -6,6 +6,7 @@ This document describes the current `pi-yaml-hooks` behavior on Pi and OMP as im
 
 - [Hook file shape](#hook-file-shape)
 - [`/hooks` command autocomplete](#hooks-command-autocomplete)
+- [Prompt submission context](#prompt-submission-context)
 - [Optional `user_bash` interception](#optional-user_bash-interception)
 - [`imports`](#imports)
 - [Hook fields](#hook-fields)
@@ -58,7 +59,27 @@ At agent start, `pi-yaml-hooks` appends a short hook-awareness note to the syste
 
 This is registered through the host's `before_agent_start` event. It is not a YAML hook event.
 
-Set `PI_YAML_HOOKS_PROMPT_AWARENESS=0` to disable this prompt injection.
+Set `PI_YAML_HOOKS_PROMPT_AWARENESS=0` to disable the awareness note. This setting does not disable `user.prompt.submit` YAML hooks.
+
+## Prompt submission context
+
+`user.prompt.submit` runs after the host expands a text prompt and before the agent loop starts. Each matching bash action receives the prompt through stdin. Successful stdout is trimmed, and non-empty output is added to the system context for the same turn.
+
+Exact rules:
+
+- hooks and actions run synchronously in resolved configuration order
+- only `bash` actions are accepted
+- `async`, `action: stop`, `command`, `tool`, `notify`, `confirm`, and `setStatus` are rejected
+- `scope: all`, `scope: main`, and `scope: child` keep their normal session-lineage behavior
+- only output with `status: success` is eligible for injection
+- empty, failed, timed-out, blocked, or truncated output is ignored and logged
+- all accepted output is capped at 64 KiB of UTF-8 text per submission
+- an output that would exceed the remaining limit is skipped in full
+- failures are fail-open and do not stop the agent turn
+
+Pi appends each result to its string system prompt with blank-line separators. OMP appends entries to a copied system-prompt array. Every injected block starts with `Context from pi-yaml-hooks user.prompt.submit:`.
+
+This event adds context only. It does not rewrite the submitted prompt, block submission, create another user message, include attached images, or identify whether the prompt came from TUI, RPC, or another extension.
 
 ## Optional `user_bash` interception
 
@@ -121,7 +142,7 @@ Without overrides, hooks from both files stay active.
 | `conditions` | no | array | Additional filters. All conditions must pass. |
 | `scope` | no | `all`, `main`, `child` | Filters which session lineage the hook itself runs in. Defaults to `all`. |
 | `runIn` | no | `current`, `main` | Compatibility field for action targeting. Defaults to `current`. Non-`bash` actions (`tool`, `notify`, `confirm`, `setStatus`) with `runIn: main` are rejected at load time and the hook is dropped. See the host notes below before relying on it. |
-| `async` | no | boolean or object | Queues the hook for background execution. `true` keeps serialized per-event behavior. `{ group?, concurrency? }` lets hooks share a named async queue with optional bounded concurrency. Only allowed on non-`tool.before` hooks, not on `session.idle`, and only for `bash`-only hooks. |
+| `async` | no | boolean or object | Queues the hook for background execution. `true` keeps serialized per-event behavior. `{ group?, concurrency? }` lets hooks share a named async queue with optional bounded concurrency. Only allowed on non-`tool.before` hooks, not on `session.idle` or `user.prompt.submit`, and only for `bash`-only hooks. |
 | `override` | no | string | Replaces a previously loaded hook with the given `id`. |
 | `disable` | no | boolean | When used with `override`, removes the targeted earlier hook instead of replacing it. |
 
@@ -131,6 +152,7 @@ The YAML surface is host-independent. The adapter translates Pi and OMP events i
 
 | YAML event or action | Pi source or target | OMP source or target | Exact adapter behavior |
 |---|---|---|---|
+| `user.prompt.submit` | `before_agent_start` | `before_agent_start` | Passes the expanded text prompt to synchronous bash hooks. Successful bounded stdout becomes system context for the same turn. Failures do not interrupt submission. |
 | `tool.before.*`, `tool.before.<name>` | `tool_call` | `tool_call` | Dispatches before the named tool. A blocking result is returned to the host, so this is the only event family where `action: stop`, exit code `2`, or a rejected `confirm` can block the tool. |
 | `tool.after.*`, `tool.after.<name>` | `tool_result` | `tool_result` | Dispatches after the named tool. The adapter retains the session ID recorded at `tool_call` so an after-hook is not silently routed to a replacement session. |
 | `file.changed` | Synthesized after `tool_result` | Synthesized after `tool_result` | Not a host event. It fires after `tool.after.*` for recognized mutations described below. Human `user_bash` commands never synthesize it. |
@@ -138,7 +160,7 @@ The YAML surface is host-independent. The adapter translates Pi and OMP events i
 | `session.idle` | `agent_settled`; `agent_end` is the compatibility path | `agent_end`, after `session_stop` control handlers finish | Requires the same live session, `isIdle()`, and no pending messages. Pi deduplicates `agent_end`/`agent_settled`. OMP waits until stop handlers have settled, so a queued continuation, `agent_start`, or replacement session suppresses the candidate; a later terminal `agent_end` can re-arm it. Accumulated file changes are consumed only after a successful idle dispatch. |
 | `session.deleted` | `session_before_switch` or `session_shutdown` | `session_before_switch` or `session_shutdown` | Best-effort and intentionally lossy. Duplicate switch/shutdown signals for one session are collapsed. If the host supplies `reason`, the adapter forwards that string verbatim on the internal envelope and records it in debug dispatch telemetry. Treat it as opaque: values such as `quit`, `reload`, `new`, `resume`, and `fork` are observations, not a closed enum, and matching is unaffected. |
 | opt-in human `user_bash` | `user_bash` | `user_bash` | With `PI_YAML_HOOKS_ENABLE_USER_BASH=1`, maps only to `tool.before.bash`. It does not produce `tool.after.*` or `file.changed`. |
-| agent-start awareness | `before_agent_start` | `before_agent_start` | Appends the hook-awareness text to the existing system prompt unless `PI_YAML_HOOKS_PROMPT_AWARENESS` disables it. This is adapter behavior, not a YAML event. |
+| agent-start awareness | `before_agent_start` | `before_agent_start` | Appends the hook-awareness text to the existing system prompt unless `PI_YAML_HOOKS_PROMPT_AWARENESS` disables it. This adapter behavior shares the handler with `user.prompt.submit`, but the environment setting affects only awareness text. |
 | `tool:` action | `pi.sendUserMessage(..., { deliverAs: "followUp" })` | Same extension API surface | Pi or OMP receives a follow-up prompt in the current matching session. The action does not execute a tool and cannot target another session. A replaced or stale session degrades without leaking the prompt into the new session. |
 | `notify:` action | `ctx.ui.notify` | `ctx.ui.notify` | Runs only when the current context reports UI and exposes the method. `success` maps to `info`. Without UI it degrades, warns once, and does not throw. |
 | `confirm:` action | `ctx.ui.confirm` | `ctx.ui.confirm` | Uses `Confirm` when the title is omitted. Without UI it denies by default, unless `PI_YAML_HOOKS_CONFIRM_AUTO_APPROVE=1` explicitly opts in. Rejection blocks only a `tool.before.*` hook. |
@@ -260,6 +282,7 @@ Exact behavior:
 - on `tool.before.*`, exit code `2` blocks the tool call
 - exit code `124` indicates the bash process exceeded its timeout; `127` indicates a spawn error (e.g. `bash` binary missing); both are logged as hook failures but do not block
 - other non-zero exits are logged as hook failures but do not block
+- on `user.prompt.submit`, only successful, non-empty, non-truncated stdout becomes context; all other results are ignored
 
 ### `tool`
 
@@ -406,6 +429,7 @@ Exact rules:
 
 - `async: true` is allowed only for non-`tool.before` hooks
 - `async: true` is not allowed on `session.idle`
+- `async: true` is not allowed on `user.prompt.submit`
 - `async: true` combined with `action: stop` is rejected at load time; the async queue runs after the dispatch loop has returned, so a stop directive could not block anything
 - async hooks must contain only `bash` actions; `command`, `tool`, `notify`, `confirm`, and `setStatus` actions are rejected at load time because they either have no timeout, require the live UI session, or block the agent turn, all of which would stall or misroute the async queue
 - `async: true` keeps the legacy serialized `event + session` queue
@@ -480,6 +504,19 @@ Example shape for a `file.changed` hook:
 
 Fields are omitted when unavailable.
 
+For `user.prompt.submit`, stdin contains the expanded text prompt and no image data:
+
+```json
+{
+  "event": "user.prompt.submit",
+  "session_id": "session-123",
+  "cwd": "/Users/me/project",
+  "prompt": "Review the current database migration"
+}
+```
+
+The submitted prompt itself is not logged by `pi-yaml-hooks`. Bash stdout and stderr still use the normal sanitized result log, so a hook should not echo sensitive prompt text.
+
 `tool_args` is shallow-cloned with sensitive keys (`password`, `token`, `api_key`, `secret`, `authorization`, `auth`, `private_key`, `bearer`) redacted before serialization, and the JSON encoding is capped at 64 KiB. When the cap is exceeded, `tool_args` collapses to a placeholder of the form:
 
 ```json
@@ -525,8 +562,8 @@ Use the repeatable host matrix and runtime smoke gates in [`maintaining.md`](./m
 
 The current evidence separates compile compatibility from live runtime proof:
 
-- Pi compatibility is pinned to exact `0.74.0`, `0.79.3`, and `0.80.10` SDK matrix rows. The live Pi `0.80.10` smoke also covers native package discovery and an isolated `--no-builtin-tools` lifecycle scenario.
-- OMP compile, internal-suite, package-install, RPC, and TUI smoke evidence is pinned to `17.0.1`.
+- Pi compatibility is pinned to exact `0.74.0`, `0.79.3`, `0.80.10`, and `0.84.1` SDK matrix rows. The live Pi `0.84.1` smoke also covers native package discovery and an isolated `--no-builtin-tools` lifecycle scenario.
+- OMP compile, internal-suite, RPC, and TUI smoke evidence is pinned to exact `17.0.1` and `17.2.12` rows. Package-install verification uses `17.2.12`.
 - Pi startup/new and OMP startup/new produce `session.created`; resume/fork do not.
 - OMP derives idle from the post-stop `agent_end`, after continuation-capable `session_stop` handlers have settled.
 - Both hosts prove `tool.before.bash`, `tool.after.read`, `tool.after.write`, synthesized `file.changed`, current-session `tool:` follow-up prompts, opt-in `user_bash`, UI capability degradation, and lifecycle cleanup.

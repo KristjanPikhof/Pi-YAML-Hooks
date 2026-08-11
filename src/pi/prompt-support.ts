@@ -12,49 +12,117 @@ import type {
 } from "@oh-my-pi/pi-coding-agent"
 
 import { resolveHookConfigPaths, resolveProjectHookResolution } from "../core/config-paths.js"
-import { loadDiscoveredHooksSnapshot, summarizeHookSources } from "../core/load-hooks.js"
+import {
+  loadDiscoveredHooksSnapshot,
+  summarizeHookSources,
+  type HookLoadSnapshot,
+} from "../core/load-hooks.js"
 import { getHookHostProfile } from "../core/host-profile.js"
+import { getPiHooksLogger } from "../core/logger.js"
+import { safeGetSessionId } from "./host-adapter.js"
+import type { RuntimeRegistry } from "./runtime-registry.js"
 
 const PROMPT_AWARENESS_DISABLE_ENV = "PI_YAML_HOOKS_PROMPT_AWARENESS"
+const PROMPT_CONTEXT_PREFIX = "Context from pi-yaml-hooks user.prompt.submit:"
 
-export function registerPromptSupport(api: PiExtensionAPI | OmpExtensionAPI): void {
+export function registerPromptSupport(
+  api: PiExtensionAPI | OmpExtensionAPI,
+  runtimeRegistry?: RuntimeRegistry,
+): void {
   const profile = getHookHostProfile()
   if (profile.kind === "omp") {
     const omp = api as OmpExtensionAPI
-    omp.on("before_agent_start", handleOmpBeforeAgentStart)
+    omp.on("before_agent_start", (event, ctx) => handleOmpBeforeAgentStart(event, ctx, runtimeRegistry))
     return
   }
 
   const pi = api as PiExtensionAPI
-  pi.on("before_agent_start", handlePiBeforeAgentStart)
+  pi.on("before_agent_start", (event, ctx) => handlePiBeforeAgentStart(event, ctx, runtimeRegistry))
 }
 
-function handlePiBeforeAgentStart(
+async function handlePiBeforeAgentStart(
   event: PiBeforeAgentStartEvent,
   ctx: PiExtensionContext,
-): PiBeforeAgentStartEventResult | undefined {
-  const systemPrompt = buildHookAwarenessSystemPrompt(ctx)
-  if (!systemPrompt) {
-    return undefined
+  runtimeRegistry: RuntimeRegistry | undefined,
+): Promise<PiBeforeAgentStartEventResult | undefined> {
+  const blocks = await buildPromptBlocks(event.prompt, ctx, runtimeRegistry)
+  if (blocks === undefined) {
+    return { systemPrompt: event.systemPrompt }
   }
+  if (blocks.length === 0) return undefined
 
   return {
-    systemPrompt: `${event.systemPrompt.trimEnd()}\n\n${systemPrompt}`,
+    systemPrompt: [event.systemPrompt.trimEnd(), ...blocks].join("\n\n"),
   }
 }
 
-function handleOmpBeforeAgentStart(
+async function handleOmpBeforeAgentStart(
   event: OmpBeforeAgentStartEvent,
   ctx: OmpExtensionContext,
-): OmpBeforeAgentStartEventResult | undefined {
-  const systemPrompt = buildHookAwarenessSystemPrompt(ctx)
-  if (!systemPrompt) {
-    return undefined
+  runtimeRegistry: RuntimeRegistry | undefined,
+): Promise<OmpBeforeAgentStartEventResult | undefined> {
+  const blocks = await buildPromptBlocks(event.prompt, ctx, runtimeRegistry)
+  if (blocks === undefined) {
+    return { systemPrompt: event.systemPrompt }
   }
+  if (blocks.length === 0) return undefined
 
   return {
-    systemPrompt: [...event.systemPrompt, systemPrompt],
+    systemPrompt: [...event.systemPrompt, ...blocks],
   }
+}
+
+async function buildPromptBlocks(
+  prompt: string,
+  ctx: PiExtensionContext | OmpExtensionContext,
+  runtimeRegistry: RuntimeRegistry | undefined,
+): Promise<readonly string[] | undefined> {
+  let sessionID: string | undefined
+  try {
+    const loaded = runtimeRegistry?.getHookLoadFor(ctx.cwd)
+    const awareness = buildHookAwarenessSystemPrompt(ctx, loaded)
+    if (!runtimeRegistry || process.platform === "win32") {
+      return awareness ? [awareness] : []
+    }
+
+    runtimeRegistry.rememberContext(ctx.cwd, ctx as PiExtensionContext)
+    sessionID = safeGetSessionId(ctx.sessionManager as PiExtensionContext["sessionManager"])
+    if (!sessionID) {
+      reportPromptDispatchFailure(ctx.cwd, undefined, "missing_session")
+      return undefined
+    }
+
+    const result = await runtimeRegistry.getRuntimeFor(ctx.cwd)["user.prompt.submit"]({
+      sessionID,
+      prompt,
+    })
+    const contextBlocks = result.additionalContext.map(
+      (text) => `${PROMPT_CONTEXT_PREFIX}\n${text}`,
+    )
+    return awareness ? [awareness, ...contextBlocks] : contextBlocks
+  } catch (error) {
+    reportPromptDispatchFailure(
+      ctx.cwd,
+      sessionID,
+      error instanceof Error ? error.name : typeof error,
+    )
+    return undefined
+  }
+}
+
+function reportPromptDispatchFailure(
+  cwd: string,
+  sessionID: string | undefined,
+  failureType: string,
+): void {
+  getPiHooksLogger().error("prompt_dispatch", "Prompt submission hook dispatch failed; continuing the agent turn.", {
+    cwd,
+    event: "user.prompt.submit",
+    ...(sessionID === undefined ? {} : { sessionId: sessionID }),
+    details: { failureType },
+  })
+  // eslint-disable-next-line no-console
+  console.error("[pi-yaml-hooks] Prompt submission hooks failed; continuing without injected context.")
 }
 
 // P3-3: accept a small set of common "off" spellings so users do not have to
@@ -70,12 +138,13 @@ function isPromptAwarenessDisabled(): boolean {
 
 function buildHookAwarenessSystemPrompt(
   ctx: Pick<PiExtensionContext | OmpExtensionContext, "cwd" | "hasUI">,
+  preparedLoad?: HookLoadSnapshot,
 ): string | undefined {
   if (isPromptAwarenessDisabled()) {
     return undefined
   }
 
-  const loaded = loadDiscoveredHooksSnapshot({ projectDir: ctx.cwd })
+  const loaded = preparedLoad ?? loadDiscoveredHooksSnapshot({ projectDir: ctx.cwd })
   const summary = summarizeHookSources(loaded.sources)
   const profile = getHookHostProfile()
   const globalPath = resolveHookConfigPaths({ profile }).global
