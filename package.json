@@ -126,5 +126,10 @@
     "@oh-my-pi/pi-tui": "^17.2.12",
     "@types/node": "^22.19.21",
     "typescript": "^5.9.3"
+  },
+  "allowScripts": {
+    "@google/genai@1.52.0": true,
+    "protobufjs@7.6.5": true,
+    "onnxruntime-node@1.24.3": true
   }
 }
