@@ -46,11 +46,16 @@ async function handlePiBeforeAgentStart(
   runtimeRegistry: RuntimeRegistry | undefined,
 ): Promise<PiBeforeAgentStartEventResult | undefined> {
   const blocks = await buildPromptBlocks(event.prompt, ctx, runtimeRegistry)
-  if (blocks === undefined) {
-    return { systemPrompt: event.systemPrompt }
-  }
-  if (blocks.length === 0) return undefined
+  if (blocks === undefined || blocks.length === 0) return undefined
 
+  // Pi >= 0.86 exposes mutable `systemPromptOptions`. Appending there lets the
+  // host rebuild the prompt from its own sections, which keeps the prompt cache
+  // warm; returning `systemPrompt` would instead replace the whole prompt.
+  if (appendBlocksToSystemPromptOptions(event, blocks)) {
+    return undefined
+  }
+
+  // Older SDKs have no options object, so fall back to string concatenation.
   return {
     systemPrompt: [event.systemPrompt.trimEnd(), ...blocks].join("\n\n"),
   }
@@ -62,10 +67,7 @@ async function handleOmpBeforeAgentStart(
   runtimeRegistry: RuntimeRegistry | undefined,
 ): Promise<OmpBeforeAgentStartEventResult | undefined> {
   const blocks = await buildPromptBlocks(event.prompt, ctx, runtimeRegistry)
-  if (blocks === undefined) {
-    return { systemPrompt: event.systemPrompt }
-  }
-  if (blocks.length === 0) return undefined
+  if (blocks === undefined || blocks.length === 0) return undefined
 
   return {
     systemPrompt: [...event.systemPrompt, ...blocks],
@@ -184,4 +186,36 @@ function buildHookAwarenessSystemPrompt(
   }
 
   return lines.join("\n")
+}
+
+/** Section tag used when appending hook context through Pi >= 0.86 prompt options. */
+const PI_YAML_HOOKS_SECTION_TAG = "pi-yaml-hooks"
+
+/**
+ * Pi >= 0.86 hands handlers a mutable `systemPromptOptions` with collection
+ * fields, and its `BeforeAgentStartEventResult.systemPrompt` replaces the whole
+ * prompt. Appending a section is the additive path; the section tag keeps our
+ * block separate from other extensions' contributions.
+ *
+ * Returns false when the event carries no options object (Pi < 0.86), so the
+ * caller can fall back to the legacy concatenation.
+ */
+function appendBlocksToSystemPromptOptions(
+  event: PiBeforeAgentStartEvent | OmpBeforeAgentStartEvent,
+  blocks: readonly string[],
+): boolean {
+  const carrier = event as { systemPromptOptions?: { sections?: Record<string, string> } }
+  const options = carrier.systemPromptOptions
+  if (!options || typeof options !== "object") {
+    return false
+  }
+
+  if (!options.sections || typeof options.sections !== "object") {
+    options.sections = {}
+  }
+  const existing = options.sections[PI_YAML_HOOKS_SECTION_TAG]
+  const addition = blocks.join("\n\n")
+  options.sections[PI_YAML_HOOKS_SECTION_TAG] =
+    typeof existing === "string" && existing.length > 0 ? `${existing}\n\n${addition}` : addition
+  return true
 }
