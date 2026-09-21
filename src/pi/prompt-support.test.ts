@@ -512,8 +512,7 @@ const cases: Case[] = [
         const pi = createFakePi()
         registerPromptSupport(pi as never, registry)
         const result = await invokeBeforeAgentStart(pi, projectDir, true, "original prompt")
-        const systemPrompt = (result as { systemPrompt?: string } | undefined)?.systemPrompt
-        return systemPrompt === "original prompt"
+        return result === undefined
           ? { ok: true }
           : { ok: false, detail: JSON.stringify(result) }
       }),
@@ -539,7 +538,7 @@ const cases: Case[] = [
           "",
         )
         const systemPrompt = (result as { systemPrompt?: string } | undefined)?.systemPrompt
-        return !dispatched && systemPrompt === "original prompt"
+        return !dispatched && result === undefined && systemPrompt === undefined
           ? { ok: true }
           : { ok: false, detail: JSON.stringify({ dispatched, result }) }
       }),
@@ -556,27 +555,6 @@ const cases: Case[] = [
           }),
         )
         const result = await invokeBeforeAgentStart(pi, projectDir)
-        return result === undefined ? { ok: true } : { ok: false, detail: JSON.stringify(result) }
-      }),
-  },
-  {
-    name: "missing session id returns undefined instead of a full prompt override",
-    run: async () =>
-      await withSandbox({ trusted: true }, async (projectDir) => {
-        const pi = createFakePi()
-        registerPromptSupport(
-          pi as never,
-          createPromptRuntimeRegistry(async () => ({ additionalContext: [] })),
-        )
-        const result = await invokeBeforeAgentStart(
-          pi,
-          projectDir,
-          true,
-          "base system prompt",
-          undefined,
-          "hi",
-          undefined,
-        )
         return result === undefined ? { ok: true } : { ok: false, detail: JSON.stringify(result) }
       }),
   },
