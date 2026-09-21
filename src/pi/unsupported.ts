@@ -35,7 +35,7 @@ const PI_TOOL_NAME_NEVER_MATCH_ADVISORY =
   "PI built-ins are bash, powershell, read, edit, write, grep, find, ls. This tool name will never match unless you install a matching custom tool."
 
 const OMP_TOOL_NAME_NEVER_MATCH_ADVISORY =
-  "OMP built-ins include read, bash, edit, ast_grep, ast_edit, ask, debug, eval, github, glob, grep, lsp, checkpoint, rewind, context_notes, new_context, security_scan, task, hub, todo, web_search, write, memory_edit, retain, recall, reflect, learn, manage_skill, yield, goal, and think. This tool name will never match unless you install a matching custom tool."
+  "OMP built-ins include read, bash, edit, ast_grep, ast_edit, ask, debug, eval, github, glob, grep, find, lsp, checkpoint, rewind, context_notes, new_context, security_scan, task, hub, todo, web_search, write, memory_edit, retain, recall, reflect, learn, manage_skill, yield, goal, and think. This tool name will never match unless you install a matching custom tool."
 
 interface ToolNameDiagnosticsPolicy {
   readonly builtinTools: Readonly<Record<string, true>>
@@ -56,10 +56,10 @@ const PI_TOOL_NAME_POLICY: ToolNameDiagnosticsPolicy = {
   neverMatchAdvisory: PI_TOOL_NAME_NEVER_MATCH_ADVISORY,
 }
 
-// OMP 18.2.6 canonical built-ins (dist/types/tools/builtin-names.d.ts), including
+// OMP 18.2.8 canonical built-ins (dist/types/tools/builtin-names.d.ts), including
 // its hidden but tool-addressable yield, goal, and think tools. OMP 18 dropped
 // inspect_image and browser from the canonical list and added context_notes,
-// new_context, and security_scan. Keep this separate from PI's conservative
+// new_context, and security_scan; 18.2.7 added find. Keep this separate from PI's conservative
 // allow-list: adding OMP names to PI would suppress useful warnings for hooks
 // that can never fire there.
 //
@@ -80,6 +80,7 @@ const OMP_TOOL_NAME_POLICY: ToolNameDiagnosticsPolicy = {
     github: true,
     glob: true,
     grep: true,
+    find: true,
     lsp: true,
     checkpoint: true,
     rewind: true,

@@ -215,8 +215,11 @@ const cases: Case[] = [
   {
     // OMP 18.2.6 additions: context_notes, new_context, security_scan, and the
     // hidden think tool must all be recognised so hooks on them stay silent.
-    name: "OMP 18.2.6 added built-ins produce no advisory",
+    name: "OMP 18 added built-ins including find produce no advisory",
     yaml: `hooks:
+  - event: tool.before.find
+    actions:
+      - bash: "echo hi"
   - event: tool.before.context_notes
     actions:
       - bash: "echo hi"
