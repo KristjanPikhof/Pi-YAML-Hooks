@@ -62,6 +62,11 @@ const PI_TOOL_NAME_POLICY: ToolNameDiagnosticsPolicy = {
 // new_context, and security_scan. Keep this separate from PI's conservative
 // allow-list: adding OMP names to PI would suppress useful warnings for hooks
 // that can never fire there.
+//
+// inspect_image (replaced by `read <image>?q=`), browser, and computer are no
+// longer canonical built-ins in 18.2.6 (browser/computer are eval-side tools, so
+// they do not surface as top-level tool_call events). Hooks targeting them keep
+// the never-match advisory, which is the honest signal.
 const OMP_TOOL_NAME_POLICY: ToolNameDiagnosticsPolicy = {
   builtinTools: {
     read: true,
