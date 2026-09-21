@@ -7,6 +7,9 @@ import { __resetHookHostProfileForTests } from "../core/host-profile.js"
 import { resetPiHooksLoggerForTests } from "../core/logger.js"
 import { getToolFileChanges } from "../core/tool-paths.js"
 import { __testing__ as adapterTesting } from "./adapter.js"
+import { detectHostCapabilities } from "./host-capabilities.js"
+import { resolvePromptDelivery } from "./host-adapter.js"
+import { applyToolArgsRevision } from "./register-adapter.js"
 import { resetHookAutocompleteForTests } from "./autocomplete.js"
 import { mapToolResultToAfterInput } from "./event-mappers.js"
 
@@ -1905,6 +1908,101 @@ hooks: []
       return failures.length === 0
         ? { ok: true }
         : { ok: false, detail: failures.join("; ") }
+    },
+  },
+  {
+    name: "applyToolArgsRevision mutates Pi event.input in place",
+    run: async () => {
+      const event = { toolName: "write", toolCallId: "t1", input: { path: "/a", content: "x" } }
+      const result = applyToolArgsRevision(event as never, { content: "rewritten" }, "pi", {
+        toolArgsRewrite: true,
+        asideDelivery: false,
+      })
+      const input = event.input as Record<string, unknown>
+      const ok = result === undefined && input.content === "rewritten" && input.path === "/a"
+      return ok ? { ok: true } : { ok: false, detail: JSON.stringify({ result, input }) }
+    },
+  },
+  {
+    name: "applyToolArgsRevision returns the OMP tool_call input revision",
+    run: async () => {
+      const event = { toolName: "write", toolCallId: "t2", input: { path: "/a", content: "x" } }
+      const result = applyToolArgsRevision(event as never, { content: "rewritten" }, "omp", {
+        toolArgsRewrite: true,
+        asideDelivery: true,
+      })
+      const revised = (result as { input?: Record<string, unknown> } | undefined)?.input
+      const ok =
+        revised?.content === "rewritten" &&
+        (event.input as Record<string, unknown>).content === "x"
+      return ok ? { ok: true } : { ok: false, detail: JSON.stringify({ result, input: event.input }) }
+    },
+  },
+  {
+    name: "applyToolArgsRevision degrades to a logged no-op without the capability",
+    run: async () => {
+      const warnings: string[] = []
+      const event = { toolName: "write", toolCallId: "t3", input: { path: "/a", content: "x" } }
+      const result = applyToolArgsRevision(
+        event as never,
+        { content: "rewritten" },
+        "pi",
+        { toolArgsRewrite: false, asideDelivery: false },
+        (message) => warnings.push(message),
+      )
+      const ok =
+        result === undefined &&
+        (event.input as Record<string, unknown>).content === "x" &&
+        warnings.length === 1 &&
+        warnings[0].includes("no tool-argument rewriting")
+      return ok ? { ok: true } : { ok: false, detail: JSON.stringify({ result, warnings }) }
+    },
+  },
+  {
+    name: "applyToolArgsRevision ignores an empty revision without warning",
+    run: async () => {
+      const warnings: string[] = []
+      const event = { toolName: "write", toolCallId: "t4", input: { content: "x" } }
+      const result = applyToolArgsRevision(
+        event as never,
+        {},
+        "pi",
+        { toolArgsRewrite: false, asideDelivery: false },
+        (message) => warnings.push(message),
+      )
+      return result === undefined && warnings.length === 0
+        ? { ok: true }
+        : { ok: false, detail: JSON.stringify({ result, warnings }) }
+    },
+  },
+  {
+    name: "host capabilities and prompt delivery follow the verified SDK versions",
+    run: async () => {
+      const checks: Array<[string, boolean]> = [
+        ["pi 0.79.3 argsRewrite", detectHostCapabilities("pi", "0.79.3").toolArgsRewrite === false],
+        ["pi 0.80.10 argsRewrite", detectHostCapabilities("pi", "0.80.10").toolArgsRewrite === false],
+        ["pi 0.84.1 argsRewrite", detectHostCapabilities("pi", "0.84.1").toolArgsRewrite === true],
+        ["pi 0.86.1 argsRewrite", detectHostCapabilities("pi", "0.86.1").toolArgsRewrite === true],
+        ["pi never aside", detectHostCapabilities("pi", "0.86.1").asideDelivery === false],
+        ["omp 17.2.12 argsRewrite", detectHostCapabilities("omp", "17.2.12").toolArgsRewrite === false],
+        ["omp 18.2.6 argsRewrite", detectHostCapabilities("omp", "18.2.6").toolArgsRewrite === true],
+        ["omp 18.2.6 aside", detectHostCapabilities("omp", "18.2.6").asideDelivery === true],
+        ["unknown version is inert", detectHostCapabilities("pi", undefined).toolArgsRewrite === false],
+        [
+          "omp aside delivery",
+          resolvePromptDelivery("omp", { toolArgsRewrite: true, asideDelivery: true }) === "aside",
+        ],
+        [
+          "omp pre-18 followUp",
+          resolvePromptDelivery("omp", { toolArgsRewrite: false, asideDelivery: false }) === "followUp",
+        ],
+        [
+          "pi followUp",
+          resolvePromptDelivery("pi", { toolArgsRewrite: true, asideDelivery: true }) === "followUp",
+        ],
+      ]
+      const failed = checks.filter(([, ok]) => !ok).map(([name]) => name)
+      return failed.length === 0 ? { ok: true } : { ok: false, detail: failed.join("; ") }
     },
   },
 ]
