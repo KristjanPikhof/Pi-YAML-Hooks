@@ -754,8 +754,25 @@ import fs from "node:fs";
 import path from "node:path";
 import { createRequire } from "node:module";
 const realPi = fs.realpathSync(process.argv[2]);
-const codingPackage = path.join(path.dirname(realPi), "..", "package.json");
-const coding = JSON.parse(fs.readFileSync(codingPackage, "utf8"));
+// The bin may sit at dist/cli.js (npm global) or dist/bundle/cli.js (Homebrew),
+// so walk up to the package root instead of assuming a fixed depth.
+let piRoot = path.dirname(realPi);
+let coding;
+for (;;) {
+  const candidate = path.join(piRoot, "package.json");
+  if (fs.existsSync(candidate)) {
+    const parsed = JSON.parse(fs.readFileSync(candidate, "utf8"));
+    if (parsed.name === "@earendil-works/pi-coding-agent") {
+      coding = parsed;
+      break;
+    }
+  }
+  const parent = path.dirname(piRoot);
+  if (parent === piRoot) break;
+  piRoot = parent;
+}
+if (!coding?.version) process.exit(1);
+const codingPackage = path.join(piRoot, "package.json");
 const require = createRequire(codingPackage);
 const tuiEntry = require.resolve("@earendil-works/pi-tui");
 let cursor = path.dirname(tuiEntry);
