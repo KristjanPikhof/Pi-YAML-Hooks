@@ -212,7 +212,7 @@ class FakePiHarness {
     await this.emit("session_shutdown", reason ? { type: "session_shutdown", reason } : {})
   }
 
-  async sessionSwitch(reason?: "new" | "resume" | "fork" | "handoff"): Promise<void> {
+  async sessionSwitch(reason?: "new" | "resume" | "fork"): Promise<void> {
     await this.emit("session_switch", reason ? { type: "session_switch", reason } : {})
   }
 
@@ -551,7 +551,7 @@ const cases: Case[] = [
       }),
   },
   {
-    name: "OMP fork and handoff session_switch plus reasonless starts never create",
+    name: "OMP 18 fork and resume session_switch plus reasonless starts never create",
     run: async () =>
       await withIsolatedProject(true, async (projectDir) => {
         writeProjectHooks(
@@ -563,14 +563,17 @@ const cases: Case[] = [
 `,
         )
 
+        // OMP 18 removed the "handoff" switch reason, so a handoff now shows
+        // up as one of new|resume|fork. Non-new switches must stay mapped to
+        // "no session.created" for every remaining reason.
         const harness = new FakePiHarness(projectDir, "session-1", "omp")
         harness.register()
         await harness.sessionStartWithoutReason()
         harness.replaceSession("forked-session")
         await harness.sessionSwitch("fork")
         await harness.sessionStartWithoutReason()
-        harness.replaceSession("handoff-session")
-        await harness.sessionSwitch("handoff")
+        harness.replaceSession("resumed-session")
+        await harness.sessionSwitch("resume")
         await harness.sessionStartWithoutReason()
 
         return harness.notifications.join(",") === "created"

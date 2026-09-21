@@ -129,7 +129,14 @@ export function installSessionLifecycleHandlers(
   // ---- session_start ----
   // Pi exposes explicit new/startup reasons. OMP's startup may be reasonless;
   // explicit non-create reasons are marked handled so a following reasonless
-  // start cannot misclassify reload/resume/fork/handoff as startup.
+  // start cannot misclassify reload/resume/fork as startup.
+  //
+  // OMP 18 removed the "handoff" switch reason entirely (its shared
+  // SessionBeforeSwitchEvent/SessionSwitchEvent reasons are now exactly
+  // "new" | "resume" | "fork"). A handoff therefore arrives as one of those
+  // values and is intentionally unmapped as a distinct lifecycle reason: it
+  // never creates a session, and deletion still runs through the
+  // before_switch/switch pair below.
   pi.on("session_start", async (event: SessionStartEvent, ctx: ExtensionContext): Promise<void> => {
     rememberContext(ctx.cwd, ctx);
     const reason = extractReason(event);
