@@ -4,7 +4,7 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 DRY_RUN=0
 INCLUDE_FUTURE=0
-SDK_SPECS=("0.74.0" "0.79.3" "0.80.10" "0.84.1")
+SDK_SPECS=("0.74.0" "0.79.3" "0.80.10" "0.84.1" "0.85.1" "0.86.1")
 
 usage() {
   cat <<'USAGE'
@@ -19,12 +19,14 @@ Default matrix:
   - @earendil-works/pi-coding-agent@0.79.3 and @earendil-works/pi-tui@0.79.3
   - @earendil-works/pi-coding-agent@0.80.10 and @earendil-works/pi-tui@0.80.10
   - @earendil-works/pi-coding-agent@0.84.1 and @earendil-works/pi-tui@0.84.1
+  - @earendil-works/pi-coding-agent@0.85.1 and @earendil-works/pi-tui@0.85.1
+  - @earendil-works/pi-coding-agent@0.86.1 and @earendil-works/pi-tui@0.86.1
 
 Options:
   --dry-run         Print the matrix and commands without creating temp installs.
-  --include-future Include the gated 0.85.x future target. This is advisory only and
+  --include-future Include the gated 0.87.x future target. This is advisory only and
                    does not change compatibility claims or package metadata.
-  --versions        Override SDK specs, for example: --versions "0.74.0 0.79.3 0.80.10 0.84.1".
+  --versions        Override SDK specs, for example: --versions "0.74.0 0.79.3 0.80.10 0.84.1 0.85.1 0.86.1".
   -h, --help        Show this help.
 USAGE
 }
@@ -63,7 +65,7 @@ while [[ $# -gt 0 ]]; do
 done
 
 if [[ "$INCLUDE_FUTURE" -eq 1 ]]; then
-  SDK_SPECS+=("0.85.x")
+  SDK_SPECS+=("0.87.x")
 fi
 
 # Track every temp dir so a single cleanup_all wipes them on EXIT/INT/TERM.
@@ -115,7 +117,7 @@ For each SDK spec, the script will:
   5. run npm run test:internal
   6. delete the temporary copy
 
-Future gate: pass --include-future to try 0.85.x without changing compatibility claims or package metadata.
+Future gate: pass --include-future to try 0.87.x without changing compatibility claims or package metadata.
 
 P2-9 note: the matrix tests include src/pi/adapter.test.ts, which pins known
 SDK-emitted "stale session-bound" error messages against
