@@ -549,6 +549,73 @@ const cases: Case[] = [
       }
     },
   },
+  {
+    // A hook that blocks (or a runtime that throws mid-dispatch) must never
+    // fall through to local execution: the typed command is reported back
+    // cancelled with the block reason.
+    name: "user_bash handler fails closed when the runtime call throws",
+    run: () =>
+      withEnabledHandler(async () => {
+        const stub = createPiStub()
+        const fakeRuntime = {
+          "user.bash.before": async (): Promise<void> => {
+            throw new Error("Blocked by hook")
+          },
+        } as unknown as HooksRuntime
+
+        registerUserBashInterception(stub.pi, {
+          getRuntimeFor: (): HooksRuntime => fakeRuntime,
+          rememberContext: () => {},
+          getSessionId: () => "session-abc",
+        })
+
+        const handler = stub.getHandler()
+        const result = await handler(fakeEvent("rm -rf /"), fakeContext())
+
+        if (!result || typeof result !== "object" || !result.result) {
+          return { ok: false, detail: `expected cancelled result, got ${JSON.stringify(result)}` }
+        }
+        const { cancelled, output, exitCode } = result.result
+        if (cancelled !== true) return { ok: false, detail: "result.cancelled !== true" }
+        if (exitCode !== undefined) return { ok: false, detail: `exitCode=${String(exitCode)}` }
+        if (typeof output !== "string" || !output.includes("user_bash blocked") || !output.includes("Blocked by hook")) {
+          return { ok: false, detail: `output did not surface the block reason: ${String(output)}` }
+        }
+        return { ok: true }
+      }),
+  },
+  {
+    // A successful intercept means the hooks let the command through, so the
+    // handler returns void and the host runs it locally.
+    name: "user_bash handler returns void when hooks allow the command",
+    run: () =>
+      withEnabledHandler(async () => {
+        const stub = createPiStub()
+        const seen: Array<Record<string, unknown>> = []
+        const fakeRuntime = {
+          "user.bash.before": async (input: unknown, output: unknown): Promise<void> => {
+            seen.push({ input, output } as Record<string, unknown>)
+          },
+        } as unknown as HooksRuntime
+
+        registerUserBashInterception(stub.pi, {
+          getRuntimeFor: (): HooksRuntime => fakeRuntime,
+          rememberContext: () => {},
+          getSessionId: () => "session-abc",
+        })
+
+        const handler = stub.getHandler()
+        const result = await handler(fakeEvent("echo hi"), fakeContext())
+
+        if (result !== undefined) return { ok: false, detail: `expected void, got ${JSON.stringify(result)}` }
+        if (seen.length !== 1) return { ok: false, detail: `runtime call count=${seen.length}` }
+        const output = seen[0]?.output as { args?: { command?: string } } | undefined
+        if (output?.args?.command !== "echo hi") {
+          return { ok: false, detail: `runtime did not receive the typed command: ${JSON.stringify(seen[0])}` }
+        }
+        return { ok: true }
+      }),
+  },
 ]
 
 export async function main(): Promise<number> {
