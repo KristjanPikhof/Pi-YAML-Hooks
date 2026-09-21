@@ -279,6 +279,7 @@ export async function dispatchHooks(
 
   async function executeDispatchRequest(request: DispatchRequest): Promise<HookExecutionResult> {
     const additionalContext: string[] = []
+    const toolArgs: Record<string, unknown> = {}
     for (const hook of hooksForEvent) {
       const result = await executeHook(
         hook,
@@ -295,12 +296,19 @@ export async function dispatchHooks(
         globMatcher,
       )
       additionalContext.push(...(result.additionalContext ?? []))
+      if (result.toolArgs) {
+        Object.assign(toolArgs, result.toolArgs)
+      }
       if (result.blocked) {
         return { ...result, ...(additionalContext.length > 0 ? { additionalContext } : {}) }
       }
     }
 
-    return { blocked: false, ...(additionalContext.length > 0 ? { additionalContext } : {}) }
+    return {
+      blocked: false,
+      ...(additionalContext.length > 0 ? { additionalContext } : {}),
+      ...(Object.keys(toolArgs).length > 0 ? { toolArgs } : {}),
+    }
   }
 
   async function drainPendingRequests(): Promise<void> {
@@ -428,6 +436,7 @@ async function executeHook(
           await executeAction(
             action,
             hook.runIn,
+            hook.action,
             host,
             projectDir,
             state,
@@ -482,10 +491,12 @@ async function executeHook(
   }
 
   const additionalContext: string[] = []
+  const toolArgs: Record<string, unknown> = {}
   for (const action of hook.actions) {
     const result = await executeAction(
       action,
       hook.runIn,
+      hook.action,
       host,
       projectDir,
       state,
@@ -498,6 +509,9 @@ async function executeHook(
       actionRecursionGuards,
     )
     additionalContext.push(...(result.additionalContext ?? []))
+    if (result.toolArgs) {
+      Object.assign(toolArgs, result.toolArgs)
+    }
     if (result.blocked && options.canBlock) {
       logger.warn("hook_block", "Hook action blocked event execution.", {
         cwd: projectDir,
@@ -511,11 +525,16 @@ async function executeHook(
         ...result,
         ...(hook.action === "stop" ? { stopSession: true } : {}),
         ...(additionalContext.length > 0 ? { additionalContext } : {}),
+        ...(Object.keys(toolArgs).length > 0 ? { toolArgs } : {}),
       }
     }
   }
 
-  return { blocked: false, ...(additionalContext.length > 0 ? { additionalContext } : {}) }
+  return {
+    blocked: false,
+    ...(additionalContext.length > 0 ? { additionalContext } : {}),
+    ...(Object.keys(toolArgs).length > 0 ? { toolArgs } : {}),
+  }
 }
 
 async function shouldRunHook(

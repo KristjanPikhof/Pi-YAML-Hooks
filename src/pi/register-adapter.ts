@@ -34,7 +34,9 @@ import {
   mapToolCallToBeforeInput,
   mapToolCallToBeforeOutput,
   mapToolResultToAfterInput,
+  mergeToolArgs,
 } from "./event-mappers.js";
+import { detectHostCapabilities, type HostCapabilities } from "./host-capabilities.js";
 import { debugLog, isStaleSessionBoundError, safeGetSessionId } from "./host-adapter.js";
 import {
   createRuntimeRegistry,
@@ -69,6 +71,7 @@ export function registerAdapter(
   runtimeRegistry?: RuntimeRegistry,
 ): void {
   const logger = getPiHooksLogger();
+  const capabilities = detectHostCapabilities(hostKind);
 
   if (process.platform === "win32") {
     // eslint-disable-next-line no-console
@@ -134,7 +137,9 @@ export function registerAdapter(
 
     try {
       await runtime["tool.execute.before"](input, output);
-      return;
+      // `action: modify` hooks surface replacement arguments instead of
+      // blocking; the host adapter decides whether the SDK can apply them.
+      return applyToolArgsRevision(event, output.modifiedArgs, hostKind, capabilities);
     } catch (error) {
       const reason = error instanceof Error ? error.message : String(error);
       debugLog(`tool.execute.before blocked ${event.toolName}: ${reason}`);

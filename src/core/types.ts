@@ -16,7 +16,7 @@ export const LEGACY_HOOK_CONDITIONS = ["matchesCodeFiles"] as const
 export const PATH_HOOK_CONDITION_KEYS = ["matchesAnyPath", "matchesAllPaths"] as const
 export const HOOK_SCOPES = ["all", "main", "child"] as const
 export const HOOK_RUN_IN = ["current", "main"] as const
-export const HOOK_BEHAVIORS = ["stop"] as const
+export const HOOK_BEHAVIORS = ["stop", "modify"] as const
 
 export type SessionHookEvent = (typeof SESSION_HOOK_EVENTS)[number]
 export type PromptHookEvent = (typeof PROMPT_HOOK_EVENTS)[number]

@@ -43,6 +43,14 @@ export interface ToolExecuteBeforeInput {
 
 export interface ToolExecuteBeforeOutput {
   readonly args?: Record<string, unknown>
+  /**
+   * Replacement tool arguments surfaced by a matching `action: modify` hook on
+   * `tool.before.*`. The host adapter decides whether to apply them: Pi mutates
+   * `event.input` in place and OMP returns the revision as the tool_call
+   * result, while a host without either capability logs a no-op. The runtime
+   * never sets this on a blocked call — a block throws instead.
+   */
+  modifiedArgs?: Record<string, unknown>
 }
 
 export interface ToolExecuteAfterInput {
@@ -86,6 +94,8 @@ export interface HookExecutionResult {
   readonly blockReason?: string
   readonly stopSession?: boolean
   readonly additionalContext?: readonly string[]
+  /** Replacement tool arguments contributed by `action: modify` hooks. */
+  readonly toolArgs?: Record<string, unknown>
 }
 
 export interface HookMatchDecision {
@@ -399,6 +409,20 @@ export function createHooksRuntime(host: HostAdapter, options: CreateHooksRuntim
           await abortSession(host, sessionID)
         }
         throw new Error(result.blockReason ?? "Blocked by hook")
+      }
+
+      // `action: modify` hooks surface replacement arguments here instead of
+      // blocking. A blocked call returns early above, so a revision is never
+      // applied alongside a block.
+      if (result.toolArgs && Object.keys(result.toolArgs).length > 0) {
+        eventOutput.modifiedArgs = result.toolArgs
+        logger.info("dispatch_end", "Pre-tool dispatch supplied replacement tool arguments.", {
+          cwd: projectDir,
+          event: `tool.before.${eventInput.tool}`,
+          sessionId: sessionID,
+          toolName: eventInput.tool,
+          details: { callID: eventInput.callID, argKeys: Object.keys(result.toolArgs) },
+        })
       }
 
       logger.debug("dispatch_end", "Finished pre-tool dispatch.", {

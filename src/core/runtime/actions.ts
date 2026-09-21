@@ -26,6 +26,7 @@ import { sanitizeToolArgsForSerialization, type SessionStateStore } from "../ses
 import { DEFAULT_BASH_TIMEOUT, type BashExecutionRequest, type BashHookResult } from "../bash-types.js"
 import type {
   HookAction,
+  HookBehavior,
   HookEvent,
   HookRunIn,
   HostAdapter,
@@ -42,6 +43,7 @@ type ExecuteBashHook = (request: BashExecutionRequest) => Promise<BashHookResult
 interface ActionContext {
   readonly action: HookAction
   readonly runIn: HookRunIn
+  readonly behavior?: HookBehavior
   readonly host: HostAdapter
   readonly projectDir: string
   readonly state: SessionStateStore
@@ -69,6 +71,7 @@ type ActionKind = "command" | "tool" | "notify" | "confirm" | "setStatus" | "bas
 export async function executeAction(
   action: HookAction,
   runIn: HookRunIn,
+  behavior: HookBehavior | undefined,
   host: HostAdapter,
   projectDir: string,
   state: SessionStateStore,
@@ -97,6 +100,7 @@ export async function executeAction(
   return await handler({
     action,
     runIn,
+    ...(behavior ? { behavior } : {}),
     host,
     projectDir,
     state,
@@ -429,6 +433,7 @@ const handleSetStatus: ActionHandler = async ({
 
 const handleBash: ActionHandler = async ({
   action,
+  behavior,
   projectDir,
   runBashHook,
   event,
@@ -513,6 +518,29 @@ const handleBash: ActionHandler = async ({
 
   if (result.blocking) {
     return { blocked: true, blockReason: redactSensitiveContent(result.stderr.trim()) || "Blocked by hook" }
+  }
+
+  // `action: modify` turns a successful tool.before.* bash hook's stdout into
+  // replacement tool arguments. A block above wins, and any failed, timed-out,
+  // or truncated run leaves the original arguments untouched.
+  if (behavior === "modify" && event.startsWith("tool.before.")) {
+    if (result.status !== "success" || result.outputTruncated || result.stdinTruncated) {
+      return { blocked: false }
+    }
+    const parsed = parseToolArgsRevision(result.stdout)
+    if (parsed.error) {
+      logger.warn("action_result", "Ignored action: modify output because it was not a usable tool_args payload.", {
+        cwd: projectDir,
+        event,
+        sessionId: sessionID,
+        hookId,
+        hookSource: sourceFilePath,
+        action: actionType,
+        details: { command: config.command, error: parsed.error },
+      })
+      return { blocked: false }
+    }
+    return parsed.toolArgs ? { blocked: false, toolArgs: parsed.toolArgs } : { blocked: false }
   }
 
   return { blocked: false }
@@ -677,4 +705,44 @@ export async function abortSession(host: HostAdapter, sessionID: string): Promis
       details: { error: message },
     })
   }
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value)
+}
+
+/**
+ * Parse the stdout of an `action: modify` bash hook. The contract is a JSON
+ * object with an optional top-level `tool_args` object; anything else is an
+ * error so the caller can log and leave the original arguments untouched.
+ */
+export function parseToolArgsRevision(
+  stdout: string,
+): { toolArgs?: Record<string, unknown>; error?: string } {
+  const trimmed = stdout.trim()
+  if (trimmed.length === 0) {
+    return {}
+  }
+
+  let parsed: unknown
+  try {
+    parsed = JSON.parse(trimmed)
+  } catch {
+    return { error: "stdout is not valid JSON" }
+  }
+
+  if (!isRecord(parsed)) {
+    return { error: "stdout JSON must be an object" }
+  }
+
+  const candidate = parsed.tool_args
+  if (candidate === undefined) {
+    return {}
+  }
+
+  if (!isRecord(candidate)) {
+    return { error: "tool_args must be a JSON object" }
+  }
+
+  return { toolArgs: candidate }
 }
