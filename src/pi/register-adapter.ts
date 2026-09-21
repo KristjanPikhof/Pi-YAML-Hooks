@@ -355,14 +355,13 @@ export function applyToolArgsRevision(
   // gate-only fields (for example a hashline edit's `path`/`paths`). Merging over
   // it is the best source available here; a `modify` hook on such a tool should
   // be verified before it is trusted.
-  const merged = mergeToolArgs((event.input ?? {}) as Record<string, unknown>, modifiedArgs);
   if (kind === "omp") {
     // OMP >= 18 replaces the executed arguments when the handler returns `input`.
-    return { input: merged } as unknown as ToolCallEventResult;
+    return { input: mergeToolArgs(event.input, modifiedArgs) } as unknown as ToolCallEventResult;
   }
 
-  // Pi >= 0.84 reads `event.input` after the handler settles, so mutate in place.
-  ;(event as { input?: Record<string, unknown> }).input = merged;
+  // Pi retains the original input object for execution; preserve its identity.
+  Object.assign(event.input, modifiedArgs);
   return;
 }
 

@@ -77,13 +77,13 @@ Root files may import other YAML files. Global imports, package imports, and pro
 - `tool:` sends a follow-up prompt to the current session. It does not call a tool directly.
 - `command:` is unsupported and rejected while loading hooks.
 - `action: stop` works only on `tool.before.*`.
-- `action: modify` also works only on `tool.before.*`. A bash hook prints `{"tool_args": {...}}` on stdout to replace the arguments for the current call. Hosts without argument rewriting run the original arguments and log a skip.
+- `action: modify` also works only on `tool.before.*`. A bash hook prints `{"tool_args": {...}}` on stdout to update argument fields for the current call. Hosts without argument rewriting run the original arguments and log a skip.
 - `user.prompt.submit` is synchronous, bash-only, and fail-open. It cannot rewrite or block the prompt.
 - `runIn: main` does not change bash process context. Prefer `scope` for routing.
 - UI actions run only when the current host context exposes the required UI method. `confirm` denies by default without UI.
 - `session.deleted` is best-effort. Treat its optional host reason as an opaque string.
 - Human `!` and `!!` commands are intercepted only when `PI_YAML_HOOKS_ENABLE_USER_BASH=1` is set. Trusted hooks can then read and block those commands.
-- Pi `0.86` and later append hook awareness and `user.prompt.submit` context through the host's prompt sections, which keeps the prompt cache warm. Older hosts get the same text appended to the system prompt string.
+- Pi `0.86` and later append hook awareness and `user.prompt.submit` context through the host's prompt sections, which keeps the prompt cache warm. Older hosts and forced prompts use string concatenation.
 
 ## Requirements and compatibility
 

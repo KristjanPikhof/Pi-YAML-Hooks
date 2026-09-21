@@ -117,35 +117,18 @@ export async function dispatchToolHooks(
   // single-pass behaviour.
   const mutationNames = getMutationToolHookNames(toolName);
   const resolvedNames = mutationNames.length > 0 ? mutationNames : [toolName];
+  let dispatchMap = hooks
+  let dispatchNames = resolvedNames
   if (resolvedNames.length > 1) {
-    const unionedHooks = collectUniqueHooksAcrossAliases(hooks, phase, resolvedNames)
-    if (unionedHooks.length === 0) {
-      return { blocked: false }
-    }
-    const canonicalEvent = `tool.${phase}.${resolvedNames[resolvedNames.length - 1]}` as HookEvent
-    const aliasMap: HookMap = new Map()
-    aliasMap.set(canonicalEvent, unionedHooks)
-    return await dispatchHooks(
-      aliasMap,
-      state,
-      host,
-      projectDir,
-      runBashHook,
-      canonicalEvent,
-      sessionID,
-      context,
-      { canBlock: phase === "before" },
-      dispatchStates,
-      actionRecursionGuards,
-      asyncQueues,
-      warnedAsyncStopSources,
-      globMatcher,
-    )
+    const canonicalName = resolvedNames[resolvedNames.length - 1]
+    const canonicalEvent = `tool.${phase}.${canonicalName}` as HookEvent
+    dispatchMap = new Map([[canonicalEvent, collectUniqueHooksAcrossAliases(hooks, phase, resolvedNames)]])
+    dispatchNames = [canonicalName]
   }
 
-  for (const resolvedToolName of resolvedNames) {
+  for (const resolvedToolName of dispatchNames) {
     const result = await dispatchHooks(
-      hooks,
+      dispatchMap,
       state,
       host,
       projectDir,

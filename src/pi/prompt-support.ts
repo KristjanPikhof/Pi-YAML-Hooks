@@ -55,7 +55,7 @@ async function handlePiBeforeAgentStart(
     return undefined
   }
 
-  // Older SDKs have no options object, so fall back to string concatenation.
+  // Older SDKs and forced prompts require string concatenation.
   return {
     systemPrompt: [event.systemPrompt.trimEnd(), ...blocks].join("\n\n"),
   }
@@ -197,16 +197,16 @@ const PI_YAML_HOOKS_SECTION_TAG = "pi-yaml-hooks"
  * prompt. Appending a section is the additive path; the section tag keeps our
  * block separate from other extensions' contributions.
  *
- * Returns false when the event carries no options object (Pi < 0.86), so the
- * caller can fall back to the legacy concatenation.
+ * Returns false for older SDKs or a forced prompt, which takes precedence
+ * over sections. The caller then appends to the rendered prompt.
  */
 function appendBlocksToSystemPromptOptions(
   event: PiBeforeAgentStartEvent | OmpBeforeAgentStartEvent,
   blocks: readonly string[],
 ): boolean {
-  const carrier = event as { systemPromptOptions?: { sections?: Record<string, string> } }
+  const carrier = event as { systemPromptOptions?: { sections?: Record<string, string>; forceSystemPrompt?: string } }
   const options = carrier.systemPromptOptions
-  if (!options || typeof options !== "object") {
+  if (!options || typeof options !== "object" || options.forceSystemPrompt !== undefined) {
     return false
   }
 

@@ -763,6 +763,44 @@ const cases: Case[] = [
     },
   },
   {
+    name: "patch aliases retain wildcard revisions and merge specific revisions afterward",
+    run: async () => {
+      for (const tool of ["patch", "apply_patch"]) {
+        for (const specific of [false, true]) {
+          const yaml = `hooks:
+  - event: tool.before.*
+    action: modify
+    actions:
+      - bash: wildcard
+${specific ? `  - event: tool.before.patch
+    action: modify
+    actions:
+      - bash: specific
+` : ""}`
+          const runtime = createHooksRuntime(createFakeHost(), {
+            directory: "/repo",
+            hooks: parseHooksFile("/virtual/hooks.yaml", yaml).hooks as HookMap,
+            executeBash: async (request) => ({
+              command: request.command, exitCode: 0, stderr: "", timedOut: false,
+              blocking: false, status: "success", durationMs: 0, signal: null,
+              stdout: JSON.stringify({ tool_args: request.command === "wildcard"
+                ? { path: "wildcard", content: "retained" } : { path: "specific" } }),
+            }),
+          })
+          const output: { args: Record<string, unknown>; modifiedArgs?: Record<string, unknown> } = {
+            args: { path: "original" },
+          }
+          await runtime["tool.execute.before"]({ tool, sessionID: "s1", callID: "c1" }, output)
+          if (output.modifiedArgs?.path !== (specific ? "specific" : "wildcard") ||
+              output.modifiedArgs?.content !== "retained") {
+            return { ok: false, detail: JSON.stringify({ tool, specific, output }) }
+          }
+        }
+      }
+      return { ok: true }
+    },
+  },
+  {
     name: "a blocked modify hook reports the block and drops the revision",
     run: async () => {
       const hooks = parseHooksFile(

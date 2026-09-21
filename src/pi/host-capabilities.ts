@@ -8,8 +8,8 @@
  * one host's package would break the other host's install.
  */
 import { readFileSync } from "node:fs"
-import { createRequire } from "node:module"
 import path from "node:path"
+import { fileURLToPath } from "node:url"
 
 import type { HookHostKind } from "../core/host-profile.js"
 
@@ -33,7 +33,6 @@ const PACKAGE_NAMES: Record<HookHostKind, string> = {
   omp: "@oh-my-pi/pi-coding-agent",
 }
 
-const requireFromHere = createRequire(import.meta.url)
 const versionCache = new Map<HookHostKind, string | undefined>()
 
 /** Resolve the active host SDK version, or undefined when it cannot be read. */
@@ -48,7 +47,7 @@ export function resolveHostSdkVersion(kind: HookHostKind): string | undefined {
 
 function readPackageVersion(packageName: string): string | undefined {
   try {
-    let dir = path.dirname(requireFromHere.resolve(packageName))
+    let dir = path.dirname(fileURLToPath(import.meta.resolve(packageName)))
     for (let depth = 0; depth < 8; depth += 1) {
       try {
         const manifest = JSON.parse(readFileSync(path.join(dir, "package.json"), "utf8")) as {

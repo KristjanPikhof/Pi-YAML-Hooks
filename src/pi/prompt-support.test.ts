@@ -114,7 +114,7 @@ async function invokeBeforeAgentStart(
   mode?: string,
   prompt = "hi",
   sessionID: string | undefined = "session",
-  systemPromptOptions?: { sections?: Record<string, string> },
+  systemPromptOptions?: { sections?: Record<string, string>; forceSystemPrompt?: string },
 ): Promise<unknown> {
   const handlers = pi.handlers.get("before_agent_start") ?? []
   if (handlers.length === 0) {
@@ -585,6 +585,29 @@ const cases: Case[] = [
           section.includes("Context from pi-yaml-hooks user.prompt.submit:") &&
           section.includes("extra context")
         return ok ? { ok: true } : { ok: false, detail: JSON.stringify({ result, section }) }
+      }),
+  },
+  {
+    name: "preserves hook context when an earlier extension forces the system prompt",
+    run: async () =>
+      await withSandbox({ trusted: true }, async (projectDir) => {
+        const pi = createFakePi()
+        registerPromptSupport(
+          pi as never,
+          createPromptRuntimeRegistry(async () => ({ additionalContext: ["extra context"] })),
+        )
+        for (const forcedPrompt of ["earlier extension prompt", ""]) {
+          const options = { sections: {}, forceSystemPrompt: forcedPrompt }
+          const result = await invokeBeforeAgentStart(
+            pi, projectDir, true, forcedPrompt, undefined, "hi", "session", options,
+          ) as { systemPrompt?: string } | undefined
+          // Pi gives forceSystemPrompt precedence over sections when rendering.
+          const rendered = result?.systemPrompt ?? options.forceSystemPrompt
+          if (!rendered.startsWith(forcedPrompt) || !rendered.includes("extra context")) {
+            return { ok: false, detail: JSON.stringify({ result, options }) }
+          }
+        }
+        return { ok: true }
       }),
   },
   {

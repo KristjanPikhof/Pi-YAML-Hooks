@@ -7,7 +7,7 @@ import { __resetHookHostProfileForTests } from "../core/host-profile.js"
 import { resetPiHooksLoggerForTests } from "../core/logger.js"
 import { getToolFileChanges } from "../core/tool-paths.js"
 import { __testing__ as adapterTesting } from "./adapter.js"
-import { detectHostCapabilities } from "./host-capabilities.js"
+import { detectHostCapabilities, resolveHostSdkVersion } from "./host-capabilities.js"
 import { resolvePromptDelivery } from "./host-adapter.js"
 import { applyToolArgsRevision } from "./register-adapter.js"
 import { resetHookAutocompleteForTests } from "./autocomplete.js"
@@ -1960,12 +1960,13 @@ hooks: []
     name: "applyToolArgsRevision mutates Pi event.input in place",
     run: async () => {
       const event = { toolName: "write", toolCallId: "t1", input: { path: "/a", content: "x" } }
+      const executionArgs = event.input
       const result = applyToolArgsRevision(event as never, { content: "rewritten" }, "pi", {
         toolArgsRewrite: true,
         asideDelivery: false,
       })
       const input = event.input as Record<string, unknown>
-      const ok = result === undefined && input.content === "rewritten" && input.path === "/a"
+      const ok = result === undefined && input === executionArgs && executionArgs.content === "rewritten" && input.path === "/a"
       return ok ? { ok: true } : { ok: false, detail: JSON.stringify({ result, input }) }
     },
   },
@@ -2022,6 +2023,21 @@ hooks: []
     },
   },
   {
+    name: "host capabilities resolve the installed ESM SDK packages",
+    run: async () => {
+      for (const [kind, scope] of [["pi", "@earendil-works"], ["omp", "@oh-my-pi"]] as const) {
+        const manifestPath = path.resolve(currentDir, `../../node_modules/${scope}/pi-coding-agent/package.json`)
+        const expected = JSON.parse(readFileSync(manifestPath, "utf8")).version as string
+        const actual = resolveHostSdkVersion(kind)
+        if (actual !== expected) return { ok: false, detail: `${kind}: expected ${expected}, got ${actual}` }
+        if (JSON.stringify(detectHostCapabilities(kind)) !== JSON.stringify(detectHostCapabilities(kind, expected))) {
+          return { ok: false, detail: `${kind}: automatic capabilities differ from the installed version` }
+        }
+      }
+      return { ok: true }
+    },
+  },
+  {
     name: "host capabilities and prompt delivery follow the verified SDK versions",
     run: async () => {
       const checks: Array<[string, boolean]> = [
@@ -2033,7 +2049,7 @@ hooks: []
         ["omp 17.2.12 argsRewrite", detectHostCapabilities("omp", "17.2.12").toolArgsRewrite === false],
         ["omp 18.2.6 argsRewrite", detectHostCapabilities("omp", "18.2.6").toolArgsRewrite === true],
         ["omp 18.2.6 aside", detectHostCapabilities("omp", "18.2.6").asideDelivery === true],
-        ["unknown version is inert", detectHostCapabilities("pi", undefined).toolArgsRewrite === false],
+
         [
           "omp aside delivery",
           resolvePromptDelivery("omp", { toolArgsRewrite: true, asideDelivery: true }) === "aside",
