@@ -31,10 +31,10 @@ npm run compat:host-matrix
 
 The matrix verifies:
 
-- exact Pi SDK pairs `0.74.0`, `0.79.3`, `0.80.10`, and `0.84.1`
-- exact OMP SDK pairs `17.0.1` and `17.2.12`
+- exact Pi SDK pairs `0.74.0`, `0.79.3`, `0.80.10`, `0.84.1`, `0.85.1`, and `0.86.1`
+- exact OMP SDK pairs `17.0.1`, `17.2.12`, and `18.2.6`
 - typecheck and all discovered internal tests for each row
-- OMP runtime smoke on both supported rows
+- OMP runtime smoke on every supported row
 - native package manifests, exports, packed files, cleanup, and lockfile drift
 
 The workflow uses temporary copies and isolated home and npm state. A pass does not mutate the working checkout's package files.
@@ -50,7 +50,7 @@ bash scripts/smoke/omp-runtime-smoke.sh
 
 These scripts verify native package discovery instead of manual extension paths. Together they cover config and trust paths, tool and lifecycle events, prompt behavior, diagnostics, UI degradation, TUI autocomplete, opt-in human bash interception, logs, package state, and cleanup.
 
-The Pi smoke uses exact `0.84.1` host and SDK evidence, including an isolated `--no-builtin-tools` process. The host matrix runs OMP smoke against exact `17.0.1` and `17.2.12` rows.
+The Pi smoke uses exact `0.86.1` host and SDK evidence, including an isolated `--no-builtin-tools` process. It resolves the host version by walking up from the CLI entry to its package root, so both npm-global and Homebrew installs work. Override the target with `PI_TARGET_VERSION` when pinning a different row. The host matrix runs OMP smoke against exact `17.0.1`, `17.2.12`, and `18.2.6` rows; `OMP_EXPECTED_VERSION` selects the row.
 
 ## Widen compatibility claims
 
