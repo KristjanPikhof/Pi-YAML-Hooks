@@ -13,6 +13,8 @@ import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-a
 import { executeBashHook } from "../core/bash-executor.js";
 import type { BashExecutionRequest, BashHookResult } from "../core/bash-types.js";
 import { getHookHostProfile } from "../core/host-profile.js";
+import type { HookHostKind } from "../core/host-profile.js";
+import { detectHostCapabilities, type HostCapabilities } from "./host-capabilities.js";
 import { getPiHooksLogger } from "../core/logger.js";
 import { OMP_SYNCHRONOUS_BASH_BUDGET_MS } from "../core/runtime.js";
 import type { HookNotifyLevel, HostAdapter, HostDeliveryResult } from "../core/types.js";
@@ -50,6 +52,8 @@ export function createHostAdapter(
 ): HostAdapter {
   const logger = getPiHooksLogger();
   const isOmp = getHookHostProfile().kind === "omp";
+  const hostKind: HookHostKind = isOmp ? "omp" : "pi";
+  const capabilities = detectHostCapabilities(hostKind);
   const scheduleDeadline = options.scheduleDeadline ?? ((callback: () => void, delayMs: number): (() => void) => {
     const timer = setTimeout(callback, delayMs);
     return () => clearTimeout(timer);
@@ -118,9 +122,9 @@ export function createHostAdapter(
         };
       }
 
-      try {
-        pi.sendUserMessage(text, { deliverAs: "followUp" });
-        logger.info("host_send_prompt", "Queued follow-up prompt in the current PI session.", {
+     try {
+        sendPromptWithDelivery(pi, text, hostKind, capabilities, warnPromptDeliveryFallback);
+       logger.info("host_send_prompt", "Queued follow-up prompt in the current PI session.", {
           cwd: projectDir,
           details: { sessionId, text },
         });
@@ -363,4 +367,59 @@ export function debugLog(message: string): void {
     // eslint-disable-next-line no-console
     console.warn(`[pi-yaml-hooks] ${message}`);
   }
+}
+
+/** Narrow view of the message API so both Pi and OMP option unions type-check. */
+interface PromptDeliveryApi {
+  sendUserMessage(content: string, options?: { deliverAs?: string }): void | Promise<void>;
+}
+
+/**
+ * `tool:` actions queue a follow-up prompt in the current session. OMP >= 18
+ * adds the non-interrupting `aside` delivery mode (injected at the next step
+ * boundary, and it still starts a turn when idle); older OMP and Pi keep the
+ * long-standing `followUp` queueing.
+ */
+export function resolvePromptDelivery(
+  kind: HookHostKind,
+  capabilities: HostCapabilities,
+): "followUp" | "aside" {
+  return kind === "omp" && capabilities.asideDelivery ? "aside" : "followUp";
+}
+
+function sendPromptWithDelivery(
+  pi: ExtensionAPI,
+  text: string,
+  kind: HookHostKind,
+  capabilities: HostCapabilities,
+  warnFallback: (message: string) => void,
+): void {
+  const api = pi as unknown as PromptDeliveryApi;
+  if (resolvePromptDelivery(kind, capabilities) === "followUp") {
+    api.sendUserMessage(text, { deliverAs: "followUp" });
+    return;
+  }
+  try {
+    api.sendUserMessage(text, { deliverAs: "aside" });
+  } catch (error) {
+    if (isStaleSessionBoundError(error)) {
+      throw error;
+    }
+    warnFallback(
+      `[pi-yaml-hooks] the host rejected deliverAs: "aside" for a tool: action; fell back to followUp.`
+    );
+    api.sendUserMessage(text, { deliverAs: "followUp" });
+  }
+}
+
+const warnedPromptDeliveryFallback = new Set<string>();
+
+function warnPromptDeliveryFallback(message: string): void {
+  if (warnedPromptDeliveryFallback.has(message)) {
+    return;
+  }
+  warnedPromptDeliveryFallback.add(message);
+  // eslint-disable-next-line no-console
+  console.warn(message);
+  getPiHooksLogger().warn("host_prompt_delivery_fallback", message, {});
 }
