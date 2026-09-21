@@ -114,6 +114,7 @@ async function invokeBeforeAgentStart(
   mode?: string,
   prompt = "hi",
   sessionID: string | undefined = "session",
+  systemPromptOptions?: { sections?: Record<string, string> },
 ): Promise<unknown> {
   const handlers = pi.handlers.get("before_agent_start") ?? []
   if (handlers.length === 0) {
@@ -131,7 +132,15 @@ async function invokeBeforeAgentStart(
   }
   let result: unknown
   for (const handler of handlers) {
-    const r = await handler({ type: "before_agent_start", prompt, systemPrompt: basePrompt }, ctx)
+    const r = await handler(
+      {
+        type: "before_agent_start",
+        prompt,
+        systemPrompt: basePrompt,
+        ...(systemPromptOptions ? { systemPromptOptions } : {}),
+      },
+      ctx,
+    )
     if (r !== undefined) result = r
   }
   return result
@@ -533,6 +542,90 @@ const cases: Case[] = [
         return !dispatched && systemPrompt === "original prompt"
           ? { ok: true }
           : { ok: false, detail: JSON.stringify({ dispatched, result }) }
+      }),
+  },
+  {
+    name: "dispatch failure returns undefined instead of a full prompt override",
+    run: async () =>
+      await withSandbox({ trusted: true }, async (projectDir) => {
+        const pi = createFakePi()
+        registerPromptSupport(
+          pi as never,
+          createPromptRuntimeRegistry(async () => {
+            throw new Error("dispatch boom")
+          }),
+        )
+        const result = await invokeBeforeAgentStart(pi, projectDir)
+        return result === undefined ? { ok: true } : { ok: false, detail: JSON.stringify(result) }
+      }),
+  },
+  {
+    name: "missing session id returns undefined instead of a full prompt override",
+    run: async () =>
+      await withSandbox({ trusted: true }, async (projectDir) => {
+        const pi = createFakePi()
+        registerPromptSupport(
+          pi as never,
+          createPromptRuntimeRegistry(async () => ({ additionalContext: [] })),
+        )
+        const result = await invokeBeforeAgentStart(
+          pi,
+          projectDir,
+          true,
+          "base system prompt",
+          undefined,
+          "hi",
+          undefined,
+        )
+        return result === undefined ? { ok: true } : { ok: false, detail: JSON.stringify(result) }
+      }),
+  },
+  {
+    name: "appends hook context through systemPromptOptions.sections",
+    run: async () =>
+      await withSandbox({ trusted: true }, async (projectDir) => {
+        const pi = createFakePi()
+        registerPromptSupport(
+          pi as never,
+          createPromptRuntimeRegistry(async () => ({ additionalContext: ["extra context"] })),
+        )
+        const options: { sections?: Record<string, string> } = { sections: {} }
+        const result = await invokeBeforeAgentStart(
+          pi,
+          projectDir,
+          true,
+          "base system prompt",
+          undefined,
+          "hi",
+          "session",
+          options,
+        )
+        const section = options.sections?.["pi-yaml-hooks"] ?? ""
+        const ok =
+          result === undefined &&
+          section.includes("Hook-awareness for this session:") &&
+          section.includes("Context from pi-yaml-hooks user.prompt.submit:") &&
+          section.includes("extra context")
+        return ok ? { ok: true } : { ok: false, detail: JSON.stringify({ result, section }) }
+      }),
+  },
+  {
+    name: "legacy SDK without systemPromptOptions still concatenates the prompt",
+    run: async () =>
+      await withSandbox({ trusted: true }, async (projectDir) => {
+        const pi = createFakePi()
+        registerPromptSupport(
+          pi as never,
+          createPromptRuntimeRegistry(async () => ({ additionalContext: ["extra context"] })),
+        )
+        const result = (await invokeBeforeAgentStart(pi, projectDir)) as { systemPrompt?: unknown } | undefined
+        const systemPrompt = result?.systemPrompt
+        const ok =
+          typeof systemPrompt === "string" &&
+          systemPrompt.startsWith("base system prompt") &&
+          systemPrompt.includes("Hook-awareness for this session:") &&
+          systemPrompt.includes("extra context")
+        return ok ? { ok: true } : { ok: false, detail: JSON.stringify(result) }
       }),
   },
 ]
