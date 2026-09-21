@@ -122,9 +122,9 @@ export function createHostAdapter(
         };
       }
 
-     try {
+      try {
         sendPromptWithDelivery(pi, text, hostKind, capabilities, warnPromptDeliveryFallback);
-       logger.info("host_send_prompt", "Queued follow-up prompt in the current PI session.", {
+        logger.info("host_send_prompt", "Queued follow-up prompt in the current PI session.", {
           cwd: projectDir,
           details: { sessionId, text },
         });
