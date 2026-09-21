@@ -325,6 +325,54 @@ function pruneToolCallSessions(entries: ToolCallSessionMap, now: number): void {
   }
 }
 
+/**
+ * Apply replacement arguments a `tool.before.*` hook supplied through
+ * `action: modify`. Pi mutates the live `event.input` in place; OMP returns the
+ * revision as the `tool_call` result `input` field. On an SDK without the
+ * capability the revision is dropped with a one-time warning so the original
+ * arguments execute unchanged.
+ */
+export function applyToolArgsRevision(
+  event: ToolCallEvent,
+  modifiedArgs: Record<string, unknown> | undefined,
+  kind: HookHostKind,
+  capabilities: HostCapabilities,
+  warn: (message: string) => void = warnMissingToolArgsRewriteCapability,
+): ToolCallEventResult | void {
+  if (!modifiedArgs || Object.keys(modifiedArgs).length === 0) {
+    return;
+  }
+
+  if (!capabilities.toolArgsRewrite) {
+    warn(
+      `[pi-yaml-hooks] action: modify supplied replacement arguments for "${event.toolName}", but this ${kind} SDK exposes no tool-argument rewriting. Original arguments execute unchanged.`,
+    );
+    return;
+  }
+
+  const merged = mergeToolArgs((event.input ?? {}) as Record<string, unknown>, modifiedArgs);
+  if (kind === "omp") {
+    // OMP >= 18 replaces the executed arguments when the handler returns `input`.
+    return { input: merged } as unknown as ToolCallEventResult;
+  }
+
+  // Pi >= 0.84 reads `event.input` after the handler settles, so mutate in place.
+  ;(event as { input?: Record<string, unknown> }).input = merged;
+  return;
+}
+
+const warnedMissingToolArgsRewrite = new Set<string>();
+
+function warnMissingToolArgsRewriteCapability(message: string): void {
+  if (warnedMissingToolArgsRewrite.has(message)) {
+    return;
+  }
+  warnedMissingToolArgsRewrite.add(message);
+  // eslint-disable-next-line no-console
+  console.warn(message);
+  getPiHooksLogger().warn("adapter_tool_args_rewrite_skipped", message, {});
+}
+
 export function reportDispatchFailure(
   logger: ReturnType<typeof getPiHooksLogger>,
   context: {
