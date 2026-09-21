@@ -81,6 +81,7 @@ export async function dispatchToolHooks(
   context: RuntimeActionContext,
   globMatcher: GlobMatcher = defaultGlobMatcher,
 ): Promise<HookExecutionResult> {
+  const toolArgs: Record<string, unknown> = {}
   const wildcardResult = await dispatchHooks(
     hooks,
     state,
@@ -99,6 +100,9 @@ export async function dispatchToolHooks(
   )
   if (wildcardResult.blocked) {
     return wildcardResult
+  }
+  if (wildcardResult.toolArgs) {
+    Object.assign(toolArgs, wildcardResult.toolArgs)
   }
 
   // P1-14 fix: when a tool has multiple alias names (e.g. apply_patch resolves
@@ -160,9 +164,15 @@ export async function dispatchToolHooks(
     if (result.blocked) {
       return result
     }
+    if (result.toolArgs) {
+      Object.assign(toolArgs, result.toolArgs)
+    }
   }
 
-  return { blocked: false }
+  return {
+    blocked: false,
+    ...(Object.keys(toolArgs).length > 0 ? { toolArgs } : {}),
+  }
 }
 
 function collectUniqueHooksAcrossAliases(
