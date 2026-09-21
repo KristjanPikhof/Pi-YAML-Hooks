@@ -26,7 +26,7 @@ const fs = require("node:fs")
 const { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } = fs
 
 const rootDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..")
-const runtimeModule = path.join(rootDir, "dist", "core", "runtime.js")
+let runtimeModule = path.join(rootDir, "dist", "core", "runtime.js")
 
 function parseArgs(argv) {
   const options = { iterations: 200, fileCounts: [0, 1, 200] }
@@ -36,12 +36,17 @@ function parseArgs(argv) {
       options.iterations = Number(argv[(index += 1)])
     } else if (arg === "--files") {
       options.fileCounts = argv[(index += 1)].split(",").map((value) => Number(value))
+    } else if (arg === "--runtime") {
+      options.runtime = argv[(index += 1)]
     }
   }
   return options
 }
 
 const options = parseArgs(process.argv.slice(2))
+if (options.runtime) {
+  runtimeModule = path.resolve(options.runtime)
+}
 
 if (!existsSync(runtimeModule)) {
   console.error(`dist/core/runtime.js missing; running npm run build once`)
