@@ -144,6 +144,8 @@ actions:
 
 This sends the current Pi or OMP session a follow-up prompt asking it to use the named tool. It does not execute the tool and cannot target another session.
 
+On OMP `18` and later the follow-up is delivered as a non-interrupting `aside` at the next step boundary; older hosts queue it as a normal follow-up.
+
 ### `notify`
 
 ```yaml
@@ -216,6 +218,7 @@ hooks:
 - A block wins. When the same call also blocks, the replacement is dropped and the tool does not run.
 - Multiple `modify` hooks merge in config order, with later hooks overwriting earlier keys.
 - Pi `0.84` and later and OMP `18` and later apply the replacement. Older hosts run the original arguments and log a one-time skip.
+- On OMP the revision is merged over the hook-facing arguments and returned as the execution input. OMP treats that return value as the raw tool input, so a tool whose hook-facing arguments carry derived fields (for example a hashline `edit`) can pass those fields through. Verify any `modify` hook on such a tool before trusting it.
 
 ## Async hooks
 

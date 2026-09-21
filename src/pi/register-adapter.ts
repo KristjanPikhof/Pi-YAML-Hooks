@@ -350,6 +350,11 @@ export function applyToolArgsRevision(
     return;
   }
 
+  // OMP treats the returned `input` as the raw execution input, while the
+  // hook-facing `event.input` is a normalized view that may carry derived
+  // gate-only fields (for example a hashline edit's `path`/`paths`). Merging over
+  // it is the best source available here; a `modify` hook on such a tool should
+  // be verified before it is trusted.
   const merged = mergeToolArgs((event.input ?? {}) as Record<string, unknown>, modifiedArgs);
   if (kind === "omp") {
     // OMP >= 18 replaces the executed arguments when the handler returns `input`.
