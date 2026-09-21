@@ -780,6 +780,49 @@ const cases: Case[] = [
       }),
   },
   {
+    name: "OMP 18 blocking session_stop keeps the session running and idles once on the continuation settle",
+    run: async () =>
+      await withIsolatedProject(true, async (projectDir) => {
+        writeProjectHooks(
+          projectDir,
+          `hooks:
+  - event: session.idle
+    actions:
+      - notify: "idle"
+`,
+        )
+
+        const harness = new FakePiHarness(projectDir, "session-1", "omp")
+        harness.register()
+        // OMP 18 lets a session_stop handler request one continuation turn
+        // (continue / decision: "block"), which keeps the session running
+        // instead of settling. The armed candidate must survive to the
+        // continuation turn and still dispatch session.idle exactly once.
+        const sessionStopHandlers = harness.handlers.get("session_stop") ?? []
+        sessionStopHandlers.push(async () => ({ continue: true, additionalContext: "carry on" }))
+        harness.handlers.set("session_stop", sessionStopHandlers)
+
+        await harness.agentStart()
+        await harness.sessionStop()
+        const armedOnly = harness.notifications.length === 0
+        // The continuation turn settles; its agent_end is the idle candidate.
+        await harness.agentEnd()
+        const idledOnce = harness.notifications.join(",") === "idle"
+        // A second agent_end for the same armed stop must not re-dispatch.
+        await harness.agentEnd()
+        const deduped = harness.notifications.join(",") === "idle"
+
+        return armedOnly && idledOnce && deduped
+          ? { ok: true }
+          : {
+              ok: false,
+              detail:
+                `armedOnly=${armedOnly}, idledOnce=${idledOnce}, deduped=${deduped}, ` +
+                `notifications=${JSON.stringify(harness.notifications)}`,
+            }
+      }),
+  },
+  {
     name: "OMP edit result details drive hashline and apply_patch file.changed paths",
     run: async () =>
       await withIsolatedProject(true, async (projectDir) => {
