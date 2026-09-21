@@ -2049,7 +2049,6 @@ hooks: []
         ["omp 17.2.12 argsRewrite", detectHostCapabilities("omp", "17.2.12").toolArgsRewrite === false],
         ["omp 18.2.6 argsRewrite", detectHostCapabilities("omp", "18.2.6").toolArgsRewrite === true],
         ["omp 18.2.6 aside", detectHostCapabilities("omp", "18.2.6").asideDelivery === true],
-
         [
           "omp aside delivery",
           resolvePromptDelivery("omp", { toolArgsRewrite: true, asideDelivery: true }) === "aside",
