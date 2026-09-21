@@ -37,6 +37,21 @@ export function mapToolCallToBeforeOutput(event: ToolCallEvent): ToolExecuteBefo
 }
 
 /**
+ * Overlay replacement arguments from an `action: modify` hook on the live tool
+ * input. Shallow merge: a replacement key wins, untouched keys survive, and an
+ * empty revision is a no-op.
+ */
+export function mergeToolArgs(
+  current: Record<string, unknown>,
+  revision: Record<string, unknown>,
+): Record<string, unknown> {
+  if (Object.keys(revision).length === 0) {
+    return current;
+  }
+  return { ...current, ...revision };
+}
+
+/**
  * Build the `tool.execute.after` input envelope from a PI `tool_result`.
  *
  * OMP 17's unified `edit` tool accepts hashline/apply-patch text under

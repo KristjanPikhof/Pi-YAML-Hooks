@@ -81,6 +81,7 @@ export async function dispatchToolHooks(
   context: RuntimeActionContext,
   globMatcher: GlobMatcher = defaultGlobMatcher,
 ): Promise<HookExecutionResult> {
+  const toolArgs: Record<string, unknown> = {}
   const wildcardResult = await dispatchHooks(
     hooks,
     state,
@@ -100,6 +101,9 @@ export async function dispatchToolHooks(
   if (wildcardResult.blocked) {
     return wildcardResult
   }
+  if (wildcardResult.toolArgs) {
+    Object.assign(toolArgs, wildcardResult.toolArgs)
+  }
 
   // P1-14 fix: when a tool has multiple alias names (e.g. apply_patch resolves
   // to ["patch", "apply_patch"]), dispatching against each alias key fires
@@ -113,35 +117,18 @@ export async function dispatchToolHooks(
   // single-pass behaviour.
   const mutationNames = getMutationToolHookNames(toolName);
   const resolvedNames = mutationNames.length > 0 ? mutationNames : [toolName];
+  let dispatchMap = hooks
+  let dispatchNames = resolvedNames
   if (resolvedNames.length > 1) {
-    const unionedHooks = collectUniqueHooksAcrossAliases(hooks, phase, resolvedNames)
-    if (unionedHooks.length === 0) {
-      return { blocked: false }
-    }
-    const canonicalEvent = `tool.${phase}.${resolvedNames[resolvedNames.length - 1]}` as HookEvent
-    const aliasMap: HookMap = new Map()
-    aliasMap.set(canonicalEvent, unionedHooks)
-    return await dispatchHooks(
-      aliasMap,
-      state,
-      host,
-      projectDir,
-      runBashHook,
-      canonicalEvent,
-      sessionID,
-      context,
-      { canBlock: phase === "before" },
-      dispatchStates,
-      actionRecursionGuards,
-      asyncQueues,
-      warnedAsyncStopSources,
-      globMatcher,
-    )
+    const canonicalName = resolvedNames[resolvedNames.length - 1]
+    const canonicalEvent = `tool.${phase}.${canonicalName}` as HookEvent
+    dispatchMap = new Map([[canonicalEvent, collectUniqueHooksAcrossAliases(hooks, phase, resolvedNames)]])
+    dispatchNames = [canonicalName]
   }
 
-  for (const resolvedToolName of resolvedNames) {
+  for (const resolvedToolName of dispatchNames) {
     const result = await dispatchHooks(
-      hooks,
+      dispatchMap,
       state,
       host,
       projectDir,
@@ -160,9 +147,15 @@ export async function dispatchToolHooks(
     if (result.blocked) {
       return result
     }
+    if (result.toolArgs) {
+      Object.assign(toolArgs, result.toolArgs)
+    }
   }
 
-  return { blocked: false }
+  return {
+    blocked: false,
+    ...(Object.keys(toolArgs).length > 0 ? { toolArgs } : {}),
+  }
 }
 
 function collectUniqueHooksAcrossAliases(
@@ -279,6 +272,7 @@ export async function dispatchHooks(
 
   async function executeDispatchRequest(request: DispatchRequest): Promise<HookExecutionResult> {
     const additionalContext: string[] = []
+    const toolArgs: Record<string, unknown> = {}
     for (const hook of hooksForEvent) {
       const result = await executeHook(
         hook,
@@ -295,12 +289,19 @@ export async function dispatchHooks(
         globMatcher,
       )
       additionalContext.push(...(result.additionalContext ?? []))
+      if (result.toolArgs) {
+        Object.assign(toolArgs, result.toolArgs)
+      }
       if (result.blocked) {
         return { ...result, ...(additionalContext.length > 0 ? { additionalContext } : {}) }
       }
     }
 
-    return { blocked: false, ...(additionalContext.length > 0 ? { additionalContext } : {}) }
+    return {
+      blocked: false,
+      ...(additionalContext.length > 0 ? { additionalContext } : {}),
+      ...(Object.keys(toolArgs).length > 0 ? { toolArgs } : {}),
+    }
   }
 
   async function drainPendingRequests(): Promise<void> {
@@ -428,6 +429,7 @@ async function executeHook(
           await executeAction(
             action,
             hook.runIn,
+            hook.action,
             host,
             projectDir,
             state,
@@ -482,10 +484,12 @@ async function executeHook(
   }
 
   const additionalContext: string[] = []
+  const toolArgs: Record<string, unknown> = {}
   for (const action of hook.actions) {
     const result = await executeAction(
       action,
       hook.runIn,
+      hook.action,
       host,
       projectDir,
       state,
@@ -498,6 +502,9 @@ async function executeHook(
       actionRecursionGuards,
     )
     additionalContext.push(...(result.additionalContext ?? []))
+    if (result.toolArgs) {
+      Object.assign(toolArgs, result.toolArgs)
+    }
     if (result.blocked && options.canBlock) {
       logger.warn("hook_block", "Hook action blocked event execution.", {
         cwd: projectDir,
@@ -511,11 +518,16 @@ async function executeHook(
         ...result,
         ...(hook.action === "stop" ? { stopSession: true } : {}),
         ...(additionalContext.length > 0 ? { additionalContext } : {}),
+        ...(Object.keys(toolArgs).length > 0 ? { toolArgs } : {}),
       }
     }
   }
 
-  return { blocked: false, ...(additionalContext.length > 0 ? { additionalContext } : {}) }
+  return {
+    blocked: false,
+    ...(additionalContext.length > 0 ? { additionalContext } : {}),
+    ...(Object.keys(toolArgs).length > 0 ? { toolArgs } : {}),
+  }
 }
 
 async function shouldRunHook(

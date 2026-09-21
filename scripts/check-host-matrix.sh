@@ -2,8 +2,8 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-PI_SDK_SPECS=("0.74.0" "0.79.3" "0.80.10" "0.84.1")
-OMP_SDK_SPECS=("17.0.1" "17.2.12")
+PI_SDK_SPECS=("0.74.0" "0.79.3" "0.80.10" "0.84.1" "0.85.1" "0.86.1")
+OMP_SDK_SPECS=("17.0.1" "17.2.12" "18.2.6")
 LATEST_OMP_SDK_SPEC="${OMP_SDK_SPECS[${#OMP_SDK_SPECS[@]} - 1]}"
 DRY_RUN=0
 MATRIX_ROOT=""
@@ -13,7 +13,7 @@ PACKAGE_LOCK_BEFORE=""
 FINALIZED=0
 EXPECTED_TEST_FILES=24
 EXPECTED_TEST_PASS=24
-EXPECTED_PACK_FILES=141
+EXPECTED_PACK_FILES=131
 PI_MATRIX_COMMAND=(bash scripts/check-sdk-matrix.sh --versions "${PI_SDK_SPECS[*]}")
 NPM_INSTALL_COMMAND=(npm install --no-audit --no-fund)
 TYPECHECK_COMMAND=(npm run typecheck)
@@ -33,7 +33,7 @@ usage() {
   cat <<'USAGE'
 Usage: scripts/check-host-matrix.sh [--dry-run]
 
-Runs the Pi SDK compatibility matrix and isolated OMP 17.0.1 and 17.2.12
+Runs the Pi SDK compatibility matrix and isolated OMP 17.0.1, 17.2.12, and 18.2.6
 compile, internal-test, and runtime-smoke checks, followed by package checks. All installs,
 build output, caches, host state, and temporary copies stay outside the checkout.
 
@@ -433,12 +433,14 @@ verify_package_contents() {
   local pack_json="$MATRIX_ROOT/npm-pack.json"
 
   (cd "$OMP_COPY" && "${PACK_COMMAND[@]}") > "$pack_json"
-  node --input-type=module - "$pack_json" "$OMP_COPY/package.json" "$EXPECTED_PACK_FILES" <<'NODE'
+  node --input-type=module - "$pack_json" "$OMP_COPY/package.json" "$EXPECTED_PACK_FILES" "$ROOT_DIR/scripts/lib/pack-json.mjs" <<'NODE'
 import { readFileSync } from "node:fs";
-const pack = JSON.parse(readFileSync(process.argv[2], "utf8"));
+import { pathToFileURL } from "node:url";
+const { normalizePackResult } = await import(pathToFileURL(process.argv[5]).href);
+const pack = normalizePackResult(JSON.parse(readFileSync(process.argv[2], "utf8")));
 const manifest = JSON.parse(readFileSync(process.argv[3], "utf8"));
 const expectedFileCount = Number(process.argv[4]);
-if (!Array.isArray(pack) || pack.length !== 1 || !Array.isArray(pack[0].files)) {
+if (pack.length !== 1 || !Array.isArray(pack[0].files)) {
   throw new Error("unexpected npm pack --json structure");
 }
 const files = new Set(pack[0].files.map(({ path }) => path));
@@ -487,12 +489,14 @@ verify_packed_omp_import() {
 
   mkdir -p "$consumer"
   (cd "$OMP_COPY" && npm pack --json --ignore-scripts --pack-destination "$MATRIX_ROOT") > "$pack_json"
-  tarball="$(node --input-type=module - "$pack_json" "$MATRIX_ROOT" <<'NODE'
+tarball="$(node --input-type=module - "$pack_json" "$MATRIX_ROOT" "$ROOT_DIR/scripts/lib/pack-json.mjs" <<'NODE'
 import { readFileSync } from "node:fs";
 import path from "node:path";
-const [packJson, destination] = process.argv.slice(2);
-const records = JSON.parse(readFileSync(packJson, "utf8"));
-if (!Array.isArray(records) || records.length !== 1 || typeof records[0].filename !== "string") {
+import { pathToFileURL } from "node:url";
+const [packJson, destination, helperPath] = process.argv.slice(2);
+const { normalizePackResult } = await import(pathToFileURL(helperPath).href);
+const records = normalizePackResult(JSON.parse(readFileSync(packJson, "utf8")));
+if (records.length !== 1 || typeof records[0].filename !== "string") {
   throw new Error("unexpected npm pack result for isolated OMP import");
 }
 process.stdout.write(path.join(destination, records[0].filename));

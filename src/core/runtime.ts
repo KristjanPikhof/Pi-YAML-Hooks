@@ -1,5 +1,5 @@
 import { AsyncLocalStorage } from "node:async_hooks"
-import { statSync } from "node:fs"
+import { statSync, type BigIntStats } from "node:fs"
 
 import { executeBashHook } from "./bash-executor.js"
 import type { BashExecutionRequest, BashHookResult } from "./bash-types.js"
@@ -43,6 +43,14 @@ export interface ToolExecuteBeforeInput {
 
 export interface ToolExecuteBeforeOutput {
   readonly args?: Record<string, unknown>
+  /**
+   * Replacement tool arguments surfaced by a matching `action: modify` hook on
+   * `tool.before.*`. The host adapter decides whether to apply them: Pi mutates
+   * `event.input` in place and OMP returns the revision as the tool_call
+   * result, while a host without either capability logs a no-op. The runtime
+   * never sets this on a blocked call — a block throws instead.
+   */
+  modifiedArgs?: Record<string, unknown>
 }
 
 export interface ToolExecuteAfterInput {
@@ -86,6 +94,8 @@ export interface HookExecutionResult {
   readonly blockReason?: string
   readonly stopSession?: boolean
   readonly additionalContext?: readonly string[]
+  /** Replacement tool arguments contributed by `action: modify` hooks. */
+  readonly toolArgs?: Record<string, unknown>
 }
 
 export interface HookMatchDecision {
@@ -182,7 +192,30 @@ export function createHooksRuntime(host: HostAdapter, options: CreateHooksRuntim
   let watchedFiles = options.hooks && !shouldReloadDiscoveredHooks
     ? []
     : mergeUnique(resolveHookConfigWatchPaths(configDiscovery).paths, initiallyLoadedWatchPaths)
-  let lastStatFingerprint = computeStatFingerprint(watchedFiles)
+  // Per-file stat cache for the refresh gate. Comparing cached Stats against a
+  // fresh statSync avoids rebuilding one big fingerprint string per event, which
+  // was the dominant allocation for configs with many imported hook files; the
+  // statSync calls themselves are unchanged.
+  let watchedFileStats = new Map<string, CachedFileStat>()
+  const primeStatCache = (): void => {
+    watchedFileStats = new Map(watchedFiles.map((filePath) => [filePath, readFileStat(filePath)]))
+  }
+  const watchedFilesChanged = (): boolean => {
+    if (watchedFileStats.size !== watchedFiles.length) {
+      primeStatCache()
+      return true
+    }
+    let changed = false
+    for (const filePath of watchedFiles) {
+      const current = readFileStat(filePath)
+      if (!isSameFileStat(watchedFileStats.get(filePath), current)) {
+        watchedFileStats.set(filePath, current)
+        changed = true
+      }
+    }
+    return changed
+  }
+  primeStatCache()
   const state = new SessionStateStore()
   const runBashHook: ExecuteBashHook = options.executeBash ?? ((request) => host.runBash(request))
   const now = options.now ?? Date.now
@@ -261,15 +294,14 @@ export function createHooksRuntime(host: HostAdapter, options: CreateHooksRuntim
       return hooks
     }
 
-    const nextStatFingerprint = computeStatFingerprint(watchedFiles)
-    if (nextStatFingerprint === lastStatFingerprint) {
+    if (!watchedFilesChanged()) {
       return hooks
     }
 
     const nextWatchPaths = resolveHookConfigWatchPaths(configDiscovery).paths
     const nextLoaded = loadDiscoveredHooksSnapshot(configDiscovery)
     watchedFiles = mergeUnique(nextWatchPaths, nextLoaded.watchPaths)
-    lastStatFingerprint = computeStatFingerprint(watchedFiles)
+    primeStatCache()
     if (nextLoaded.signature === lastLoadedSignature) {
       return hooks
     }
@@ -399,6 +431,20 @@ export function createHooksRuntime(host: HostAdapter, options: CreateHooksRuntim
           await abortSession(host, sessionID)
         }
         throw new Error(result.blockReason ?? "Blocked by hook")
+      }
+
+      // `action: modify` hooks surface replacement arguments here instead of
+      // blocking. A blocked call returns early above, so a revision is never
+      // applied alongside a block.
+      if (result.toolArgs && Object.keys(result.toolArgs).length > 0) {
+        eventOutput.modifiedArgs = result.toolArgs
+        logger.info("dispatch_end", "Pre-tool dispatch supplied replacement tool arguments.", {
+          cwd: projectDir,
+          event: `tool.before.${eventInput.tool}`,
+          sessionId: sessionID,
+          toolName: eventInput.tool,
+          details: { callID: eventInput.callID, argKeys: Object.keys(result.toolArgs) },
+        })
       }
 
       logger.debug("dispatch_end", "Finished pre-tool dispatch.", {
@@ -666,23 +712,35 @@ function retainHooksFromAuthorizedFiles(hooks: HookMap, authorizedFiles: Readonl
   return retainedHooks ?? hooks
 }
 
-// Cheap stat-only fingerprint for the runtime refresh gate. Nanosecond mtime
-// and ctime distinguish rapid same-size rewrites that can share millisecond
-// timestamps, while inode/mode cover atomic replacement and metadata changes.
-function computeStatFingerprint(files: readonly string[]): string {
-  if (files.length === 0) {
-    return ""
+/**
+ * Stat-only refresh gate for the runtime. Nanosecond mtime and ctime distinguish
+ * rapid same-size rewrites that can share millisecond timestamps, while
+ * inode/mode cover atomic replacement and metadata changes.
+ *
+ * The cache stores one Stats object per watched file instead of a single joined
+ * fingerprint string, so an unchanged event compares numbers and allocates
+ * nothing beyond what statSync already returns.
+ */
+type CachedFileStat = BigIntStats | "missing"
+
+function readFileStat(filePath: string): CachedFileStat {
+  try {
+    return statSync(filePath, { bigint: true })
+  } catch {
+    return "missing"
   }
-  const parts: string[] = []
-  for (const filePath of files) {
-    try {
-      const stat = statSync(filePath, { bigint: true })
-      parts.push(`${filePath}|${stat.mtimeNs}|${stat.ctimeNs}|${stat.size}|${stat.ino}|${stat.mode}`)
-    } catch {
-      parts.push(`${filePath}|missing`)
-    }
-  }
-  return parts.join("\n")
+}
+
+function isSameFileStat(previous: CachedFileStat | undefined, current: CachedFileStat): boolean {
+  if (previous === undefined) return false
+  if (previous === "missing" || current === "missing") return previous === current
+  return (
+    previous.mtimeNs === current.mtimeNs &&
+    previous.ctimeNs === current.ctimeNs &&
+    previous.size === current.size &&
+    previous.ino === current.ino &&
+    previous.mode === current.mode
+  )
 }
 
 function mergeUnique(a: readonly string[], b: readonly string[]): string[] {

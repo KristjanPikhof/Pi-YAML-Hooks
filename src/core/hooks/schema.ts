@@ -205,13 +205,13 @@ export function parseAsync(
   // see the misconfiguration instead of debugging a no-op at runtime.
   // The core-runtime lane added a runtime-side warning as a defence-in-depth
   // safety net; this rejection is the front-of-line gate.
-  if (isHookBehavior(hookAction) && hookAction === "stop") {
+  if (isHookBehavior(hookAction)) {
     return {
       errors: [
         createError(
           filePath,
           "invalid_hook_action",
-          `hooks[${index}] async hooks cannot use action: stop. action: stop only blocks tool.before.* events, which already disallow async execution.`,
+          `hooks[${index}] async hooks cannot use action: ${hookAction}. action: stop blocks and action: modify rewrites tool.before.* events, which already disallow async execution.`,
           `hooks[${index}].action`,
         ),
       ],
@@ -331,7 +331,7 @@ function parseHookAction(
 
   if (!isHookBehavior(action)) {
     return {
-      errors: [createError(filePath, "invalid_hook_action", `hooks[${index}].action must be: stop.`, `hooks[${index}].action`)],
+      errors: [createError(filePath, "invalid_hook_action", `hooks[${index}].action must be: stop or modify.`, `hooks[${index}].action`)],
     }
   }
 

@@ -30,7 +30,7 @@ hooks:
 | `id` | no | Non-empty string | Gives overrides and logs a stable name |
 | `scope` | no | `all`, `main`, `child` | Filters the session lineage; default is `all` |
 | `conditions` | no | Condition array | Requires every condition to pass |
-| `action` | no | `stop` | Accepted only on `tool.before.*` |
+| `action` | no | `stop`, `modify` | Accepted only on `tool.before.*` |
 | `async` | no | boolean or queue object | Runs supported bash-only hooks in a background queue |
 | `runIn` | no | `current`, `main` | Compatibility metadata; default is `current` |
 | `override` | no | Earlier hook `id` | Replaces or disables an earlier hook |
@@ -63,6 +63,8 @@ Custom tool names work with exact and wildcard tool events. Built-in tool names 
 Each successful, non-empty stdout value becomes a system-context block for the current turn. Failed, timed-out, blocked, truncated, or empty output is ignored. The turn continues if a hook fails. Total accepted output is capped at 64 KiB per prompt; a block that does not fit is skipped in full.
 
 The input contains expanded text only. Hooks cannot rewrite or reject the prompt, inspect attachments, or identify whether the prompt came from TUI, RPC, or another extension.
+
+On Pi `0.86` and later, hook context is appended through the host's prompt sections instead of replacing `systemPrompt`, which keeps the host's prompt cache warm. Older hosts, and Pi sessions where another extension has forced a full system prompt, receive the same blocks appended to the system prompt string.
 
 ### File changes
 
@@ -142,6 +144,8 @@ actions:
 
 This sends the current Pi or OMP session a follow-up prompt asking it to use the named tool. It does not execute the tool and cannot target another session.
 
+On OMP `18` and later the follow-up is delivered as a non-interrupting `aside` at the next step boundary; older hosts queue it as a normal follow-up.
+
 ### `notify`
 
 ```yaml
@@ -191,6 +195,31 @@ hooks:
 ```
 
 `action: stop` does not make a successful action block. It marks the hook's intended behavior; the action still needs to return a blocking result.
+
+## Rewriting tool arguments
+
+A `tool.before.*` hook can update argument fields for the current call with `action: modify`. The bash action prints a JSON object on stdout:
+
+```json
+{ "tool_args": { "command": "ls -la" } }
+```
+
+```yaml
+hooks:
+  - id: normalize-bash-args
+    event: tool.before.bash
+    action: modify
+    actions:
+      - bash: "./scripts/rewrite-bash-args.sh"
+```
+
+- `action: modify` is accepted only on `tool.before.*`, and it cannot be combined with `async`.
+- The stdout contract is an object with a top-level `tool_args` object. Empty stdout is ignored; invalid JSON, non-object JSON, or a non-object `tool_args` logs a warning and leaves the original arguments untouched.
+- A block wins. When the same call also blocks, the replacement is dropped and the tool does not run.
+- Revisions shallow-merge into the original arguments. Omitted fields remain unchanged; a supplied field replaces its entire value.
+- Wildcard hooks run before tool-specific hooks. Within each event bucket, hooks run in config order; patch aliases are combined in alias order. Later revisions overwrite earlier keys.
+- Pi `0.84` and later and OMP `18` and later apply the replacement. Older hosts run the original arguments and log a one-time skip.
+- On OMP the revision is merged over the hook-facing arguments and returned as the execution input. OMP treats that return value as the raw tool input, so a tool whose hook-facing arguments carry derived fields (for example a hashline `edit`) can pass those fields through. Verify any `modify` hook on such a tool before trusting it.
 
 ## Async hooks
 

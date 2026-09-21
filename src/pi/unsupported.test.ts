@@ -78,7 +78,9 @@ const cases: Case[] = [
       - bash: "echo hi"
 `,
     check: (result) => {
-      const hasAdvisory = (result.advisories ?? []).some((a) => a.includes("PI built-ins are bash, read, edit, write, grep, find, ls"))
+      const hasAdvisory = (result.advisories ?? []).some((a) =>
+        a.includes("PI built-ins are bash, powershell, read, edit, write, grep, find, ls"),
+      )
       return hasAdvisory ? { ok: true } : { ok: false, detail: `advisories=${JSON.stringify(result.advisories)}, errors=${JSON.stringify(result.errors)}` }
     },
   },
@@ -92,7 +94,9 @@ const cases: Case[] = [
       - bash: "echo hi"
 `,
     check: (result) => {
-      const hasAdvisory = (result.advisories ?? []).some((a) => a.includes("PI built-ins are bash, read, edit, write, grep, find, ls"))
+      const hasAdvisory = (result.advisories ?? []).some((a) =>
+        a.includes("PI built-ins are bash, powershell, read, edit, write, grep, find, ls"),
+      )
       return hasAdvisory ? { ok: true } : { ok: false, detail: `advisories=${JSON.stringify(result.advisories)}, errors=${JSON.stringify(result.errors)}` }
     },
   },
@@ -190,6 +194,77 @@ const cases: Case[] = [
       return commandError && runInError && toolAdvisory
         ? { ok: true }
         : { ok: false, detail: JSON.stringify({ messages, advisories }) }
+    },
+  },
+  {
+    // Pi 0.86 added the powershell built-in; a hook on it must not warn.
+    name: "tool.before.powershell → no advisory (Pi built-in)",
+    yaml: `hooks:
+  - event: tool.before.powershell
+    actions:
+      - bash: "echo hi"
+`,
+    check: (result) => {
+      const advisories = result.advisories ?? []
+      const hasUnexpected = advisories.some((advisory) => advisory.includes("This tool name will never match"))
+      return hasUnexpected
+        ? { ok: false, detail: `unexpected advisory for Pi built-in: ${JSON.stringify(advisories)}` }
+        : { ok: true }
+    },
+  },
+  {
+    // OMP 18.2.6 additions: context_notes, new_context, security_scan, and the
+    // hidden think tool must all be recognised so hooks on them stay silent.
+    name: "OMP 18 added built-ins including find produce no advisory",
+    yaml: `hooks:
+  - event: tool.before.find
+    actions:
+      - bash: "echo hi"
+  - event: tool.before.context_notes
+    actions:
+      - bash: "echo hi"
+  - event: tool.before.new_context
+    actions:
+      - bash: "echo hi"
+  - event: tool.before.security_scan
+    actions:
+      - bash: "echo hi"
+  - event: tool.before.think
+    actions:
+      - bash: "echo hi"
+`,
+    policy: ompHookPolicy,
+    check: (result) => {
+      const advisories = result.advisories ?? []
+      const hasUnexpected = advisories.some((advisory) => advisory.includes("This tool name will never match"))
+      return hasUnexpected
+        ? { ok: false, detail: `unexpected advisory for OMP built-in: ${JSON.stringify(advisories)}` }
+        : { ok: true }
+    },
+  },
+  {
+    // OMP 18 dropped inspect_image and browser from the canonical list, and
+    // computer was never canonical. Hooks on them must keep the honest
+    // never-match advisory.
+    name: "OMP 18 removed built-ins still warn as never-match",
+    yaml: `hooks:
+  - event: tool.before.inspect_image
+    actions:
+      - bash: "echo hi"
+  - event: tool.before.browser
+    actions:
+      - bash: "echo hi"
+  - event: tool.before.computer
+    actions:
+      - bash: "echo hi"
+`,
+    policy: ompHookPolicy,
+    check: (result) => {
+      const advisories = result.advisories ?? []
+      const neverMatch = advisories.filter((advisory) => advisory.includes("This tool name will never match"))
+      return neverMatch.length === 3
+        ? { ok: true }
+        : { ok: false, detail: `expected 3 never-match advisories, got ${JSON.stringify(advisories)}` }
     },
   },
 ]

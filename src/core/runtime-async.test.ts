@@ -721,9 +721,190 @@ const cases: Case[] = [
         return captured.some((line) => /async/.test(line) && /stop/.test(line))
           ? { ok: true }
           : { ok: false, detail: `captured=${JSON.stringify(captured)}` }
-      } finally {
-        console.warn = originalWarn
+     } finally {
+       console.warn = originalWarn
+     }
+   },
+ },
+  {
+    name: "action: modify surfaces replacement tool arguments to the adapter",
+    run: async () => {
+      const hooks = parseHooksFile(
+        "/virtual/hooks.yaml",
+        `hooks:
+  - event: tool.before.write
+    action: modify
+    actions:
+      - bash: "emit revision"
+`,
+      ).hooks as HookMap
+      const runtime = createHooksRuntime(createFakeHost(), {
+        directory: "/repo",
+        hooks,
+        executeBash: async (request: BashExecutionRequest): Promise<BashHookResult> => ({
+          command: request.command,
+          exitCode: 0,
+          stdout: JSON.stringify({ tool_args: { content: "rewritten", path: "/repo/a.txt" } }),
+          stderr: "",
+          timedOut: false,
+          blocking: false,
+          status: "success",
+          durationMs: 0,
+          signal: null,
+        }),
+      })
+      const output: { args?: Record<string, unknown>; modifiedArgs?: Record<string, unknown> } = {
+        args: { path: "/repo/a.txt", content: "original" },
       }
+      await runtime["tool.execute.before"]({ tool: "write", sessionID: "s1", callID: "c1" }, output)
+      return output.modifiedArgs?.content === "rewritten"
+        ? { ok: true }
+        : { ok: false, detail: JSON.stringify(output.modifiedArgs) }
+    },
+  },
+  {
+    name: "patch aliases retain wildcard revisions and merge specific revisions afterward",
+    run: async () => {
+      for (const tool of ["patch", "apply_patch"]) {
+        for (const specific of [false, true]) {
+          const yaml = `hooks:
+  - event: tool.before.*
+    action: modify
+    actions:
+      - bash: wildcard
+${specific ? `  - event: tool.before.patch
+    action: modify
+    actions:
+      - bash: specific
+` : ""}`
+          const runtime = createHooksRuntime(createFakeHost(), {
+            directory: "/repo",
+            hooks: parseHooksFile("/virtual/hooks.yaml", yaml).hooks as HookMap,
+            executeBash: async (request) => ({
+              command: request.command, exitCode: 0, stderr: "", timedOut: false,
+              blocking: false, status: "success", durationMs: 0, signal: null,
+              stdout: JSON.stringify({ tool_args: request.command === "wildcard"
+                ? { path: "wildcard", content: "retained" } : { path: "specific" } }),
+            }),
+          })
+          const output: { args: Record<string, unknown>; modifiedArgs?: Record<string, unknown> } = {
+            args: { path: "original" },
+          }
+          await runtime["tool.execute.before"]({ tool, sessionID: "s1", callID: "c1" }, output)
+          if (output.modifiedArgs?.path !== (specific ? "specific" : "wildcard") ||
+              output.modifiedArgs?.content !== "retained") {
+            return { ok: false, detail: JSON.stringify({ tool, specific, output }) }
+          }
+        }
+      }
+      return { ok: true }
+    },
+  },
+  {
+    name: "a blocked modify hook reports the block and drops the revision",
+    run: async () => {
+      const hooks = parseHooksFile(
+        "/virtual/hooks.yaml",
+        `hooks:
+  - event: tool.before.write
+    action: modify
+    actions:
+      - bash: "emit revision"
+`,
+      ).hooks as HookMap
+      const runtime = createHooksRuntime(createFakeHost(), {
+        directory: "/repo",
+        hooks,
+        executeBash: async (request: BashExecutionRequest): Promise<BashHookResult> => ({
+          command: request.command,
+          exitCode: 2,
+          stdout: JSON.stringify({ tool_args: { content: "rewritten" } }),
+          stderr: "nope",
+          timedOut: false,
+          blocking: true,
+          status: "blocked",
+          durationMs: 0,
+          signal: null,
+        }),
+      })
+      const output: { args?: Record<string, unknown>; modifiedArgs?: Record<string, unknown> } = {
+        args: { path: "/repo/a.txt", content: "original" },
+      }
+      try {
+        await runtime["tool.execute.before"]({ tool: "write", sessionID: "s1", callID: "c2" }, output)
+        return { ok: false, detail: "expected a block error" }
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error)
+        return message.includes("nope") && output.modifiedArgs === undefined
+          ? { ok: true }
+          : { ok: false, detail: `${message} modifiedArgs=${JSON.stringify(output.modifiedArgs)}` }
+      }
+    },
+  },
+  {
+    name: "modify output that is not a tool_args object is ignored",
+    run: async () => {
+      const hooks = parseHooksFile(
+        "/virtual/hooks.yaml",
+        `hooks:
+  - event: tool.before.write
+    action: modify
+    actions:
+      - bash: "emit revision"
+`,
+      ).hooks as HookMap
+      const runtime = createHooksRuntime(createFakeHost(), {
+        directory: "/repo",
+        hooks,
+        executeBash: async (request: BashExecutionRequest): Promise<BashHookResult> => ({
+          command: request.command,
+          exitCode: 0,
+          stdout: "not json",
+          stderr: "",
+          timedOut: false,
+          blocking: false,
+          status: "success",
+          durationMs: 0,
+          signal: null,
+        }),
+      })
+      const output: { args?: Record<string, unknown>; modifiedArgs?: Record<string, unknown> } = {
+        args: { path: "/repo/a.txt", content: "original" },
+      }
+      await runtime["tool.execute.before"]({ tool: "write", sessionID: "s1", callID: "c3" }, output)
+      return output.modifiedArgs === undefined
+        ? { ok: true }
+        : { ok: false, detail: JSON.stringify(output.modifiedArgs) }
+    },
+  },
+  {
+    name: "action: modify is only valid on tool.before.* and never async",
+    run: async () => {
+      const yaml = (body: string) => `hooks:\n  - event: ${body}`
+      const onBefore = parseHooksFile(
+        "/virtual/hooks.yaml",
+        yaml(`tool.before.write\n    action: modify\n    actions:\n      - bash: "emit"`),
+      )
+      const onAfter = parseHooksFile(
+        "/virtual/hooks.yaml",
+        yaml(`tool.after.write\n    action: modify\n    actions:\n      - bash: "emit"`),
+      )
+      const asyncModify = parseHooksFile(
+        "/virtual/hooks.yaml",
+        yaml(`tool.before.write\n    action: modify\n    async: true\n    actions:\n      - bash: "emit"`),
+      )
+      const ok =
+        onBefore.errors.length === 0 && onAfter.errors.length === 1 && asyncModify.errors.length === 1
+      return ok
+        ? { ok: true }
+        : {
+            ok: false,
+            detail: JSON.stringify({
+              before: onBefore.errors,
+              after: onAfter.errors,
+              asyncModify: asyncModify.errors,
+            }),
+          }
     },
   },
 ]

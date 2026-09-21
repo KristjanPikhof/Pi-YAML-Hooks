@@ -7,6 +7,9 @@ import { __resetHookHostProfileForTests } from "../core/host-profile.js"
 import { resetPiHooksLoggerForTests } from "../core/logger.js"
 import { getToolFileChanges } from "../core/tool-paths.js"
 import { __testing__ as adapterTesting } from "./adapter.js"
+import { detectHostCapabilities, resolveHostSdkVersion } from "./host-capabilities.js"
+import { resolvePromptDelivery } from "./host-adapter.js"
+import { applyToolArgsRevision } from "./register-adapter.js"
 import { resetHookAutocompleteForTests } from "./autocomplete.js"
 import { mapToolResultToAfterInput } from "./event-mappers.js"
 
@@ -209,7 +212,7 @@ class FakePiHarness {
     await this.emit("session_shutdown", reason ? { type: "session_shutdown", reason } : {})
   }
 
-  async sessionSwitch(reason?: "new" | "resume" | "fork" | "handoff"): Promise<void> {
+  async sessionSwitch(reason?: "new" | "resume" | "fork"): Promise<void> {
     await this.emit("session_switch", reason ? { type: "session_switch", reason } : {})
   }
 
@@ -548,7 +551,7 @@ const cases: Case[] = [
       }),
   },
   {
-    name: "OMP fork and handoff session_switch plus reasonless starts never create",
+    name: "OMP 18 fork and resume session_switch plus reasonless starts never create",
     run: async () =>
       await withIsolatedProject(true, async (projectDir) => {
         writeProjectHooks(
@@ -560,14 +563,17 @@ const cases: Case[] = [
 `,
         )
 
+        // OMP 18 removed the "handoff" switch reason, so a handoff now shows
+        // up as one of new|resume|fork. Non-new switches must stay mapped to
+        // "no session.created" for every remaining reason.
         const harness = new FakePiHarness(projectDir, "session-1", "omp")
         harness.register()
         await harness.sessionStartWithoutReason()
         harness.replaceSession("forked-session")
         await harness.sessionSwitch("fork")
         await harness.sessionStartWithoutReason()
-        harness.replaceSession("handoff-session")
-        await harness.sessionSwitch("handoff")
+        harness.replaceSession("resumed-session")
+        await harness.sessionSwitch("resume")
         await harness.sessionStartWithoutReason()
 
         return harness.notifications.join(",") === "created"
@@ -769,6 +775,49 @@ const cases: Case[] = [
               detail:
                 `asyncHandlerDidNotRace=${asyncHandlerDidNotRace}, continuationSuppressed=${continuationSuppressed}, ` +
                 `restartedSuppressed=${restartedSuppressed}, laterStopDispatched=${laterStopDispatched}, ` +
+                `notifications=${JSON.stringify(harness.notifications)}`,
+            }
+      }),
+  },
+  {
+    name: "OMP 18 blocking session_stop keeps the session running and idles once on the continuation settle",
+    run: async () =>
+      await withIsolatedProject(true, async (projectDir) => {
+        writeProjectHooks(
+          projectDir,
+          `hooks:
+  - event: session.idle
+    actions:
+      - notify: "idle"
+`,
+        )
+
+        const harness = new FakePiHarness(projectDir, "session-1", "omp")
+        harness.register()
+        // OMP 18 lets a session_stop handler request one continuation turn
+        // (continue / decision: "block"), which keeps the session running
+        // instead of settling. The armed candidate must survive to the
+        // continuation turn and still dispatch session.idle exactly once.
+        const sessionStopHandlers = harness.handlers.get("session_stop") ?? []
+        sessionStopHandlers.push(async () => ({ continue: true, additionalContext: "carry on" }))
+        harness.handlers.set("session_stop", sessionStopHandlers)
+
+        await harness.agentStart()
+        await harness.sessionStop()
+        const armedOnly = harness.notifications.length === 0
+        // The continuation turn settles; its agent_end is the idle candidate.
+        await harness.agentEnd()
+        const idledOnce = harness.notifications.join(",") === "idle"
+        // A second agent_end for the same armed stop must not re-dispatch.
+        await harness.agentEnd()
+        const deduped = harness.notifications.join(",") === "idle"
+
+        return armedOnly && idledOnce && deduped
+          ? { ok: true }
+          : {
+              ok: false,
+              detail:
+                `armedOnly=${armedOnly}, idledOnce=${idledOnce}, deduped=${deduped}, ` +
                 `notifications=${JSON.stringify(harness.notifications)}`,
             }
       }),
@@ -1905,6 +1954,116 @@ hooks: []
       return failures.length === 0
         ? { ok: true }
         : { ok: false, detail: failures.join("; ") }
+    },
+  },
+  {
+    name: "applyToolArgsRevision mutates Pi event.input in place",
+    run: async () => {
+      const event = { toolName: "write", toolCallId: "t1", input: { path: "/a", content: "x" } }
+      const executionArgs = event.input
+      const result = applyToolArgsRevision(event as never, { content: "rewritten" }, "pi", {
+        toolArgsRewrite: true,
+        asideDelivery: false,
+      })
+      const input = event.input as Record<string, unknown>
+      const ok = result === undefined && input === executionArgs && executionArgs.content === "rewritten" && input.path === "/a"
+      return ok ? { ok: true } : { ok: false, detail: JSON.stringify({ result, input }) }
+    },
+  },
+  {
+    name: "applyToolArgsRevision returns the OMP tool_call input revision",
+    run: async () => {
+      const event = { toolName: "write", toolCallId: "t2", input: { path: "/a", content: "x" } }
+      const result = applyToolArgsRevision(event as never, { content: "rewritten" }, "omp", {
+        toolArgsRewrite: true,
+        asideDelivery: true,
+      })
+      const revised = (result as { input?: Record<string, unknown> } | undefined)?.input
+      const ok =
+        revised?.content === "rewritten" &&
+        (event.input as Record<string, unknown>).content === "x"
+      return ok ? { ok: true } : { ok: false, detail: JSON.stringify({ result, input: event.input }) }
+    },
+  },
+  {
+    name: "applyToolArgsRevision degrades to a logged no-op without the capability",
+    run: async () => {
+      const warnings: string[] = []
+      const event = { toolName: "write", toolCallId: "t3", input: { path: "/a", content: "x" } }
+      const result = applyToolArgsRevision(
+        event as never,
+        { content: "rewritten" },
+        "pi",
+        { toolArgsRewrite: false, asideDelivery: false },
+        (message) => warnings.push(message),
+      )
+      const ok =
+        result === undefined &&
+        (event.input as Record<string, unknown>).content === "x" &&
+        warnings.length === 1 &&
+        warnings[0].includes("no tool-argument rewriting")
+      return ok ? { ok: true } : { ok: false, detail: JSON.stringify({ result, warnings }) }
+    },
+  },
+  {
+    name: "applyToolArgsRevision ignores an empty revision without warning",
+    run: async () => {
+      const warnings: string[] = []
+      const event = { toolName: "write", toolCallId: "t4", input: { content: "x" } }
+      const result = applyToolArgsRevision(
+        event as never,
+        {},
+        "pi",
+        { toolArgsRewrite: false, asideDelivery: false },
+        (message) => warnings.push(message),
+      )
+      return result === undefined && warnings.length === 0
+        ? { ok: true }
+        : { ok: false, detail: JSON.stringify({ result, warnings }) }
+    },
+  },
+  {
+    name: "host capabilities resolve the installed ESM SDK packages",
+    run: async () => {
+      for (const [kind, scope] of [["pi", "@earendil-works"], ["omp", "@oh-my-pi"]] as const) {
+        const manifestPath = path.resolve(currentDir, `../../node_modules/${scope}/pi-coding-agent/package.json`)
+        const expected = JSON.parse(readFileSync(manifestPath, "utf8")).version as string
+        const actual = resolveHostSdkVersion(kind)
+        if (actual !== expected) return { ok: false, detail: `${kind}: expected ${expected}, got ${actual}` }
+        if (JSON.stringify(detectHostCapabilities(kind)) !== JSON.stringify(detectHostCapabilities(kind, expected))) {
+          return { ok: false, detail: `${kind}: automatic capabilities differ from the installed version` }
+        }
+      }
+      return { ok: true }
+    },
+  },
+  {
+    name: "host capabilities and prompt delivery follow the verified SDK versions",
+    run: async () => {
+      const checks: Array<[string, boolean]> = [
+        ["pi 0.79.3 argsRewrite", detectHostCapabilities("pi", "0.79.3").toolArgsRewrite === false],
+        ["pi 0.80.10 argsRewrite", detectHostCapabilities("pi", "0.80.10").toolArgsRewrite === false],
+        ["pi 0.84.1 argsRewrite", detectHostCapabilities("pi", "0.84.1").toolArgsRewrite === true],
+        ["pi 0.86.1 argsRewrite", detectHostCapabilities("pi", "0.86.1").toolArgsRewrite === true],
+        ["pi never aside", detectHostCapabilities("pi", "0.86.1").asideDelivery === false],
+        ["omp 17.2.12 argsRewrite", detectHostCapabilities("omp", "17.2.12").toolArgsRewrite === false],
+        ["omp 18.2.6 argsRewrite", detectHostCapabilities("omp", "18.2.6").toolArgsRewrite === true],
+        ["omp 18.2.6 aside", detectHostCapabilities("omp", "18.2.6").asideDelivery === true],
+        [
+          "omp aside delivery",
+          resolvePromptDelivery("omp", { toolArgsRewrite: true, asideDelivery: true }) === "aside",
+        ],
+        [
+          "omp pre-18 followUp",
+          resolvePromptDelivery("omp", { toolArgsRewrite: false, asideDelivery: false }) === "followUp",
+        ],
+        [
+          "pi followUp",
+          resolvePromptDelivery("pi", { toolArgsRewrite: true, asideDelivery: true }) === "followUp",
+        ],
+      ]
+      const failed = checks.filter(([, ok]) => !ok).map(([name]) => name)
+      return failed.length === 0 ? { ok: true } : { ok: false, detail: failed.join("; ") }
     },
   },
 ]

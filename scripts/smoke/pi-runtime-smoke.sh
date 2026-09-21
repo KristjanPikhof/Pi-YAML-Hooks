@@ -6,7 +6,7 @@ VALID_FIXTURE="$ROOT_DIR/scripts/smoke/pi-runtime-smoke-hooks.yaml"
 INVALID_FIXTURE="$ROOT_DIR/scripts/smoke/pi-runtime-smoke-invalid-hooks.yaml"
 MODE="manual"
 MANUAL_DIR=""
-PI_TARGET_VERSION="${PI_TARGET_VERSION:-0.84.1}"
+PI_TARGET_VERSION="${PI_TARGET_VERSION:-0.86.1}"
 
 case "${1:-}" in
   --automated)
@@ -685,10 +685,13 @@ YAML
   local packed_version
   local tarball_name
   local packed_integrity
-  IFS=$'\t' read -r packed_name packed_version tarball_name packed_integrity < <(node --input-type=module - "$pack_json" <<'NODE'
+  IFS=$'\t' read -r packed_name packed_version tarball_name packed_integrity < <(node --input-type=module - "$pack_json" "$ROOT_DIR/scripts/lib/pack-json.mjs" <<'NODE'
 import fs from "node:fs";
-const parsed = JSON.parse(fs.readFileSync(process.argv[2], "utf8"));
-const item = Array.isArray(parsed) ? parsed[0] : undefined;
+import { pathToFileURL } from "node:url";
+const [packJson, helperPath] = process.argv.slice(2);
+const { normalizePackResult } = await import(pathToFileURL(helperPath).href);
+const parsed = JSON.parse(fs.readFileSync(packJson, "utf8"));
+const [item] = normalizePackResult(parsed);
 if (!item?.name || !item?.version || !item?.filename || !item?.integrity) process.exit(1);
 process.stdout.write([item.name, item.version, item.filename, item.integrity].join("\t") + "\n");
 NODE
@@ -751,8 +754,25 @@ import fs from "node:fs";
 import path from "node:path";
 import { createRequire } from "node:module";
 const realPi = fs.realpathSync(process.argv[2]);
-const codingPackage = path.join(path.dirname(realPi), "..", "package.json");
-const coding = JSON.parse(fs.readFileSync(codingPackage, "utf8"));
+// The bin may sit at dist/cli.js (npm global) or dist/bundle/cli.js (Homebrew),
+// so walk up to the package root instead of assuming a fixed depth.
+let piRoot = path.dirname(realPi);
+let coding;
+for (;;) {
+  const candidate = path.join(piRoot, "package.json");
+  if (fs.existsSync(candidate)) {
+    const parsed = JSON.parse(fs.readFileSync(candidate, "utf8"));
+    if (parsed.name === "@earendil-works/pi-coding-agent") {
+      coding = parsed;
+      break;
+    }
+  }
+  const parent = path.dirname(piRoot);
+  if (parent === piRoot) break;
+  piRoot = parent;
+}
+if (!coding?.version) process.exit(1);
+const codingPackage = path.join(piRoot, "package.json");
 const require = createRequire(codingPackage);
 const tuiEntry = require.resolve("@earendil-works/pi-tui");
 let cursor = path.dirname(tuiEntry);
