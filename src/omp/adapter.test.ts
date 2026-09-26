@@ -63,6 +63,10 @@ class FakeOmpHarness {
   idle = true
   pendingMessages = false
   reloads = 0
+  modelId?: string
+  provider?: string
+  reasoningLevel?: string
+  sessionFile?: string
   private sessionGeneration = 0
 
   constructor(
@@ -92,6 +96,7 @@ class FakeOmpHarness {
       sendMessage: (message: { customType: string; content: unknown; display: boolean; details?: unknown }) => {
         this.customMessages.push(message)
       },
+      getThinkingLevel: () => this.reasoningLevel,
     }
   }
 
@@ -140,7 +145,12 @@ class FakeOmpHarness {
           assertFresh()
           return { id: this.sessionId }
         },
+        getSessionFile: () => {
+          assertFresh()
+          return this.sessionFile
+        },
       },
+      model: this.modelId && this.provider ? { id: this.modelId, provider: this.provider } : undefined,
       isIdle: () => this.idle,
       hasPendingMessages: () => this.pendingMessages,
       reload: async () => {
@@ -337,6 +347,49 @@ function createNoopAutocompleteProvider(): AutocompleteProvider {
 }
 
 const cases: Case[] = [
+  {
+    name: "OMP bash hooks keep old metadata through a session switch",
+    run: async () =>
+      await withSandbox(async ({ projectDir, defaultAgentDir }) => {
+        const output = path.join(projectDir, "session-metadata.txt")
+        const print = (label: string) =>
+          `printf '%s|%s|%s|%s|%s|%s\\n' '${label}' "$PI_SESSION_ID" "${"${PI_MODEL-unset}"}" "${"${PI_PROVIDER-unset}"}" "${"${PI_REASONING_LEVEL-unset}"}" "${"${PI_SESSION_FILE-unset}"}" >> ${JSON.stringify(output)}`
+        writeOmpProjectHooks(projectDir, `hooks:
+  - event: session.created
+    actions:
+      - bash: |
+          ${print("created")}
+  - event: session.deleted
+    actions:
+      - bash: |
+          ${print("deleted")}
+`)
+        writeTrust(defaultAgentDir, projectDir)
+        const harness = new FakeOmpHarness(projectDir, defaultAgentDir)
+        harness.modelId = "omp-first"
+        harness.provider = "provider-first"
+        harness.reasoningLevel = "low"
+        harness.sessionFile = "/sessions/omp-first.jsonl"
+        harness.register()
+        await harness.sessionStart()
+        await harness.sessionBeforeSwitch("new")
+        harness.replaceSession("session-2")
+        harness.modelId = undefined
+        harness.provider = undefined
+        harness.reasoningLevel = undefined
+        harness.sessionFile = undefined
+        await harness.sessionSwitch("new")
+        const lines = readFileSync(output, "utf8").trim().split("\n")
+        const expected = [
+          "created|session-1|omp-first|provider-first|low|/sessions/omp-first.jsonl",
+          "deleted|session-1|omp-first|provider-first|low|/sessions/omp-first.jsonl",
+          "created|session-2|unset|unset|unset|unset",
+        ]
+        return JSON.stringify(lines) === JSON.stringify(expected)
+          ? { ok: true }
+          : { ok: false, detail: JSON.stringify(lines) }
+      }),
+  },
   {
     name: "default OMP factory configures its agent root before logger and registration",
     run: async () =>

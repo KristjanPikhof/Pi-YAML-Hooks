@@ -461,6 +461,7 @@ const handleBash: ActionHandler = async ({
     command: config.command,
     timeout,
     projectDir: executionDirectory,
+    sessionMetadata: context.sessionMetadata,
     context: {
       session_id: sessionID,
       event,

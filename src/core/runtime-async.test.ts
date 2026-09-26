@@ -13,6 +13,20 @@ function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms))
 }
 
+function successfulBash(request: BashExecutionRequest): BashHookResult {
+  return {
+    command: request.command,
+    exitCode: 0,
+    stdout: "",
+    stderr: "",
+    timedOut: false,
+    blocking: false,
+    status: "success",
+    durationMs: 0,
+    signal: null,
+  }
+}
+
 function createFakeHost(): HostAdapter {
   return {
     abort: () => {},
@@ -36,6 +50,81 @@ function createFakeHost(): HostAdapter {
 }
 
 const cases: Case[] = [
+  {
+    name: "file.changed and tool.after receive the same event metadata",
+    run: async () => {
+      const hooks = parseHooksFile("/virtual/hooks.yaml", `hooks:
+  - event: file.changed
+    actions:
+      - bash: "changed"
+  - event: tool.after.write
+    actions:
+      - bash: "after"
+`).hooks as HookMap
+      const seen: Array<{ command: string; model?: string }> = []
+      const runtime = createHooksRuntime(createFakeHost(), {
+        directory: "/repo",
+        hooks,
+        executeBash: async (request): Promise<BashHookResult> => {
+          seen.push({ command: request.command, model: request.sessionMetadata?.model })
+          return successfulBash(request)
+        },
+      })
+      await runtime["tool.execute.after"]({
+        tool: "write",
+        sessionID: "session-1",
+        callID: "metadata-call",
+        args: { path: "/repo/file.ts", content: "ok" },
+        sessionMetadata: { model: "event-model", provider: "event-provider" },
+      })
+      return JSON.stringify(seen) === JSON.stringify([
+        { command: "changed", model: "event-model" },
+        { command: "after", model: "event-model" },
+      ])
+        ? { ok: true }
+        : { ok: false, detail: JSON.stringify(seen) }
+    },
+  },
+  {
+    name: "queued async bash hooks retain each event's model",
+    run: async () => {
+      const hooks = parseHooksFile("/virtual/hooks.yaml", `hooks:
+  - event: tool.after.read
+    async: true
+    actions:
+      - bash: "capture"
+`).hooks as HookMap
+      const seen: string[] = []
+      let started: (() => void) | undefined
+      let release: (() => void) | undefined
+      const firstStarted = new Promise<void>((resolve) => { started = resolve })
+      const firstReleased = new Promise<void>((resolve) => { release = resolve })
+      const runtime = createHooksRuntime(createFakeHost(), {
+        directory: "/repo",
+        hooks,
+        executeBash: async (request): Promise<BashHookResult> => {
+          seen.push(request.sessionMetadata?.model ?? "unset")
+          if (seen.length === 1) {
+            started?.()
+            await firstReleased
+          }
+          return successfulBash(request)
+        },
+      })
+      await runtime["tool.execute.after"]({
+        tool: "read", sessionID: "session-1", callID: "first", sessionMetadata: { model: "first-model" },
+      })
+      await firstStarted
+      await runtime["tool.execute.after"]({
+        tool: "read", sessionID: "session-1", callID: "second", sessionMetadata: { model: "second-model" },
+      })
+      release?.()
+      for (let attempt = 0; attempt < 20 && seen.length < 2; attempt += 1) await sleep(10)
+      return JSON.stringify(seen) === JSON.stringify(["first-model", "second-model"])
+        ? { ok: true }
+        : { ok: false, detail: JSON.stringify(seen) }
+    },
+  },
   {
     name: "parser accepts async group and concurrency settings",
     run: async () => {

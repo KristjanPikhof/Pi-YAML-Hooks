@@ -13,11 +13,20 @@ export interface BashHookContext {
   readonly tool_args?: Record<string, unknown>
 }
 
+/** Values captured from the host when the hook's source event occurred. */
+export interface BashSessionMetadata {
+  readonly model?: string
+  readonly provider?: string
+  readonly reasoningLevel?: string
+  readonly sessionFile?: string
+}
+
 export interface BashExecutionRequest {
   readonly command: string
   readonly context: BashHookContext
   readonly projectDir: string
   readonly timeout?: number
+  readonly sessionMetadata?: BashSessionMetadata
 }
 
 export interface BashProcessResult {
