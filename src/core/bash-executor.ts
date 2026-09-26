@@ -38,16 +38,14 @@ const TRUNCATION_MARKER = "\n…[pi-yaml-hooks: output truncated]"
 // multi-MB content body) would otherwise be buffered into the child's stdin
 // in one shot. Override via PI_YAML_HOOKS_MAX_STDIN_BYTES.
 const MAX_STDIN_BYTES = parseMaxOutputBytes(process.env.PI_YAML_HOOKS_MAX_STDIN_BYTES) ?? 262_144
+const SESSION_METADATA_ENV_KEYS = ["PI_MODEL", "PI_PROVIDER", "PI_REASONING_LEVEL", "PI_SESSION_FILE"] as const
 const REQUIRED_CONTEXT_ENV_KEYS = new Set([
   "PI_PROJECT_DIR",
   "OPENCODE_PROJECT_DIR",
   "PI_WORKTREE_DIR",
   "OPENCODE_WORKTREE_DIR",
   "PI_SESSION_ID",
-  "PI_MODEL",
-  "PI_PROVIDER",
-  "PI_REASONING_LEVEL",
-  "PI_SESSION_FILE",
+  ...SESSION_METADATA_ENV_KEYS,
   "OPENCODE_SESSION_ID",
   "PI_GIT_COMMON_DIR",
   "OPENCODE_GIT_COMMON_DIR",
@@ -62,7 +60,6 @@ const REQUIRED_CONTEXT_ENV_KEYS = new Set([
 const EXECUTION_CONTEXT_CACHE_TTL_MS = 5 * 60_000
 let executionContextNowFn: () => number = () => Date.now()
 const executionContextCache = new Map<string, ExecutionContextCacheEntry>()
-const SESSION_METADATA_ENV_KEYS = ["PI_MODEL", "PI_PROVIDER", "PI_REASONING_LEVEL", "PI_SESSION_FILE"] as const
 
 interface ExecutionContext {
   worktreeDir: string
