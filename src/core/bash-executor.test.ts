@@ -238,6 +238,70 @@ const cases: Case[] = [
     },
   },
   {
+    name: "session metadata overrides inherited values in both environment modes",
+    run: async () => {
+      const inherited = {
+        PI_MODEL: "stale-model",
+        PI_PROVIDER: "stale-provider",
+        PI_REASONING_LEVEL: "stale-level",
+        PI_SESSION_FILE: "/stale/session.jsonl",
+      }
+      const fresh = {
+        PI_SESSION_ID: "session-1",
+        PI_MODEL: "new-model",
+        PI_PROVIDER: "new-provider",
+        PI_REASONING_LEVEL: "high",
+        PI_SESSION_FILE: "/new/session.jsonl",
+      }
+      for (const allowlist of [undefined, "PI_MODEL,PI_PROVIDER,PI_REASONING_LEVEL,PI_SESSION_FILE"]) {
+        const source = { ...inherited, ...(allowlist ? { PI_YAML_HOOKS_ENV_ALLOWLIST: allowlist } : {}) }
+        const populated = buildBashEnvironment(source, fresh)
+        const missing = buildBashEnvironment(source, { PI_SESSION_ID: "session-1" })
+        if (
+          populated.PI_MODEL !== fresh.PI_MODEL ||
+          populated.PI_PROVIDER !== fresh.PI_PROVIDER ||
+          populated.PI_REASONING_LEVEL !== fresh.PI_REASONING_LEVEL ||
+          populated.PI_SESSION_FILE !== fresh.PI_SESSION_FILE ||
+          populated.PI_SESSION_ID !== "session-1" ||
+          missing.PI_MODEL !== undefined ||
+          missing.PI_PROVIDER !== undefined ||
+          missing.PI_REASONING_LEVEL !== undefined ||
+          missing.PI_SESSION_FILE !== undefined
+        ) return { ok: false, detail: JSON.stringify({ allowlist, populated, missing }) }
+      }
+      return { ok: true }
+    },
+  },
+  {
+    name: "spawned bash receives event metadata and omits missing values",
+    run: async () => {
+      const keys = ["PI_MODEL", "PI_PROVIDER", "PI_REASONING_LEVEL", "PI_SESSION_FILE"] as const
+      const previous = Object.fromEntries(keys.map((key) => [key, process.env[key]]))
+      try {
+        for (const key of keys) process.env[key] = "inherited-stale"
+        const command = "printf '%s|%s|%s|%s|%s' \"$PI_SESSION_ID\" \"${PI_MODEL-unset}\" \"${PI_PROVIDER-unset}\" \"${PI_REASONING_LEVEL-unset}\" \"${PI_SESSION_FILE-unset}\""
+        const context = { session_id: "session-1", event: "session.created", cwd: process.cwd() }
+        const populated = await executeBashHook({
+          command,
+          projectDir: process.cwd(),
+          context,
+          sessionMetadata: { model: "model-1", provider: "provider-1", reasoningLevel: "high", sessionFile: "/sessions/one.jsonl" },
+        })
+        const missing = await executeBashHook({ command, projectDir: process.cwd(), context })
+        return populated.stdout === "session-1|model-1|provider-1|high|/sessions/one.jsonl" &&
+          missing.stdout === "session-1|unset|unset|unset|unset"
+          ? { ok: true }
+          : { ok: false, detail: JSON.stringify({ populated: populated.stdout, missing: missing.stdout }) }
+      } finally {
+        for (const key of keys) {
+          const value = previous[key]
+          if (value === undefined) delete process.env[key]
+          else process.env[key] = value
+        }
+      }
+    },
+  },
+  {
     name: "stdin context serializer truncates oversized payloads with marker",
     run: async () => {
       const huge = "x".repeat(2_000_000) // ~2 MiB string field

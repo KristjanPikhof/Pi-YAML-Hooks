@@ -75,6 +75,10 @@ class FakePiHarness {
   idle = true
   pendingMessages = false
   reloads = 0
+  modelId?: string
+  provider?: string
+  reasoningLevel?: string
+  sessionFile?: string
   notificationsWithLevel: Array<{ message: string; type?: string }> = []
 
   constructor(
@@ -109,6 +113,7 @@ class FakePiHarness {
       sendMessage: (message: { customType: string; content: unknown; display: boolean; details?: unknown }) => {
         this.customMessages.push(message)
       },
+      getThinkingLevel: () => this.reasoningLevel,
     } as unknown as Parameters<typeof piHooksExtension>[0]
 
     if (this.hostKind === "pi") piHooksExtension(pi)
@@ -165,7 +170,13 @@ class FakePiHarness {
             ...(this.parentSession ? { parentSession: this.parentSession } : {}),
           }
         },
+        getSessionFile: () => {
+          assertFresh()
+          return this.sessionFile
+        },
       },
+      model: this.modelId && this.provider ? { id: this.modelId, provider: this.provider } : undefined,
+      thinkingLevel: this.reasoningLevel,
       isIdle: () => this.idle,
       hasPendingMessages: () => this.pendingMessages,
       reload: async () => {
@@ -363,6 +374,74 @@ function createSlashCommandAutocompleteProvider(): AutocompleteProvider {
 }
 
 const cases: Case[] = [
+  {
+    name: "Pi bash hooks receive the model snapshot for each event",
+    run: async () =>
+      await withIsolatedProject(true, async (projectDir) => {
+        const output = path.join(projectDir, "session-metadata.txt")
+        const print = (label: string) =>
+          `printf '%s|%s|%s|%s|%s|%s\\n' '${label}' "$PI_SESSION_ID" "${"${PI_MODEL-unset}"}" "${"${PI_PROVIDER-unset}"}" "${"${PI_REASONING_LEVEL-unset}"}" "${"${PI_SESSION_FILE-unset}"}" >> ${JSON.stringify(output)}`
+        writeProjectHooks(projectDir, `hooks:
+  - event: session.created
+    actions:
+      - bash: |
+          ${print("created")}
+  - event: tool.after.read
+    actions:
+      - bash: |
+          ${print("after")}
+`)
+        const harness = new FakePiHarness(projectDir)
+        harness.modelId = "pi-first"
+        harness.provider = "provider-first"
+        harness.reasoningLevel = "low"
+        harness.sessionFile = "/sessions/pi-first.jsonl"
+        harness.register()
+        await harness.sessionStart("new")
+        await harness.toolCall("read", "model-call")
+        harness.modelId = "pi-second"
+        harness.provider = "provider-second"
+        harness.reasoningLevel = "high"
+        harness.sessionFile = "/sessions/pi-second.jsonl"
+        await harness.toolResult("read", "model-call")
+        const lines = readFileSync(output, "utf8").trim().split("\n")
+        const expected = [
+          "created|session-1|pi-first|provider-first|low|/sessions/pi-first.jsonl",
+          "after|session-1|pi-second|provider-second|high|/sessions/pi-second.jsonl",
+        ]
+        return JSON.stringify(lines) === JSON.stringify(expected)
+          ? { ok: true }
+          : { ok: false, detail: JSON.stringify(lines) }
+      }),
+  },
+  {
+    name: "late tool results keep the source session's model metadata",
+    run: async () =>
+      await withIsolatedProject(true, async (projectDir) => {
+        const output = path.join(projectDir, "late-result.txt")
+        writeProjectHooks(projectDir, `hooks:
+  - event: tool.after.read
+    actions:
+      - bash: |
+          printf '%s|%s|%s\\n' "$PI_SESSION_ID" "$PI_MODEL" "$PI_REASONING_LEVEL" > ${JSON.stringify(output)}
+`)
+        const harness = new FakePiHarness(projectDir, "old-session")
+        harness.modelId = "old-model"
+        harness.provider = "old-provider"
+        harness.reasoningLevel = "low"
+        harness.register()
+        await harness.toolCall("read", "late-model-call")
+        harness.replaceSession("new-session")
+        harness.modelId = "new-model"
+        harness.provider = "new-provider"
+        harness.reasoningLevel = "high"
+        await harness.toolResult("read", "late-model-call")
+        const actual = readFileSync(output, "utf8").trim()
+        return actual === "old-session|old-model|low"
+          ? { ok: true }
+          : { ok: false, detail: actual }
+      }),
+  },
   {
     name: "trusted project hooks load through PI session lifecycle events",
     run: async () =>

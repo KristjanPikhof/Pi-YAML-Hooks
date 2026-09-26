@@ -296,9 +296,17 @@ Before serialization, `tool_args` is redacted and capped at 64 KiB. The full std
 | `PI_PROJECT_DIR` | Project directory for the event |
 | `PI_WORKTREE_DIR` | Resolved worktree directory |
 | `PI_SESSION_ID` | Current session ID |
+| `PI_MODEL` | Model ID for the event |
+| `PI_PROVIDER` | Model provider for the event |
+| `PI_REASONING_LEVEL` | Thinking level for the event |
+| `PI_SESSION_FILE` | Session path returned by the host |
 | `PI_GIT_COMMON_DIR` | Shared Git directory when available |
 
-Legacy `OPENCODE_*` aliases are also injected for compatibility. By default, the process inherits the host environment. Set `PI_YAML_HOOKS_ENV_ALLOWLIST` to restrict inherited variables; required hook context variables are always added.
+The four model and session file variables use values captured when the Pi or OMP event fires. A variable is unset when the host has no value for it. OMP may return a session path before the file exists.
+
+For example, a bash hook can use `printf '%s/%s\n' "${PI_PROVIDER:-unknown}" "${PI_MODEL:-unknown}"` to print the selected provider and model.
+
+Legacy `OPENCODE_*` aliases for existing context variables are also injected for compatibility. By default, the process inherits the host environment. Set `PI_YAML_HOOKS_ENV_ALLOWLIST` to restrict inherited variables; required hook context variables are always added. Inherited values for the four variables above are removed before the event values are set.
 
 ## Optional human bash interception
 
