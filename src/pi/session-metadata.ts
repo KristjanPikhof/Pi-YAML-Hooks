@@ -11,9 +11,9 @@ export function captureSessionMetadata(
   api?: { getThinkingLevel?: () => string | undefined },
 ): BashSessionMetadata {
   const model = ctx.model
-  const sessionFile = ctx.sessionManager.getSessionFile?.()
+  const sessionFile = ctx.sessionManager?.getSessionFile?.()
   const reasoningLevel = hostKind === "pi"
-    ? (ctx as PiContext).thinkingLevel
+    ? (ctx as PiContext & { thinkingLevel?: string }).thinkingLevel
     : api?.getThinkingLevel?.()
 
   return Object.freeze({
