@@ -2,7 +2,7 @@ import { AsyncLocalStorage } from "node:async_hooks"
 import { statSync, type BigIntStats } from "node:fs"
 
 import { executeBashHook } from "./bash-executor.js"
-import type { BashExecutionRequest, BashHookResult } from "./bash-types.js"
+import type { BashExecutionRequest, BashHookResult, BashSessionMetadata } from "./bash-types.js"
 import {
   resolveHookConfigWatchPaths,
   type HookConfigDiscoveryOptions,
@@ -39,6 +39,7 @@ export interface ToolExecuteBeforeInput {
   readonly tool: string
   readonly sessionID?: string
   readonly callID: string
+  readonly sessionMetadata?: BashSessionMetadata
 }
 
 export interface ToolExecuteBeforeOutput {
@@ -58,9 +59,11 @@ export interface ToolExecuteAfterInput {
   readonly sessionID?: string
   readonly callID: string
   readonly args?: Record<string, unknown>
+  readonly sessionMetadata?: BashSessionMetadata
 }
 
 export interface RuntimeEventEnvelope {
+  readonly sessionMetadata?: BashSessionMetadata
   readonly event: {
     readonly type: string
     readonly properties?: Record<string, unknown>
@@ -73,6 +76,7 @@ interface SynchronousBashBudget {
 }
 
 export interface RuntimeActionContext {
+  readonly sessionMetadata?: BashSessionMetadata
   readonly prompt?: string
   readonly files?: readonly string[]
   readonly changes?: readonly FileChange[]
@@ -127,6 +131,7 @@ export interface HooksRuntime {
 export interface UserPromptSubmitInput {
   readonly sessionID: string
   readonly prompt: string
+  readonly sessionMetadata?: BashSessionMetadata
 }
 
 export interface UserPromptSubmitOutput {
@@ -369,7 +374,7 @@ export function createHooksRuntime(host: HostAdapter, options: CreateHooksRuntim
         activeHooks,
         "user.prompt.submit",
         input.sessionID,
-        { prompt: input.prompt, synchronousBashBudget },
+        { prompt: input.prompt, sessionMetadata: input.sessionMetadata, synchronousBashBudget },
         { canBlock: false },
       )
       const additionalContext = enforcePromptContextBudget(
@@ -415,6 +420,7 @@ export function createHooksRuntime(host: HostAdapter, options: CreateHooksRuntim
       const result = await invokeDispatchToolHooks(activeHooks, "before", eventInput.tool, sessionID, {
         toolName: eventInput.tool,
         toolArgs,
+        sessionMetadata: eventInput.sessionMetadata,
         synchronousBashBudget,
       })
 
@@ -488,6 +494,7 @@ export function createHooksRuntime(host: HostAdapter, options: CreateHooksRuntim
           changes,
           toolName: eventInput.tool,
           toolArgs,
+          sessionMetadata: eventInput.sessionMetadata,
           synchronousBashBudget,
         })
       }
@@ -497,6 +504,7 @@ export function createHooksRuntime(host: HostAdapter, options: CreateHooksRuntim
         changes,
         toolName: eventInput.tool,
         toolArgs,
+        sessionMetadata: eventInput.sessionMetadata,
         synchronousBashBudget,
       })
 
@@ -524,6 +532,7 @@ export function createHooksRuntime(host: HostAdapter, options: CreateHooksRuntim
       const result = await invokeDispatchToolHooks(activeHooks, "before", eventInput.tool, sessionID, {
         toolName: eventInput.tool,
         toolArgs,
+        sessionMetadata: eventInput.sessionMetadata,
         synchronousBashBudget,
       })
 
@@ -535,7 +544,7 @@ export function createHooksRuntime(host: HostAdapter, options: CreateHooksRuntim
       }
     },
 
-    event: async ({ event }: RuntimeEventEnvelope): Promise<void> => {
+    event: async ({ event, sessionMetadata }: RuntimeEventEnvelope): Promise<void> => {
       const synchronousBashBudget = createSynchronousBashBudget()
       const activeHooks = refreshHooks()
       const properties = event.properties ?? {}
@@ -560,7 +569,7 @@ export function createHooksRuntime(host: HostAdapter, options: CreateHooksRuntim
           sessionId: sessionID,
           details: { parentID: parentID ?? null },
         })
-        await invokeDispatchHooks(activeHooks, "session.created", sessionID, { synchronousBashBudget })
+        await invokeDispatchHooks(activeHooks, "session.created", sessionID, { sessionMetadata, synchronousBashBudget })
         return
       }
 
@@ -586,7 +595,7 @@ export function createHooksRuntime(host: HostAdapter, options: CreateHooksRuntim
           sessionId: sessionID,
           ...(deletedReason ? { details: { reason: deletedReason } } : {}),
         })
-        await invokeDispatchHooks(activeHooks, "session.deleted", sessionID, { synchronousBashBudget })
+        await invokeDispatchHooks(activeHooks, "session.deleted", sessionID, { sessionMetadata, synchronousBashBudget })
         return
       }
 
@@ -607,7 +616,7 @@ export function createHooksRuntime(host: HostAdapter, options: CreateHooksRuntim
         state.beginIdleDispatch(sessionID, changes)
 
         try {
-          await invokeDispatchHooks(activeHooks, "session.idle", sessionID, { files, changes, synchronousBashBudget })
+          await invokeDispatchHooks(activeHooks, "session.idle", sessionID, { files, changes, sessionMetadata, synchronousBashBudget })
           state.consumeFileChanges(sessionID, changes)
           logger.debug("idle_changes_consumed", "Consumed idle changes after dispatch.", {
             cwd: projectDir,

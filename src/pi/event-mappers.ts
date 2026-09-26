@@ -10,6 +10,7 @@
  */
 
 import type { ToolCallEvent, ToolResultEvent } from "@earendil-works/pi-coding-agent";
+import type { BashSessionMetadata } from "../core/bash-types.js";
 
 import type {
   ToolExecuteAfterInput,
@@ -21,11 +22,13 @@ import type {
 export function mapToolCallToBeforeInput(
   event: ToolCallEvent,
   sessionId: string,
+  sessionMetadata?: BashSessionMetadata,
 ): ToolExecuteBeforeInput {
   return {
     tool: event.toolName,
     sessionID: sessionId,
     callID: event.toolCallId,
+    ...(sessionMetadata ? { sessionMetadata } : {}),
   };
 }
 
@@ -64,12 +67,14 @@ export function mergeToolArgs(
 export function mapToolResultToAfterInput(
   event: ToolResultEvent,
   sessionId: string,
+  sessionMetadata?: BashSessionMetadata,
 ): ToolExecuteAfterInput {
   return {
     tool: event.toolName,
     sessionID: sessionId,
     callID: event.toolCallId,
     args: normalizeToolResultArgs(event),
+    ...(sessionMetadata ? { sessionMetadata } : {}),
   };
 }
 
@@ -196,17 +201,20 @@ function normalizeOmpEditDetail(detail: OmpEditResultDetail): Record<string, unk
 }
 
 /** Envelope for the runtime `session.idle` dispatch. */
-export function buildSessionIdleEvent(sessionId: string): {
+export function buildSessionIdleEvent(sessionId: string, sessionMetadata?: BashSessionMetadata): {
   event: { type: "session.idle"; properties: { sessionID: string } };
+  sessionMetadata?: BashSessionMetadata;
 } {
   return {
     event: { type: "session.idle", properties: { sessionID: sessionId } },
+    ...(sessionMetadata ? { sessionMetadata } : {}),
   };
 }
 
 /** Envelope for the runtime `session.created` dispatch. */
-export function buildSessionCreatedEvent(sessionId: string): {
+export function buildSessionCreatedEvent(sessionId: string, sessionMetadata?: BashSessionMetadata): {
   event: { type: "session.created"; properties: { info: { id: string } } };
+  sessionMetadata?: BashSessionMetadata;
 } {
   // P1-3 fix: do NOT forward `header.parentSession` here. PI's
   // `parentSession` field is a FILE PATH to the parent session's JSONL
@@ -218,6 +226,7 @@ export function buildSessionCreatedEvent(sessionId: string): {
   // correctly.
   return {
     event: { type: "session.created", properties: { info: { id: sessionId } } },
+    ...(sessionMetadata ? { sessionMetadata } : {}),
   };
 }
 
@@ -230,8 +239,10 @@ export function buildSessionCreatedEvent(sessionId: string): {
 export function buildSessionDeletedEvent(
   sessionId: string,
   reason: string | undefined,
+  sessionMetadata?: BashSessionMetadata,
 ): {
   event: { type: "session.deleted"; properties: { info: { id: string }; reason?: string } };
+  sessionMetadata?: BashSessionMetadata;
 } {
   return {
     event: {
@@ -241,6 +252,7 @@ export function buildSessionDeletedEvent(
         ...(reason ? { reason } : {}),
       },
     },
+    ...(sessionMetadata ? { sessionMetadata } : {}),
   };
 }
 

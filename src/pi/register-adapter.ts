@@ -27,6 +27,7 @@ import type {
 } from "@earendil-works/pi-coding-agent";
 
 import path from "node:path";
+import type { BashSessionMetadata } from "../core/bash-types.js";
 import { getPiHooksLogger } from "../core/logger.js";
 import type { HookHostKind } from "../core/host-profile.js";
 import {
@@ -46,6 +47,7 @@ import {
 } from "./runtime-registry.js";
 import { installSessionLifecycleHandlers } from "./session-lifecycle.js";
 import { getRootSessionId } from "./session-lineage.js";
+import { captureSessionMetadata } from "./session-metadata.js";
 import { registerUserBashInterception } from "./user-bash.js";
 
 /**
@@ -106,7 +108,7 @@ export function registerAdapter(
 
   const { getRuntimeFor, rememberContext } = runtimeRegistry ?? createRuntimeRegistry(pi);
 
-  const callIdsToSessionIds = new Map<string, { sessionId: string; expiresAt: number }>();
+  const callIdsToSessionIds: ToolCallSessionMap = new Map();
 
   registerUserBashInterception(pi, {
     getRuntimeFor,
@@ -122,6 +124,7 @@ export function registerAdapter(
     rememberContext(ctx.cwd, ctx);
     const sessionId = safeGetSessionId(ctx.sessionManager);
     if (!sessionId) return;
+    const sessionMetadata = captureSessionMetadata(ctx, hostKind, pi);
 
     // Resolve while this manager still owns sessionId. A tool_result can
     // arrive after a session switch, when the replacement manager can no
@@ -130,9 +133,9 @@ export function registerAdapter(
     getRootSessionId(sessionId, ctx.sessionManager);
 
     const runtime = getRuntimeFor(ctx.cwd);
-    rememberToolCallSession(callIdsToSessionIds, event.toolCallId, sessionId);
+    rememberToolCallSession(callIdsToSessionIds, event.toolCallId, sessionId, sessionMetadata);
 
-    const input = mapToolCallToBeforeInput(event, sessionId);
+    const input = mapToolCallToBeforeInput(event, sessionId, sessionMetadata);
     const output = mapToolCallToBeforeOutput(event);
 
     try {
@@ -166,12 +169,17 @@ export function registerAdapter(
     // when the call straddled a /new|/resume — and even then routing the
     // after-hook to the *new* session is incorrect, but it is at least a
     // session that exists. Live ctx is the fallback, not the primary.
-    const sessionId = lookupToolCallSession(callIdsToSessionIds, event.toolCallId) ?? safeGetSessionId(ctx.sessionManager);
+    const sourceCall = lookupToolCallSession(callIdsToSessionIds, event.toolCallId);
+    const currentSessionId = safeGetSessionId(ctx.sessionManager);
+    const sessionId = sourceCall?.sessionId ?? currentSessionId;
+    const sessionMetadata = sessionId === currentSessionId
+      ? captureSessionMetadata(ctx, hostKind, pi)
+      : sourceCall?.sessionMetadata;
 
     if (sessionId) {
       try {
         const runtime = getRuntimeFor(ctx.cwd);
-        const input = mapToolResultToAfterInput(event, sessionId);
+        const input = mapToolResultToAfterInput(event, sessionId, sessionMetadata);
         await runtime["tool.execute.after"](input);
       } catch (error) {
         reportDispatchFailure(logger, {
@@ -211,6 +219,7 @@ export function registerAdapter(
 
     const sessionId = safeGetSessionId(ctx.sessionManager);
     if (!sessionId || (expectedSessionId !== undefined && sessionId !== expectedSessionId)) return;
+    const sessionMetadata = captureSessionMetadata(ctx, hostKind, pi);
     if (!ctx.isIdle || !ctx.isIdle()) return;
     if (ctx.hasPendingMessages && ctx.hasPendingMessages()) return;
 
@@ -218,7 +227,7 @@ export function registerAdapter(
     sessionIdleDispatched = true;
     try {
       const runtime = getRuntimeFor(ctx.cwd);
-      await runtime.event(buildSessionIdleEvent(sessionId));
+      await runtime.event(buildSessionIdleEvent(sessionId, sessionMetadata));
     } catch (error) {
       reportDispatchFailure(logger, { cwd: ctx.cwd, event: "session.idle", sessionId }, error);
     }
@@ -290,16 +299,18 @@ export const __testing__ = {
 const TOOL_CALL_SESSION_TTL_MS = 5 * 60_000;
 const TOOL_CALL_SESSION_MAX_ENTRIES = 1_000;
 
-type ToolCallSessionMap = Map<string, { sessionId: string; expiresAt: number }>;
+type ToolCallSession = { sessionId: string; sessionMetadata: BashSessionMetadata; expiresAt: number };
+type ToolCallSessionMap = Map<string, ToolCallSession>;
 
 function rememberToolCallSession(
   entries: ToolCallSessionMap,
   toolCallId: string,
   sessionId: string,
+  sessionMetadata: BashSessionMetadata,
   now: number = Date.now(),
 ): void {
   pruneToolCallSessions(entries, now);
-  entries.set(toolCallId, { sessionId, expiresAt: now + TOOL_CALL_SESSION_TTL_MS });
+  entries.set(toolCallId, { sessionId, sessionMetadata, expiresAt: now + TOOL_CALL_SESSION_TTL_MS });
   while (entries.size > TOOL_CALL_SESSION_MAX_ENTRIES) {
     const oldest = entries.keys().next().value
     if (oldest === undefined) break
@@ -307,14 +318,14 @@ function rememberToolCallSession(
   }
 }
 
-function lookupToolCallSession(entries: ToolCallSessionMap, toolCallId: string, now: number = Date.now()): string | undefined {
+function lookupToolCallSession(entries: ToolCallSessionMap, toolCallId: string, now: number = Date.now()): ToolCallSession | undefined {
   const entry = entries.get(toolCallId)
   if (!entry) return undefined
   if (entry.expiresAt <= now) {
     entries.delete(toolCallId)
     return undefined
   }
-  return entry.sessionId
+  return entry
 }
 
 function pruneToolCallSessions(entries: ToolCallSessionMap, now: number): void {

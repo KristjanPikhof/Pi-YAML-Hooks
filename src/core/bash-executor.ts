@@ -8,6 +8,7 @@ import {
   type BashHookContext,
   type BashHookResult,
   type BashProcessResult,
+  type BashSessionMetadata,
 } from "./bash-types.js"
 
 const BLOCKING_EXIT_CODE = 2
@@ -43,6 +44,10 @@ const REQUIRED_CONTEXT_ENV_KEYS = new Set([
   "PI_WORKTREE_DIR",
   "OPENCODE_WORKTREE_DIR",
   "PI_SESSION_ID",
+  "PI_MODEL",
+  "PI_PROVIDER",
+  "PI_REASONING_LEVEL",
+  "PI_SESSION_FILE",
   "OPENCODE_SESSION_ID",
   "PI_GIT_COMMON_DIR",
   "OPENCODE_GIT_COMMON_DIR",
@@ -57,6 +62,7 @@ const REQUIRED_CONTEXT_ENV_KEYS = new Set([
 const EXECUTION_CONTEXT_CACHE_TTL_MS = 5 * 60_000
 let executionContextNowFn: () => number = () => Date.now()
 const executionContextCache = new Map<string, ExecutionContextCacheEntry>()
+const SESSION_METADATA_ENV_KEYS = ["PI_MODEL", "PI_PROVIDER", "PI_REASONING_LEVEL", "PI_SESSION_FILE"] as const
 
 interface ExecutionContext {
   worktreeDir: string
@@ -276,6 +282,7 @@ async function executeBashProcess(request: BashExecutionRequest): Promise<BashPr
       OPENCODE_WORKTREE_DIR: executionContext.worktreeDir,
       PI_SESSION_ID: request.context.session_id,
       OPENCODE_SESSION_ID: request.context.session_id,
+      ...sessionMetadataEnv(request.sessionMetadata),
       ...(executionContext.gitCommonDir
         ? {
             PI_GIT_COMMON_DIR: executionContext.gitCommonDir,
@@ -388,7 +395,9 @@ export function buildBashEnvironment(
 ): NodeJS.ProcessEnv {
   const allowlist = parseEnvAllowlist(inheritedEnv.PI_YAML_HOOKS_ENV_ALLOWLIST)
   if (!allowlist) {
-    return { ...inheritedEnv, ...contextEnv }
+    const env = { ...inheritedEnv }
+    for (const key of SESSION_METADATA_ENV_KEYS) delete env[key]
+    return { ...env, ...contextEnv }
   }
 
   const env: NodeJS.ProcessEnv = {}
@@ -400,6 +409,16 @@ export function buildBashEnvironment(
     }
   }
   return { ...env, ...contextEnv }
+}
+
+function sessionMetadataEnv(metadata: BashSessionMetadata | undefined): Record<string, string> {
+  if (!metadata) return {}
+  return {
+    ...(metadata.model === undefined ? {} : { PI_MODEL: metadata.model }),
+    ...(metadata.provider === undefined ? {} : { PI_PROVIDER: metadata.provider }),
+    ...(metadata.reasoningLevel === undefined ? {} : { PI_REASONING_LEVEL: metadata.reasoningLevel }),
+    ...(metadata.sessionFile === undefined ? {} : { PI_SESSION_FILE: metadata.sessionFile }),
+  }
 }
 
 function parseEnvAllowlist(raw: string | undefined): Set<string> | undefined {

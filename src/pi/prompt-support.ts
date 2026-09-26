@@ -20,6 +20,7 @@ import {
 import { getHookHostProfile } from "../core/host-profile.js"
 import { getPiHooksLogger } from "../core/logger.js"
 import { safeGetSessionId } from "./host-adapter.js"
+import { captureSessionMetadata } from "./session-metadata.js"
 import type { RuntimeRegistry } from "./runtime-registry.js"
 
 const PROMPT_AWARENESS_DISABLE_ENV = "PI_YAML_HOOKS_PROMPT_AWARENESS"
@@ -32,20 +33,21 @@ export function registerPromptSupport(
   const profile = getHookHostProfile()
   if (profile.kind === "omp") {
     const omp = api as OmpExtensionAPI
-    omp.on("before_agent_start", (event, ctx) => handleOmpBeforeAgentStart(event, ctx, runtimeRegistry))
+    omp.on("before_agent_start", (event, ctx) => handleOmpBeforeAgentStart(event, ctx, omp, runtimeRegistry))
     return
   }
 
   const pi = api as PiExtensionAPI
-  pi.on("before_agent_start", (event, ctx) => handlePiBeforeAgentStart(event, ctx, runtimeRegistry))
+  pi.on("before_agent_start", (event, ctx) => handlePiBeforeAgentStart(event, ctx, pi, runtimeRegistry))
 }
 
 async function handlePiBeforeAgentStart(
   event: PiBeforeAgentStartEvent,
   ctx: PiExtensionContext,
+  api: PiExtensionAPI,
   runtimeRegistry: RuntimeRegistry | undefined,
 ): Promise<PiBeforeAgentStartEventResult | undefined> {
-  const blocks = await buildPromptBlocks(event.prompt, ctx, runtimeRegistry)
+  const blocks = await buildPromptBlocks(event.prompt, ctx, api, runtimeRegistry)
   if (blocks === undefined || blocks.length === 0) return undefined
 
   // Pi >= 0.86 exposes mutable `systemPromptOptions`. Appending there lets the
@@ -64,9 +66,10 @@ async function handlePiBeforeAgentStart(
 async function handleOmpBeforeAgentStart(
   event: OmpBeforeAgentStartEvent,
   ctx: OmpExtensionContext,
+  api: OmpExtensionAPI,
   runtimeRegistry: RuntimeRegistry | undefined,
 ): Promise<OmpBeforeAgentStartEventResult | undefined> {
-  const blocks = await buildPromptBlocks(event.prompt, ctx, runtimeRegistry)
+  const blocks = await buildPromptBlocks(event.prompt, ctx, api, runtimeRegistry)
   if (blocks === undefined || blocks.length === 0) return undefined
 
   return {
@@ -77,10 +80,12 @@ async function handleOmpBeforeAgentStart(
 async function buildPromptBlocks(
   prompt: string,
   ctx: PiExtensionContext | OmpExtensionContext,
+  api: PiExtensionAPI | OmpExtensionAPI,
   runtimeRegistry: RuntimeRegistry | undefined,
 ): Promise<readonly string[] | undefined> {
   let sessionID: string | undefined
   try {
+    const sessionMetadata = captureSessionMetadata(ctx, getHookHostProfile().kind, api)
     const loaded = runtimeRegistry?.getHookLoadFor(ctx.cwd)
     const awareness = buildHookAwarenessSystemPrompt(ctx, loaded)
     if (!runtimeRegistry || process.platform === "win32") {
@@ -97,6 +102,7 @@ async function buildPromptBlocks(
     const result = await runtimeRegistry.getRuntimeFor(ctx.cwd)["user.prompt.submit"]({
       sessionID,
       prompt,
+      sessionMetadata,
     })
     const contextBlocks = result.additionalContext.map(
       (text) => `${PROMPT_CONTEXT_PREFIX}\n${text}`,

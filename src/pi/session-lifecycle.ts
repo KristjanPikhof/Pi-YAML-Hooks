@@ -17,6 +17,7 @@ import type {
 } from "@earendil-works/pi-coding-agent";
 
 import type { getPiHooksLogger } from "../core/logger.js";
+import type { BashSessionMetadata } from "../core/bash-types.js";
 import type { HookHostKind } from "../core/host-profile.js";
 import type { HooksRuntime } from "../core/runtime.js";
 import {
@@ -25,6 +26,7 @@ import {
   extractReason,
 } from "./event-mappers.js";
 import { safeGetSessionId } from "./host-adapter.js";
+import { captureSessionMetadata } from "./session-metadata.js";
 
 export interface SessionLifecycleDeps {
   /** Returns the runtime for `cwd`, lazily constructing it on first use. */
@@ -65,7 +67,7 @@ export function installSessionLifecycleHandlers(
   const deletedSessionIds = new Set<string>();
   let lastLifecycleHandledOmpSessionId: string | undefined;
   let pendingOmpSwitch:
-    | { readonly cwd: string; readonly sessionId: string; readonly reason?: string }
+    | { readonly cwd: string; readonly sessionId: string; readonly reason?: string; readonly sessionMetadata: BashSessionMetadata }
     | undefined;
   function markSessionDeleted(sessionId: string): boolean {
     if (deletedSessionIds.has(sessionId)) return false;
@@ -81,12 +83,13 @@ export function installSessionLifecycleHandlers(
     cwd: string,
     sessionId: string,
     reason: string | undefined,
+    sessionMetadata: BashSessionMetadata,
     details?: Record<string, unknown>,
   ): Promise<void> => {
     if (!markSessionDeleted(sessionId)) return;
     try {
       const runtime = getRuntimeFor(cwd);
-      await runtime.event(buildSessionDeletedEvent(sessionId, reason));
+      await runtime.event(buildSessionDeletedEvent(sessionId, reason, sessionMetadata));
     } catch (error) {
       reportDispatchFailure(
         logger,
@@ -105,6 +108,7 @@ export function installSessionLifecycleHandlers(
     rememberContext(ctx.cwd, ctx);
     const sessionId = safeGetSessionId(ctx.sessionManager);
     if (!sessionId) return;
+    const sessionMetadata = captureSessionMetadata(ctx, hostKind, pi);
     if (hostKind === "omp") {
       if (lastLifecycleHandledOmpSessionId === sessionId) return;
       lastLifecycleHandledOmpSessionId = sessionId;
@@ -120,7 +124,7 @@ export function installSessionLifecycleHandlers(
     // correctly.
     try {
       const runtime = getRuntimeFor(ctx.cwd);
-      await runtime.event(buildSessionCreatedEvent(sessionId));
+      await runtime.event(buildSessionCreatedEvent(sessionId, sessionMetadata));
     } catch (error) {
       reportDispatchFailure(logger, { cwd: ctx.cwd, event: "session.created", sessionId }, error);
     }
@@ -168,6 +172,7 @@ export function installSessionLifecycleHandlers(
           completedSwitch.cwd,
           completedSwitch.sessionId,
           completedSwitch.reason,
+          completedSwitch.sessionMetadata,
           {
             trigger: "session_before_switch",
             ...(completedSwitch.reason ? { reason: completedSwitch.reason } : {}),
@@ -198,8 +203,9 @@ export function installSessionLifecycleHandlers(
     rememberContext(ctx.cwd, ctx);
     const sessionId = safeGetSessionId(ctx.sessionManager);
     if (!sessionId) return;
+    const sessionMetadata = captureSessionMetadata(ctx, hostKind, pi);
     if (pendingOmpSwitch?.sessionId === sessionId) pendingOmpSwitch = undefined;
-    await dispatchSessionDeleted(ctx.cwd, sessionId, extractReason(event));
+    await dispatchSessionDeleted(ctx.cwd, sessionId, extractReason(event), sessionMetadata);
   });
 
   // ---- session_before_switch ----
@@ -210,9 +216,10 @@ export function installSessionLifecycleHandlers(
     rememberContext(ctx.cwd, ctx);
     const sessionId = safeGetSessionId(ctx.sessionManager);
     if (!sessionId) return;
+    const sessionMetadata = captureSessionMetadata(ctx, hostKind, pi);
     const reason = extractReason(event);
     if (hostKind === "omp") {
-      pendingOmpSwitch = { cwd: ctx.cwd, sessionId, ...(reason ? { reason } : {}) };
+      pendingOmpSwitch = { cwd: ctx.cwd, sessionId, sessionMetadata, ...(reason ? { reason } : {}) };
       return;
     }
 
@@ -220,6 +227,7 @@ export function installSessionLifecycleHandlers(
       ctx.cwd,
       sessionId,
       reason,
+      sessionMetadata,
       { trigger: "session_before_switch", ...(reason ? { reason } : {}) },
     );
   });

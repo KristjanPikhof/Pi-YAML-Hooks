@@ -6,6 +6,8 @@ import type { ExtensionAPI, ExtensionContext, UserBashEvent, UserBashEventResult
 import { resolveTrustedProjectsFilePath } from "../core/config-paths.js"
 import { getPiHooksLogger } from "../core/logger.js"
 import type { HooksRuntime } from "../core/runtime.js"
+import { getHookHostProfile } from "../core/host-profile.js"
+import { captureSessionMetadata } from "./session-metadata.js"
 
 const ENABLE_USER_BASH_ENV = "PI_YAML_HOOKS_ENABLE_USER_BASH"
 
@@ -88,6 +90,7 @@ export function registerUserBashInterception(
     // the runtime cannot safely address the command's hook session.
     const logger = getPiHooksLogger()
     try {
+      const sessionMetadata = captureSessionMetadata(ctx, getHookHostProfile().kind, pi)
       emitUserBashUiWarningOnce(ctx)
       try {
         options.rememberContext(ctx.cwd, ctx)
@@ -140,6 +143,7 @@ export function registerUserBashInterception(
             tool: "bash",
             sessionID: sessionId,
             callID: `user-bash:${sessionId}:${generateCallId()}`,
+            sessionMetadata,
           },
           {
             args: { command: event.command },
