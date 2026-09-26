@@ -4,7 +4,7 @@ Agent contract for `pi-yaml-hooks`. Facts only; tutorials in `docs/`.
 
 ## Facts
 
-- Runtime: one `pi-yaml-hooks` package with native Pi and OMP extension entries. Type-only `pi-yaml-hooks/types` exports `HookConfig`, `HookEvent`, `BashHookContext`, `SessionDeletedReason`; smoke: `src/public-types-smoke.test.ts`.
+- Runtime: one `pi-yaml-hooks` package with native Pi and OMP extension entries. Type-only `pi-yaml-hooks/types` exports `HookConfig`, `HookEvent`, `BashHookContext`, `BashSessionMetadata`, `SessionDeletedReason`; smoke: `src/public-types-smoke.test.ts`.
 - Package engine: Node `>=22.19.0`; macOS/Linux only (`src/pi/register-adapter.ts` guards win32). OMP runtime smoke is verified with Bun `1.3.14`.
 - Pi host peers: `@earendil-works/pi-coding-agent` + `@earendil-works/pi-tui` as optional `*`; dev-pinned at exact `0.86.1`; compatibility matrix covers exact `0.74.0` + `0.79.3` + `0.80.10` + `0.84.1` + `0.85.1` + `0.86.1`. Current live Pi evidence is exact `0.86.1`, including `--no-builtin-tools`; this is not a broader range claim. The `0.74.0`/`0.79.3` rows stay in the matrix as the supported floor.
 - OMP host peers: `@oh-my-pi/pi-coding-agent` + `@oh-my-pi/pi-tui` as optional `*`; dev-pinned and compile/runtime-tested at exact `17.0.1` + `17.2.12` + `18.2.6`.
