@@ -295,14 +295,14 @@ Before serialization, `tool_args` is redacted and capped at 64 KiB. The full std
 |---|---|
 | `PI_PROJECT_DIR` | Project directory for the event |
 | `PI_WORKTREE_DIR` | Resolved worktree directory |
-| `PI_SESSION_ID` | Current session ID |
+| `PI_SESSION_ID` | Session ID associated with the event |
 | `PI_MODEL` | Model ID for the event |
 | `PI_PROVIDER` | Model provider for the event |
 | `PI_REASONING_LEVEL` | Thinking level for the event |
 | `PI_SESSION_FILE` | Session path returned by the host |
 | `PI_GIT_COMMON_DIR` | Shared Git directory when available |
 
-The four model and session file variables use values captured when the Pi or OMP event fires. A variable is unset when the host has no value for it. OMP may return a session path before the file exists.
+These four values come from the host event. If a tool result arrives after a session switch, it keeps the source session's values. On a successful OMP switch, `session.deleted` uses values captured before the switch. Missing values are unset. OMP may return a session path before the file exists.
 
 For example, a bash hook can use `printf '%s/%s\n' "${PI_PROVIDER:-unknown}" "${PI_MODEL:-unknown}"` to print the selected provider and model.
 
