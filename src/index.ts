@@ -96,4 +96,4 @@ export type {
   RenameFileChange,
 } from "./core/types.js";
 
-export type { BashHookContext, BashHookResult, BashHookResultStatus, BashExecutionRequest, BashProcessResult } from "./core/bash-types.js";
+export type { BashHookContext, BashHookResult, BashHookResultStatus, BashExecutionRequest, BashProcessResult, BashSessionMetadata } from "./core/bash-types.js";
