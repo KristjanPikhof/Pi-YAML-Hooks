@@ -116,8 +116,8 @@
     "yaml": "^2.9.0"
   },
   "overrides": {
-    "adm-zip": "0.6.0",
-    "sharp": "0.35.3"
+    "adm-zip": "0.6.1",
+    "sharp": "0.35.4"
   },
   "devDependencies": {
     "@earendil-works/pi-coding-agent": "0.86.1",
@@ -128,7 +128,9 @@
     "typescript": "^5.9.3"
   },
   "allowScripts": {
-    "@google/genai@1.52.0": true,
+    "@google/genai@1.52.0": false,
+    "@google/genai@2.21.0": false,
+    "esbuild@0.28.2": true,
     "protobufjs@7.6.5": true,
     "onnxruntime-node@1.24.3": true
   }
