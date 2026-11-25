@@ -2,7 +2,6 @@ import { statSync } from "node:fs"
 import path from "node:path"
 
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent"
-import type { AutocompleteItem, AutocompleteProvider as PiAutocompleteProvider } from "@earendil-works/pi-tui"
 
 import {
   resolveHookConfigPaths,
@@ -66,7 +65,33 @@ const LOG_OPTION_ITEMS: AutocompleteItem[] = [
   { value: "--path", label: "--path", description: "Print only the hook log file path" },
 ]
 
-type HookAutocompleteProvider = PiAutocompleteProvider & {
+// Local types: omp >= 19.2 refuses any @earendil-works/pi-tui import, even type-only.
+interface AutocompleteItem {
+  value: string
+  label: string
+  description?: string
+}
+
+interface AutocompleteSuggestions {
+  items: AutocompleteItem[]
+  prefix: string
+}
+
+// Trailing getSuggestions args differ per host and are forwarded as-is.
+interface HookAutocompleteProvider {
+  getSuggestions(
+    lines: string[],
+    cursorLine: number,
+    cursorCol: number,
+    ...hostArgs: unknown[]
+  ): Promise<AutocompleteSuggestions | null>
+  applyCompletion(
+    lines: string[],
+    cursorLine: number,
+    cursorCol: number,
+    item: AutocompleteItem,
+    prefix: string,
+  ): { lines: string[]; cursorLine: number; cursorCol: number; onApplied?: () => void }
   shouldTriggerFileCompletion?: (lines: string[], cursorLine: number, cursorCol: number) => boolean
 }
 
@@ -274,8 +299,8 @@ function computeStatFingerprint(paths: readonly string[]): string {
 
 function createHookAutocompleteProviderFactory(cwd: string): AutocompleteProviderFactory {
   return (current: HookAutocompleteProvider): HookAutocompleteProvider => ({
-    async getSuggestions(lines, cursorLine, cursorCol, options) {
-      const currentSuggestions = await current.getSuggestions(lines, cursorLine, cursorCol, options)
+    async getSuggestions(lines, cursorLine, cursorCol, ...hostArgs) {
+      const currentSuggestions = await current.getSuggestions(lines, cursorLine, cursorCol, ...hostArgs)
       const line = lines[cursorLine] ?? ""
       if (!line.slice(0, cursorCol).startsWith("/hooks")) {
         return currentSuggestions
